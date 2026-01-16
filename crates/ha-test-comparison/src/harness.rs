@@ -1,7 +1,9 @@
 //! Test harness for running comparison tests
 
 use crate::client::HaClient;
-use crate::compare::{compare_responses, compare_ws_results, CompareOptions, ComparisonResult, WsComparisonResult};
+use crate::compare::{
+    compare_responses, compare_ws_results, CompareOptions, ComparisonResult, WsComparisonResult,
+};
 use crate::config::ComparisonConfig;
 use crate::ws_client::WsClient;
 use serde_json::{json, Value};
@@ -28,7 +30,10 @@ impl TestHarness {
         let python_ws = WsClient::python_ha(&config.python_ha_url, &config.python_ha_token);
         let rust_ws = WsClient::rust_ha(
             &config.rust_ha_url,
-            config.rust_ha_token.as_deref().unwrap_or(&config.python_ha_token),
+            config
+                .rust_ha_token
+                .as_deref()
+                .unwrap_or(&config.python_ha_token),
         );
 
         Self {
@@ -118,8 +123,7 @@ impl TestHarness {
 
     /// Run a WebSocket comparison test
     pub async fn compare_ws_auth(&mut self) -> &WsComparisonResult {
-        let options = CompareOptions::new()
-            .ignore_field("ha_version"); // Versions may differ
+        let options = CompareOptions::new().ignore_field("ha_version"); // Versions may differ
 
         let python_result = self.python_ws.test_auth_flow().await;
         let rust_result = self.rust_ws.test_auth_flow().await;
@@ -139,7 +143,7 @@ impl TestHarness {
             // Ignore dynamic fields that change at runtime
             .ignore_field("access_token")
             .ignore_field("entity_picture")
-            .ignore_field("state")  // Demo sensors change values over time
+            .ignore_field("state") // Demo sensors change values over time
             // Sun position changes dynamically
             .ignore_field("azimuth")
             .ignore_field("elevation")
@@ -290,9 +294,11 @@ impl TestSuites {
         harness
             .compare_get(
                 "/api/config",
-                Some(CompareOptions::new()
-                    .ignore_field("whitelist_external_dirs")
-                    .ignore_field("allowlist_external_dirs")),
+                Some(
+                    CompareOptions::new()
+                        .ignore_field("whitelist_external_dirs")
+                        .ignore_field("allowlist_external_dirs"),
+                ),
             )
             .await
             .print_summary();
@@ -311,7 +317,7 @@ impl TestSuites {
             // Ignore dynamic fields that change at runtime
             .ignore_field("access_token")
             .ignore_field("entity_picture")
-            .ignore_field("state")  // Demo sensors change values over time
+            .ignore_field("state") // Demo sensors change values over time
             // Sun position changes dynamically
             .ignore_field("azimuth")
             .ignore_field("elevation")

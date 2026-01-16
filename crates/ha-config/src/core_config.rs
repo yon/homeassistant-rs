@@ -202,17 +202,16 @@ impl CoreConfig {
 
         // Get the homeassistant section, or use defaults
         let ha_section = mapping
-            .get(&Value::String("homeassistant".to_string()))
+            .get(Value::String("homeassistant".to_string()))
             .cloned()
             .unwrap_or(Value::Mapping(serde_yaml::Mapping::new()));
 
         // Parse the homeassistant section
-        let config: CoreConfig = serde_yaml::from_value(ha_section).map_err(|e| {
-            ConfigError::InvalidValue {
+        let config: CoreConfig =
+            serde_yaml::from_value(ha_section).map_err(|e| ConfigError::InvalidValue {
                 key: "homeassistant".to_string(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
 
         Ok(config)
     }

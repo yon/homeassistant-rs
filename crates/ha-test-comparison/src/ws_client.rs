@@ -69,7 +69,8 @@ impl WsClient {
 
     /// Get WebSocket URL from HTTP URL
     fn ws_url(&self) -> String {
-        let url = self.base_url
+        let url = self
+            .base_url
             .replace("http://", "ws://")
             .replace("https://", "wss://");
         format!("{}/api/websocket", url)
@@ -79,14 +80,13 @@ impl WsClient {
     pub async fn test_auth_flow(&self) -> WsTestResult {
         let ws_url = self.ws_url();
 
-        let connect_result = timeout(
-            Duration::from_secs(10),
-            connect_async(&ws_url)
-        ).await;
+        let connect_result = timeout(Duration::from_secs(10), connect_async(&ws_url)).await;
 
         let (ws_stream, _) = match connect_result {
             Ok(Ok((stream, response))) => (stream, response),
-            Ok(Err(e)) => return WsTestResult::failure("auth_flow", format!("Connect failed: {}", e)),
+            Ok(Err(e)) => {
+                return WsTestResult::failure("auth_flow", format!("Connect failed: {}", e))
+            }
             Err(_) => return WsTestResult::failure("auth_flow", "Connect timeout".to_string()),
         };
 
@@ -96,7 +96,9 @@ impl WsClient {
         // 1. Receive auth_required
         let auth_required = match Self::recv_message(&mut read).await {
             Ok(msg) => msg,
-            Err(e) => return WsTestResult::failure("auth_flow", format!("No auth_required: {}", e)),
+            Err(e) => {
+                return WsTestResult::failure("auth_flow", format!("No auth_required: {}", e))
+            }
         };
 
         // 2. Send auth
@@ -111,7 +113,9 @@ impl WsClient {
         // 3. Receive auth_ok or auth_invalid
         let auth_response = match Self::recv_message(&mut read).await {
             Ok(msg) => msg,
-            Err(e) => return WsTestResult::failure("auth_flow", format!("No auth response: {}", e)),
+            Err(e) => {
+                return WsTestResult::failure("auth_flow", format!("No auth response: {}", e))
+            }
         };
 
         exchanges.push(WsExchange {
@@ -133,7 +137,10 @@ impl WsClient {
 
     /// Run get_states test
     pub async fn test_get_states(&self) -> WsTestResult {
-        match self.run_command("get_states", json!({"type": "get_states", "id": 1})).await {
+        match self
+            .run_command("get_states", json!({"type": "get_states", "id": 1}))
+            .await
+        {
             Ok((request, response)) => {
                 WsTestResult::success("get_states", vec![WsExchange { request, response }])
             }
@@ -143,7 +150,10 @@ impl WsClient {
 
     /// Run get_config test
     pub async fn test_get_config(&self) -> WsTestResult {
-        match self.run_command("get_config", json!({"type": "get_config", "id": 1})).await {
+        match self
+            .run_command("get_config", json!({"type": "get_config", "id": 1}))
+            .await
+        {
             Ok((request, response)) => {
                 WsTestResult::success("get_config", vec![WsExchange { request, response }])
             }
@@ -153,7 +163,10 @@ impl WsClient {
 
     /// Run get_services test
     pub async fn test_get_services(&self) -> WsTestResult {
-        match self.run_command("get_services", json!({"type": "get_services", "id": 1})).await {
+        match self
+            .run_command("get_services", json!({"type": "get_services", "id": 1}))
+            .await
+        {
             Ok((request, response)) => {
                 WsTestResult::success("get_services", vec![WsExchange { request, response }])
             }
@@ -163,7 +176,10 @@ impl WsClient {
 
     /// Run ping/pong test
     pub async fn test_ping_pong(&self) -> WsTestResult {
-        match self.run_command("ping", json!({"type": "ping", "id": 1})).await {
+        match self
+            .run_command("ping", json!({"type": "ping", "id": 1}))
+            .await
+        {
             Ok((request, response)) => {
                 WsTestResult::success("ping_pong", vec![WsExchange { request, response }])
             }
@@ -173,10 +189,13 @@ impl WsClient {
 
     /// Run subscribe_events test
     pub async fn test_subscribe_events(&self) -> WsTestResult {
-        match self.run_command(
-            "subscribe_events",
-            json!({"type": "subscribe_events", "id": 1, "event_type": "state_changed"})
-        ).await {
+        match self
+            .run_command(
+                "subscribe_events",
+                json!({"type": "subscribe_events", "id": 1, "event_type": "state_changed"}),
+            )
+            .await
+        {
             Ok((request, response)) => {
                 WsTestResult::success("subscribe_events", vec![WsExchange { request, response }])
             }
@@ -186,16 +205,19 @@ impl WsClient {
 
     /// Run call_service test
     pub async fn test_call_service(&self) -> WsTestResult {
-        match self.run_command(
-            "call_service",
-            json!({
-                "type": "call_service",
-                "id": 1,
-                "domain": "homeassistant",
-                "service": "check_config",
-                "service_data": {}
-            })
-        ).await {
+        match self
+            .run_command(
+                "call_service",
+                json!({
+                    "type": "call_service",
+                    "id": 1,
+                    "domain": "homeassistant",
+                    "service": "check_config",
+                    "service_data": {}
+                }),
+            )
+            .await
+        {
             Ok((request, response)) => {
                 WsTestResult::success("call_service", vec![WsExchange { request, response }])
             }
@@ -207,10 +229,7 @@ impl WsClient {
     async fn run_command(&self, name: &str, command: Value) -> Result<(Value, Value), String> {
         let ws_url = self.ws_url();
 
-        let connect_result = timeout(
-            Duration::from_secs(10),
-            connect_async(&ws_url)
-        ).await;
+        let connect_result = timeout(Duration::from_secs(10), connect_async(&ws_url)).await;
 
         let (ws_stream, _) = match connect_result {
             Ok(Ok((stream, _))) => (stream, ()),
@@ -227,7 +246,9 @@ impl WsClient {
             "type": "auth",
             "access_token": self.token
         });
-        write.send(Message::Text(auth_msg.to_string())).await
+        write
+            .send(Message::Text(auth_msg.to_string()))
+            .await
             .map_err(|e| format!("Send auth failed: {}", e))?;
 
         let auth_response = Self::recv_message(&mut read).await?;
@@ -236,7 +257,9 @@ impl WsClient {
         }
 
         // Send command
-        write.send(Message::Text(command.to_string())).await
+        write
+            .send(Message::Text(command.to_string()))
+            .await
             .map_err(|e| format!("Send {} failed: {}", name, e))?;
 
         // Receive response
@@ -249,9 +272,9 @@ impl WsClient {
     async fn recv_message(
         read: &mut futures_util::stream::SplitStream<
             tokio_tungstenite::WebSocketStream<
-                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>
-            >
-        >
+                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+            >,
+        >,
     ) -> Result<Value, String> {
         let msg = timeout(Duration::from_secs(10), read.next())
             .await

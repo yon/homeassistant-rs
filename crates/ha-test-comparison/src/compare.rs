@@ -412,10 +412,21 @@ pub fn compare_ws_results(
     }
 
     // Compare each exchange
-    for (i, (py_ex, rs_ex)) in python.exchanges.iter().zip(rust.exchanges.iter()).enumerate() {
+    for (i, (py_ex, rs_ex)) in python
+        .exchanges
+        .iter()
+        .zip(rust.exchanges.iter())
+        .enumerate()
+    {
         // Compare responses (requests are identical by construction)
         let path = format!("exchange[{}].response", i);
-        compare_json(&path, &py_ex.response, &rs_ex.response, options, &mut differences);
+        compare_json(
+            &path,
+            &py_ex.response,
+            &rs_ex.response,
+            options,
+            &mut differences,
+        );
     }
 
     WsComparisonResult {
