@@ -1,7 +1,10 @@
-//! Home Assistant REST API
+//! Home Assistant REST and WebSocket API
 //!
-//! Implements the Home Assistant REST API using axum.
+//! Implements the Home Assistant REST and WebSocket APIs using axum.
 //! Based on: https://developers.home-assistant.io/docs/api/rest
+//!           https://developers.home-assistant.io/docs/api/websocket
+
+mod websocket;
 
 use axum::{
     extract::{Path, State},
@@ -9,6 +12,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use ha_config::CoreConfig;
 use ha_core::{Context, EntityId, Event};
 use ha_event_bus::EventBus;
 use ha_service_registry::ServiceRegistry;
@@ -26,6 +30,7 @@ pub struct AppState {
     pub event_bus: Arc<EventBus>,
     pub state_machine: Arc<StateMachine>,
     pub service_registry: Arc<ServiceRegistry>,
+    pub config: Arc<CoreConfig>,
 }
 
 /// API status response
@@ -57,20 +62,22 @@ struct ConfigResponse {
     safe_mode: bool,
     state: &'static str,
     time_zone: String,
-    unit_system: UnitSystem,
+    unit_system: UnitSystemResponse,
     version: String,
     whitelist_external_dirs: Vec<String>,
 }
 
 #[derive(Serialize)]
-struct UnitSystem {
-    length: &'static str,
-    accumulated_precipitation: &'static str,
-    mass: &'static str,
-    pressure: &'static str,
-    temperature: &'static str,
-    volume: &'static str,
-    wind_speed: &'static str,
+struct UnitSystemResponse {
+    length: String,
+    accumulated_precipitation: String,
+    mass: String,
+    pressure: String,
+    temperature: String,
+    volume: String,
+    wind_speed: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    area: Option<String>,
 }
 
 /// State response for a single entity
@@ -152,6 +159,8 @@ pub fn create_router(state: AppState) -> Router {
         .allow_headers(Any);
 
     Router::new()
+        // WebSocket endpoint
+        .route("/api/websocket", get(websocket::ws_handler))
         // Status endpoint
         .route("/api/", get(api_status))
         // Config endpoint
@@ -196,11 +205,13 @@ async fn health_check() -> &'static str {
 }
 
 /// GET /api/config - Returns configuration
-async fn get_config() -> Json<ConfigResponse> {
-    // TODO: Load actual configuration from files
+async fn get_config(State(state): State<AppState>) -> Json<ConfigResponse> {
+    let config = &state.config;
+    let unit_system = config.unit_system();
+
     Json(ConfigResponse {
-        allowlist_external_dirs: vec!["/config/www".to_string(), "/media".to_string()],
-        allowlist_external_urls: vec![],
+        allowlist_external_dirs: config.allowlist_external_dirs.clone(),
+        allowlist_external_urls: config.allowlist_external_urls.clone(),
         components: vec![
             "homeassistant".to_string(),
             "api".to_string(),
@@ -209,33 +220,34 @@ async fn get_config() -> Json<ConfigResponse> {
             "scene".to_string(),
         ],
         config_dir: "/config".to_string(),
-        config_source: "storage".to_string(),
-        country: Some("US".to_string()),
-        currency: "USD".to_string(),
+        config_source: "yaml".to_string(),
+        country: config.country.clone(),
+        currency: config.currency.clone(),
         debug: false,
-        elevation: 0,
-        external_url: None,
-        internal_url: None,
-        language: "en".to_string(),
-        latitude: 0.0,
-        location_name: "Home".to_string(),
-        longitude: 0.0,
-        radius: 100,
+        elevation: config.elevation,
+        external_url: config.external_url.clone(),
+        internal_url: config.internal_url.clone(),
+        language: config.language.clone(),
+        latitude: config.latitude,
+        location_name: config.name.clone(),
+        longitude: config.longitude,
+        radius: config.radius,
         recovery_mode: false,
         safe_mode: false,
         state: "RUNNING",
-        time_zone: "UTC".to_string(),
-        unit_system: UnitSystem {
-            length: "km",
-            accumulated_precipitation: "mm",
-            mass: "kg",
-            pressure: "Pa",
-            temperature: "°C",
-            volume: "L",
-            wind_speed: "km/h",
+        time_zone: config.time_zone.clone(),
+        unit_system: UnitSystemResponse {
+            length: unit_system.length.clone(),
+            accumulated_precipitation: unit_system.accumulated_precipitation.clone(),
+            mass: unit_system.mass.clone(),
+            pressure: unit_system.pressure.clone(),
+            temperature: unit_system.temperature.clone(),
+            volume: unit_system.volume.clone(),
+            wind_speed: unit_system.wind_speed.clone(),
+            area: unit_system.area.clone(),
         },
         version: env!("CARGO_PKG_VERSION").to_string(),
-        whitelist_external_dirs: vec!["/config/www".to_string(), "/media".to_string()],
+        whitelist_external_dirs: config.allowlist_external_dirs.clone(),
     })
 }
 

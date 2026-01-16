@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 ha-core = { workspace = true }
+ha-config = { workspace = true }
 ha-event-bus = { workspace = true }
 ha-state-machine = { workspace = true }
 ha-service-registry = { workspace = true }

@@ -8,17 +8,20 @@ license.workspace = true
 
 [dependencies]
 ha-core = { workspace = true }
+ha-config = { workspace = true }
 ha-event-bus = { workspace = true }
 ha-state-machine = { workspace = true }
 ha-service-registry = { workspace = true }
 
 # Web framework
-axum = { workspace = true }
+axum = { workspace = true, features = ["ws"] }
 tower = { workspace = true }
 tower-http = { workspace = true }
 
 # Async
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+tokio-stream = "0.1"
+futures = "0.3"
 
 # Serialization
 serde = { workspace = true }
@@ -29,3 +32,6 @@ chrono = { workspace = true }
 
 # Logging
 tracing = { workspace = true }
+
+# Utilities
+dashmap = { workspace = true }

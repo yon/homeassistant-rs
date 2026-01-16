@@ -24,10 +24,12 @@
 //! let config = loader.load_file("configuration.yaml")?;
 //! ```
 
+mod core_config;
 mod error;
 mod loader;
 mod secrets;
 
+pub use core_config::{CoreConfig, UnitSystem, UnitSystemConfig};
 pub use error::{ConfigError, ConfigResult};
 pub use loader::{load_yaml, load_yaml_string, YamlLoader};
 pub use secrets::Secrets;

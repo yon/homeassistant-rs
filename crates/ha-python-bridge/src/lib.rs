@@ -48,5 +48,8 @@ fn ha_core_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // HomeAssistant wrapper
     m.add_class::<extension::PyHomeAssistant>()?;
 
+    // Helper types
+    m.add_class::<extension::PyUnsubscribe>()?;
+
     Ok(())
 }

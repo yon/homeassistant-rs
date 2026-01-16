@@ -24,3 +24,4 @@ pub mod client;
 pub mod compare;
 pub mod config;
 pub mod harness;
+pub mod ws_client;

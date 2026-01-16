@@ -119,13 +119,21 @@ help: ## Display this help message
 
 .PHONY: python-test
 python-test: install-dev ## Run Python tests against Rust extension
-	$(PYTHON) -c "from ha_core_rs import HomeAssistant; h = HomeAssistant(); print(h)"
+	$(VENV_BIN)/pytest tests/python/ -v
 
 .PHONY: setup-venv
 setup-venv: $(VENV_STAMP) ## Create Python virtual environment with tools
 
 ##@ HA Comparison Testing
 # Detailed targets in tests/Makefile - these delegate to it
+
+.PHONY: ha-compat-setup
+ha-compat-setup: $(VENV_STAMP) ## Setup HA compatibility test environment
+	./tests/ha_compat/setup.sh
+
+.PHONY: ha-compat-test
+ha-compat-test: install-dev ## Run HA test suite with Rust extension
+	$(PYTHON) tests/ha_compat/run_tests.py --all -v
 
 .PHONY: ha-start
 ha-start: ## Start HA test instance in Docker

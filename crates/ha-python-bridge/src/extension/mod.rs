@@ -11,7 +11,7 @@ mod py_service_registry;
 mod py_state_machine;
 mod py_types;
 
-pub use py_event_bus::PyEventBus;
+pub use py_event_bus::{PyEventBus, PyUnsubscribe};
 pub use py_home_assistant::PyHomeAssistant;
 pub use py_service_registry::PyServiceRegistry;
 pub use py_state_machine::PyStateMachine;

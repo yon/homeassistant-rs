@@ -19,10 +19,11 @@ members = [
 ]
 
 [workspace.package]
-# Version scheme: {HA_VERSION}-rs.{PATCH}
+# Version scheme: {HA_VERSION} (tracking Home Assistant version)
 # Currently tracking Home Assistant 2026.1.1
 # See tests/comparison/ha-versions.toml for full version tracking
-version = "2026.1.1-rs.1"
+# Python wheel version in pyproject.toml uses PEP 440 post-release for patches
+version = "2026.1.1"
 edition = "2021"
 rust-version = "1.75"
 license = "Apache-2.0"
