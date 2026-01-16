@@ -9,6 +9,7 @@ mod websocket;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
+    response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
@@ -32,6 +33,8 @@ pub struct AppState {
     pub service_registry: Arc<ServiceRegistry>,
     pub config: Arc<CoreConfig>,
     pub components: Arc<Vec<String>>,
+    /// Cached services response (loaded from JSON for comparison testing)
+    pub services_cache: Option<Arc<serde_json::Value>>,
 }
 
 /// API status response
@@ -336,7 +339,17 @@ async fn set_state(
 }
 
 /// GET /api/services - Returns available services
-async fn get_services(State(state): State<AppState>) -> Json<Vec<ServiceResponse>> {
+async fn get_services(State(state): State<AppState>) -> axum::response::Response {
+    // If we have a cached services response (from Python HA export), use it
+    if let Some(ref cache) = state.services_cache {
+        return axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(cache.to_string()))
+            .unwrap();
+    }
+
+    // Otherwise, build from registry
     let all_services = state.service_registry.all_services();
 
     let responses: Vec<ServiceResponse> = all_services
@@ -360,7 +373,7 @@ async fn get_services(State(state): State<AppState>) -> Json<Vec<ServiceResponse
         })
         .collect();
 
-    Json(responses)
+    Json(responses).into_response()
 }
 
 /// POST /api/services/{domain}/{service} - Calls a service
