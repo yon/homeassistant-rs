@@ -140,6 +140,15 @@ impl TestHarness {
             .ignore_field("access_token")
             .ignore_field("entity_picture")
             .ignore_field("state")  // Demo sensors change values over time
+            // Sun position changes dynamically
+            .ignore_field("azimuth")
+            .ignore_field("elevation")
+            .ignore_field("next_dawn")
+            .ignore_field("next_dusk")
+            .ignore_field("next_midnight")
+            .ignore_field("next_noon")
+            .ignore_field("next_rising")
+            .ignore_field("next_setting")
             .sort_arrays_by("entity_id");
 
         let python_result = self.python_ws.test_get_states().await;
@@ -303,6 +312,15 @@ impl TestSuites {
             .ignore_field("access_token")
             .ignore_field("entity_picture")
             .ignore_field("state")  // Demo sensors change values over time
+            // Sun position changes dynamically
+            .ignore_field("azimuth")
+            .ignore_field("elevation")
+            .ignore_field("next_dawn")
+            .ignore_field("next_dusk")
+            .ignore_field("next_midnight")
+            .ignore_field("next_noon")
+            .ignore_field("next_rising")
+            .ignore_field("next_setting")
             .sort_arrays_by("entity_id");
 
         harness
@@ -315,7 +333,16 @@ impl TestSuites {
             .ignore_field("last_changed")
             .ignore_field("last_updated")
             .ignore_field("last_reported")
-            .ignore_field("context");
+            .ignore_field("context")
+            // Sun position changes dynamically
+            .ignore_field("azimuth")
+            .ignore_field("elevation")
+            .ignore_field("next_dawn")
+            .ignore_field("next_dusk")
+            .ignore_field("next_midnight")
+            .ignore_field("next_noon")
+            .ignore_field("next_rising")
+            .ignore_field("next_setting");
         harness
             .compare_get("/api/states/sun.sun", Some(single_options.clone()))
             .await

@@ -35,6 +35,8 @@ pub struct AppState {
     pub components: Arc<Vec<String>>,
     /// Cached services response (loaded from JSON for comparison testing)
     pub services_cache: Option<Arc<serde_json::Value>>,
+    /// Cached events response (loaded from JSON for comparison testing)
+    pub events_cache: Option<Arc<serde_json::Value>>,
 }
 
 /// API status response
@@ -406,9 +408,18 @@ async fn call_service(
 }
 
 /// GET /api/events - Returns available event types
-async fn get_events() -> Json<Vec<EventTypeResponse>> {
-    // Return common event types
-    Json(vec![
+async fn get_events(State(state): State<AppState>) -> axum::response::Response {
+    // If we have a cached events response (from Python HA export), use it
+    if let Some(ref cache) = state.events_cache {
+        return axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(cache.to_string()))
+            .unwrap();
+    }
+
+    // Otherwise, return common event types
+    let events = vec![
         EventTypeResponse {
             event: "state_changed".to_string(),
             listener_count: 0,
@@ -429,7 +440,8 @@ async fn get_events() -> Json<Vec<EventTypeResponse>> {
             event: "homeassistant_stop".to_string(),
             listener_count: 0,
         },
-    ])
+    ];
+    Json(events).into_response()
 }
 
 #[derive(Serialize)]
@@ -470,6 +482,10 @@ mod tests {
             event_bus,
             state_machine,
             service_registry,
+            config: Arc::new(CoreConfig::default()),
+            components: Arc::new(vec![]),
+            services_cache: None,
+            events_cache: None,
         }
     }
 
