@@ -209,8 +209,9 @@ impl IntegrationManifest {
 
             // Try to load manifest.json via the loader
             let loader = py.import_bound("homeassistant.loader")?;
-            let manifest_dict: Bound<'_, PyDict> =
-                loader.call_method1("async_get_integration", (domain,))?.extract()?;
+            let manifest_dict: Bound<'_, PyDict> = loader
+                .call_method1("async_get_integration", (domain,))?
+                .extract()?;
 
             let get_str = |key: &str| -> Option<String> {
                 manifest_dict

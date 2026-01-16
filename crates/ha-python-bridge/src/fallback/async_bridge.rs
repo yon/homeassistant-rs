@@ -224,7 +224,8 @@ where
             if let Ok(asyncio) = py.import_bound("asyncio") {
                 if let Ok(loop_obj) = asyncio.call_method0("get_event_loop") {
                     if let Ok(set_result) = py_future.getattr("set_result") {
-                        let _ = loop_obj.call_method1("call_soon_threadsafe", (set_result, py_result));
+                        let _ =
+                            loop_obj.call_method1("call_soon_threadsafe", (set_result, py_result));
                     }
                 }
             }

@@ -64,7 +64,8 @@ impl ServiceBridge {
             let py_context = context_to_pyobject(py, context)?;
 
             // Call the async_call method
-            let coro = services.call_method1("async_call", (domain, service, py_data, py_context))?;
+            let coro =
+                services.call_method1("async_call", (domain, service, py_data, py_context))?;
 
             // Run the coroutine
             let result = self.async_bridge.run_coroutine_py(coro.into_py(py))?;
@@ -143,10 +144,7 @@ pub fn service_call_to_python<'py>(
 }
 
 /// Convert a serde_json::Value to a Python dict
-fn json_to_pydict<'py>(
-    py: Python<'py>,
-    value: &serde_json::Value,
-) -> PyResult<Bound<'py, PyDict>> {
+fn json_to_pydict<'py>(py: Python<'py>, value: &serde_json::Value) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new_bound(py);
 
     if let serde_json::Value::Object(map) = value {
@@ -203,7 +201,10 @@ fn pyobject_to_json(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<serde_js
     } else if let Ok(s) = obj.extract::<String>() {
         Ok(serde_json::Value::String(s))
     } else if let Ok(list) = obj.downcast::<pyo3::types::PyList>() {
-        let arr: Result<Vec<_>, _> = list.iter().map(|item| pyobject_to_json(py, &item)).collect();
+        let arr: Result<Vec<_>, _> = list
+            .iter()
+            .map(|item| pyobject_to_json(py, &item))
+            .collect();
         Ok(serde_json::Value::Array(arr?))
     } else if let Ok(dict) = obj.downcast::<PyDict>() {
         let mut map = serde_json::Map::new();
