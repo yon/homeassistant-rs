@@ -575,7 +575,7 @@ async fn handle_get_config(
         },
         "location_name": config.name,
         "time_zone": config.time_zone,
-        "components": ["homeassistant", "api", "websocket_api"],
+        "components": &*conn.state.components,
         "config_dir": "/config",
         "allowlist_external_dirs": config.allowlist_external_dirs,
         "allowlist_external_urls": config.allowlist_external_urls,

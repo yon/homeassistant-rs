@@ -281,7 +281,9 @@ impl TestSuites {
         harness
             .compare_get(
                 "/api/config",
-                Some(CompareOptions::new().ignore_field("whitelist_external_dirs")),
+                Some(CompareOptions::new()
+                    .ignore_field("whitelist_external_dirs")
+                    .ignore_field("allowlist_external_dirs")),
             )
             .await
             .print_summary();
