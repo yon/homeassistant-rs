@@ -435,7 +435,7 @@ mod tests {
 
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
-        let config = map.get(&Value::String("config".to_string())).unwrap();
+        let config = map.get(Value::String("config".to_string())).unwrap();
         let seq = config.as_sequence().unwrap();
         assert_eq!(seq.len(), 2);
         assert_eq!(seq[0], Value::String("simple".to_string()));
@@ -450,7 +450,7 @@ mod tests {
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
         assert_eq!(
-            map.get(&Value::String("key".to_string())),
+            map.get(Value::String("key".to_string())),
             Some(&Value::String("value".to_string()))
         );
     }
@@ -490,7 +490,7 @@ outer:
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
         assert_eq!(
-            map.get(&Value::String("password".to_string())),
+            map.get(Value::String("password".to_string())),
             Some(&Value::String("secret_password".to_string()))
         );
 
@@ -511,7 +511,7 @@ outer:
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
         assert_eq!(
-            map.get(&Value::String("password".to_string())),
+            map.get(Value::String("password".to_string())),
             Some(&Value::String("default_password".to_string()))
         );
     }
@@ -541,7 +541,7 @@ outer:
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
         assert_eq!(
-            map.get(&Value::String("password".to_string())),
+            map.get(Value::String("password".to_string())),
             Some(&Value::String("secret123".to_string()))
         );
     }
@@ -555,7 +555,7 @@ outer:
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
         assert_eq!(
-            map.get(&Value::String("port".to_string())),
+            map.get(Value::String("port".to_string())),
             Some(&Value::String("8080".to_string()))
         );
     }
@@ -594,10 +594,10 @@ outer:
 
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
-        let included = map.get(&Value::String("key".to_string())).unwrap();
+        let included = map.get(Value::String("key".to_string())).unwrap();
         let included_map = included.as_mapping().unwrap();
         assert_eq!(
-            included_map.get(&Value::String("included_key".to_string())),
+            included_map.get(Value::String("included_key".to_string())),
             Some(&Value::String("included_value".to_string()))
         );
     }
@@ -610,7 +610,7 @@ outer:
 
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
-        let items = map.get(&Value::String("items".to_string())).unwrap();
+        let items = map.get(Value::String("items".to_string())).unwrap();
         let seq = items.as_sequence().unwrap();
         assert_eq!(seq.len(), 3);
     }
@@ -624,12 +624,12 @@ outer:
 
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
-        let outer = map.get(&Value::String("outer".to_string())).unwrap();
+        let outer = map.get(Value::String("outer".to_string())).unwrap();
         let outer_map = outer.as_mapping().unwrap();
-        let middle = outer_map.get(&Value::String("middle".to_string())).unwrap();
+        let middle = outer_map.get(Value::String("middle".to_string())).unwrap();
         let middle_map = middle.as_mapping().unwrap();
         assert_eq!(
-            middle_map.get(&Value::String("deep_key".to_string())),
+            middle_map.get(Value::String("deep_key".to_string())),
             Some(&Value::String("deep_value".to_string()))
         );
     }
@@ -647,7 +647,7 @@ outer:
 
         let value = load_yaml(dir.path(), "subdir/config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
-        let data = map.get(&Value::String("data".to_string())).unwrap();
+        let data = map.get(Value::String("data".to_string())).unwrap();
         assert!(data.is_mapping());
     }
 
@@ -686,7 +686,7 @@ outer:
 
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
-        let key = map.get(&Value::String("key".to_string())).unwrap();
+        let key = map.get(Value::String("key".to_string())).unwrap();
         let seq = key.as_sequence().unwrap();
         assert_eq!(seq.len(), 2);
     }
@@ -702,7 +702,7 @@ outer:
 
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
-        let key = map.get(&Value::String("key".to_string())).unwrap();
+        let key = map.get(Value::String("key".to_string())).unwrap();
         let seq = key.as_sequence().unwrap();
         assert_eq!(seq.len(), 3); // zero, one, two
     }
@@ -718,7 +718,7 @@ outer:
 
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
-        let key = map.get(&Value::String("key".to_string())).unwrap();
+        let key = map.get(Value::String("key".to_string())).unwrap();
         let seq = key.as_sequence().unwrap();
         assert_eq!(seq.len(), 1); // Only visible.yaml
     }
@@ -739,7 +739,7 @@ outer:
 
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
-        let key = map.get(&Value::String("key".to_string())).unwrap();
+        let key = map.get(Value::String("key".to_string())).unwrap();
         let seq = key.as_sequence().unwrap();
         assert_eq!(seq.len(), 3);
     }
@@ -759,7 +759,7 @@ outer:
 
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
-        let key = map.get(&Value::String("key".to_string())).unwrap();
+        let key = map.get(Value::String("key".to_string())).unwrap();
         let seq = key.as_sequence().unwrap();
         assert_eq!(seq.len(), 4);
     }
@@ -776,10 +776,10 @@ outer:
 
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
-        let key = map.get(&Value::String("key".to_string())).unwrap();
+        let key = map.get(Value::String("key".to_string())).unwrap();
         let key_map = key.as_mapping().unwrap();
-        assert!(key_map.contains_key(&Value::String("first".to_string())));
-        assert!(key_map.contains_key(&Value::String("second".to_string())));
+        assert!(key_map.contains_key(Value::String("first".to_string())));
+        assert!(key_map.contains_key(Value::String("second".to_string())));
     }
 
     #[test]
@@ -792,10 +792,10 @@ outer:
 
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
-        let key = map.get(&Value::String("key".to_string())).unwrap();
+        let key = map.get(Value::String("key".to_string())).unwrap();
         let key_map = key.as_mapping().unwrap();
-        assert!(key_map.contains_key(&Value::String("first".to_string())));
-        assert!(!key_map.contains_key(&Value::String("secrets".to_string())));
+        assert!(key_map.contains_key(Value::String("first".to_string())));
+        assert!(!key_map.contains_key(Value::String("secrets".to_string())));
     }
 
     #[test]
@@ -809,7 +809,7 @@ outer:
 
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
-        let key = map.get(&Value::String("key".to_string())).unwrap();
+        let key = map.get(Value::String("key".to_string())).unwrap();
         let key_map = key.as_mapping().unwrap();
         assert_eq!(key_map.len(), 3);
     }
@@ -830,11 +830,11 @@ outer:
 
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
-        let key = map.get(&Value::String("key".to_string())).unwrap();
+        let key = map.get(Value::String("key".to_string())).unwrap();
         let key_map = key.as_mapping().unwrap();
-        assert!(key_map.contains_key(&Value::String("key1".to_string())));
-        assert!(key_map.contains_key(&Value::String("key2".to_string())));
-        assert!(key_map.contains_key(&Value::String("key3".to_string())));
+        assert!(key_map.contains_key(Value::String("key1".to_string())));
+        assert!(key_map.contains_key(Value::String("key2".to_string())));
+        assert!(key_map.contains_key(Value::String("key3".to_string())));
     }
 
     #[test]
@@ -856,7 +856,7 @@ outer:
 
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
-        let key = map.get(&Value::String("key".to_string())).unwrap();
+        let key = map.get(Value::String("key".to_string())).unwrap();
         let key_map = key.as_mapping().unwrap();
         assert_eq!(key_map.len(), 4);
     }
@@ -910,11 +910,11 @@ include_val: !include included.yaml
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
         assert_eq!(
-            map.get(&Value::String("secret_val".to_string())),
+            map.get(Value::String("secret_val".to_string())),
             Some(&Value::String("secret_key".to_string()))
         );
         assert_eq!(
-            map.get(&Value::String("env_val".to_string())),
+            map.get(Value::String("env_val".to_string())),
             Some(&Value::String("env_value".to_string()))
         );
 
@@ -938,10 +938,10 @@ include_val: !include included.yaml
 
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
-        let db = map.get(&Value::String("database".to_string())).unwrap();
+        let db = map.get(Value::String("database".to_string())).unwrap();
         let db_map = db.as_mapping().unwrap();
         assert_eq!(
-            db_map.get(&Value::String("db_password".to_string())),
+            db_map.get(Value::String("db_password".to_string())),
             Some(&Value::String("secret123".to_string()))
         );
     }
