@@ -59,7 +59,7 @@ fn setup_engine_with_states() -> TemplateEngine {
 
     state_machine.set(
         EntityId::new("sensor", "long_value").unwrap(),
-        &"x".repeat(1000),
+        "x".repeat(1000),
         HashMap::new(),
         Context::new(),
     );

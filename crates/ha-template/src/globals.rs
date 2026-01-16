@@ -625,7 +625,7 @@ mod tests {
     #[test]
     fn test_typeof() {
         assert_eq!(typeof_fn(Value::from(42)), "integer");
-        assert_eq!(typeof_fn(Value::from(3.14)), "float");
+        assert_eq!(typeof_fn(Value::from(3.5)), "float");
         assert_eq!(typeof_fn(Value::from("hello")), "string");
         assert_eq!(typeof_fn(Value::from(true)), "boolean");
     }

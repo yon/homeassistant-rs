@@ -637,7 +637,7 @@ mod tests {
     #[test]
     fn test_is_number() {
         assert!(is_number(Value::from(42)));
-        assert!(is_number(Value::from(3.14)));
+        assert!(is_number(Value::from(3.5)));
         assert!(!is_number(Value::from("hello")));
     }
 }

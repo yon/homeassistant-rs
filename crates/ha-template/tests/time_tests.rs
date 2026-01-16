@@ -39,7 +39,7 @@ fn test_now_month() {
     let engine = setup_engine();
     let result = engine.render("{{ now().month }}").unwrap();
     let month: i32 = result.parse().expect("Month should be numeric");
-    assert!(month >= 1 && month <= 12);
+    assert!((1..=12).contains(&month));
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn test_now_day() {
     let engine = setup_engine();
     let result = engine.render("{{ now().day }}").unwrap();
     let day: i32 = result.parse().expect("Day should be numeric");
-    assert!(day >= 1 && day <= 31);
+    assert!((1..=31).contains(&day));
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn test_now_hour() {
     let engine = setup_engine();
     let result = engine.render("{{ now().hour }}").unwrap();
     let hour: i32 = result.parse().expect("Hour should be numeric");
-    assert!(hour >= 0 && hour <= 23);
+    assert!((0..=23).contains(&hour));
 }
 
 #[test]
@@ -63,7 +63,7 @@ fn test_now_minute() {
     let engine = setup_engine();
     let result = engine.render("{{ now().minute }}").unwrap();
     let minute: i32 = result.parse().expect("Minute should be numeric");
-    assert!(minute >= 0 && minute <= 59);
+    assert!((0..=59).contains(&minute));
 }
 
 #[test]
@@ -71,7 +71,7 @@ fn test_now_second() {
     let engine = setup_engine();
     let result = engine.render("{{ now().second }}").unwrap();
     let second: i32 = result.parse().expect("Second should be numeric");
-    assert!(second >= 0 && second <= 59);
+    assert!((0..=59).contains(&second));
 }
 
 #[test]
@@ -79,7 +79,7 @@ fn test_now_weekday() {
     let engine = setup_engine();
     let result = engine.render("{{ now().weekday() }}").unwrap();
     let weekday: i32 = result.parse().expect("Weekday should be numeric");
-    assert!(weekday >= 0 && weekday <= 6);
+    assert!((0..=6).contains(&weekday));
 }
 
 // ==================== utcnow() function tests ====================
@@ -104,7 +104,7 @@ fn test_utcnow_hour() {
     let engine = setup_engine();
     let result = engine.render("{{ utcnow().hour }}").unwrap();
     let hour: i32 = result.parse().expect("Hour should be numeric");
-    assert!(hour >= 0 && hour <= 23);
+    assert!((0..=23).contains(&hour));
 }
 
 // ==================== as_timestamp() function tests ====================

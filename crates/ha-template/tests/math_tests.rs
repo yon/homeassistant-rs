@@ -73,7 +73,7 @@ fn test_sqrt_2() {
     let engine = setup_engine();
     let result = engine.render("{{ 2 | sqrt }}").unwrap();
     let value: f64 = result.parse().unwrap();
-    assert!((value - 1.41421356).abs() < 0.0001);
+    assert!((value - std::f64::consts::SQRT_2).abs() < 0.0001);
 }
 
 #[test]
@@ -231,28 +231,28 @@ fn test_cos_pi() {
 #[test]
 fn test_asin_1() {
     let engine = setup_engine();
-    // asin(1) ≈ π/2 ≈ 1.5707963
+    // asin(1) = π/2
     let result = engine.render("{{ 1 | asin }}").unwrap();
     let value: f64 = result.parse().unwrap();
-    assert!((value - 1.5707963).abs() < 0.0001);
+    assert!((value - std::f64::consts::FRAC_PI_2).abs() < 0.0001);
 }
 
 #[test]
 fn test_acos_0() {
     let engine = setup_engine();
-    // acos(0) ≈ π/2 ≈ 1.5707963
+    // acos(0) = π/2
     let result = engine.render("{{ 0 | acos }}").unwrap();
     let value: f64 = result.parse().unwrap();
-    assert!((value - 1.5707963).abs() < 0.0001);
+    assert!((value - std::f64::consts::FRAC_PI_2).abs() < 0.0001);
 }
 
 #[test]
 fn test_atan_1() {
     let engine = setup_engine();
-    // atan(1) ≈ π/4 ≈ 0.7853982
+    // atan(1) = π/4
     let result = engine.render("{{ 1 | atan }}").unwrap();
     let value: f64 = result.parse().unwrap();
-    assert!((value - 0.7853982).abs() < 0.0001);
+    assert!((value - std::f64::consts::FRAC_PI_4).abs() < 0.0001);
 }
 
 // ==================== average filter tests ====================

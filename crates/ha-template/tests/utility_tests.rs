@@ -17,6 +17,7 @@ fn setup_engine() -> TemplateEngine {
     TemplateEngine::new(state_machine)
 }
 
+#[allow(dead_code)]
 fn setup_engine_with_trackers() -> TemplateEngine {
     let event_bus = Arc::new(EventBus::new());
     let state_machine = Arc::new(StateMachine::new(event_bus));
