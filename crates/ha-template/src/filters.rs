@@ -9,7 +9,8 @@ use std::convert::TryFrom;
 
 /// Helper to convert Value to f64
 fn value_to_f64(value: &Value) -> Option<f64> {
-    f64::try_from(value.clone()).ok()
+    f64::try_from(value.clone())
+        .ok()
         .or_else(|| value.as_i64().map(|i| i as f64))
 }
 
@@ -22,23 +23,23 @@ fn value_to_bool(value: &Value) -> Option<bool> {
 
 /// Convert a string to a slug
 pub fn slugify(value: &str, kwargs: Kwargs) -> Result<String, Error> {
-    let separator: String = kwargs.get::<Option<String>>("separator")?.unwrap_or_else(|| "_".to_string());
+    let separator: String = kwargs
+        .get::<Option<String>>("separator")?
+        .unwrap_or_else(|| "_".to_string());
     Ok(slug::slugify(value).replace('-', &separator))
 }
 
 /// Replace matches of a regex pattern with a replacement string
 pub fn regex_replace(value: &str, find: &str, replace: &str) -> Result<String, Error> {
-    let re = Regex::new(find).map_err(|e| {
-        Error::new(ErrorKind::InvalidOperation, format!("invalid regex: {}", e))
-    })?;
+    let re = Regex::new(find)
+        .map_err(|e| Error::new(ErrorKind::InvalidOperation, format!("invalid regex: {}", e)))?;
     Ok(re.replace_all(value, replace).to_string())
 }
 
 /// Find all matches of a regex pattern
 pub fn regex_findall(value: &str, pattern: &str) -> Result<Value, Error> {
-    let re = Regex::new(pattern).map_err(|e| {
-        Error::new(ErrorKind::InvalidOperation, format!("invalid regex: {}", e))
-    })?;
+    let re = Regex::new(pattern)
+        .map_err(|e| Error::new(ErrorKind::InvalidOperation, format!("invalid regex: {}", e)))?;
 
     let matches: Vec<Value> = re
         .captures_iter(value)
@@ -66,9 +67,8 @@ pub fn regex_findall(value: &str, pattern: &str) -> Result<Value, Error> {
 
 /// Test if a regex pattern matches
 pub fn regex_match(value: &str, pattern: &str) -> Result<bool, Error> {
-    let re = Regex::new(pattern).map_err(|e| {
-        Error::new(ErrorKind::InvalidOperation, format!("invalid regex: {}", e))
-    })?;
+    let re = Regex::new(pattern)
+        .map_err(|e| Error::new(ErrorKind::InvalidOperation, format!("invalid regex: {}", e)))?;
     Ok(re.is_match(value))
 }
 
@@ -268,7 +268,9 @@ pub fn contains(value: Value, search: Value) -> bool {
 /// Round a number to specified precision
 pub fn round_filter(value: f64, precision: Option<i32>, kwargs: Kwargs) -> Result<f64, Error> {
     let precision = precision.unwrap_or(0);
-    let method: String = kwargs.get::<Option<String>>("method")?.unwrap_or_else(|| "common".to_string());
+    let method: String = kwargs
+        .get::<Option<String>>("method")?
+        .unwrap_or_else(|| "common".to_string());
 
     let multiplier = 10_f64.powi(precision);
     let scaled = value * multiplier;
@@ -401,9 +403,7 @@ pub fn median(_state: &State, values: Value) -> Result<Value, Error> {
         Err(_) => return Ok(Value::UNDEFINED),
     };
 
-    let mut nums: Vec<f64> = iter
-        .filter_map(|v| value_to_f64(&v))
-        .collect();
+    let mut nums: Vec<f64> = iter.filter_map(|v| value_to_f64(&v)).collect();
 
     if nums.is_empty() {
         return Ok(Value::UNDEFINED);
@@ -480,8 +480,7 @@ fn value_to_json(value: &Value) -> Result<serde_json::Value, Error> {
             Ok(serde_json::Value::String(value.to_string()))
         }
     } else if let Ok(iter) = value.try_iter() {
-        let arr: Result<Vec<serde_json::Value>, Error> =
-            iter.map(|v| value_to_json(&v)).collect();
+        let arr: Result<Vec<serde_json::Value>, Error> = iter.map(|v| value_to_json(&v)).collect();
         Ok(serde_json::Value::Array(arr?))
     } else {
         // Try to serialize as string
@@ -529,7 +528,12 @@ pub fn base64_decode(value: &str) -> Result<String, Error> {
     use base64::Engine;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(value)
-        .map_err(|e| Error::new(ErrorKind::InvalidOperation, format!("invalid base64: {}", e)))?;
+        .map_err(|e| {
+            Error::new(
+                ErrorKind::InvalidOperation,
+                format!("invalid base64: {}", e),
+            )
+        })?;
 
     String::from_utf8(bytes)
         .map_err(|e| Error::new(ErrorKind::InvalidOperation, format!("invalid UTF-8: {}", e)))

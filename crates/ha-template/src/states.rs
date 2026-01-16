@@ -12,7 +12,8 @@ use std::sync::Arc;
 
 /// Helper to convert Value to f64
 fn value_to_f64(value: &Value) -> Option<f64> {
-    f64::try_from(value.clone()).ok()
+    f64::try_from(value.clone())
+        .ok()
         .or_else(|| value.as_i64().map(|i| i as f64))
 }
 
@@ -117,16 +118,11 @@ impl Object for StatesObject {
         }))
     }
 
-    fn call(
-        self: &Arc<Self>,
-        _state: &minijinja::State,
-        args: &[Value],
-    ) -> Result<Value, Error> {
+    fn call(self: &Arc<Self>, _state: &minijinja::State, args: &[Value]) -> Result<Value, Error> {
         // states('entity_id') -> returns state string
-        let entity_id = args
-            .first()
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| Error::new(ErrorKind::InvalidOperation, "states() requires entity_id"))?;
+        let entity_id = args.first().and_then(|v| v.as_str()).ok_or_else(|| {
+            Error::new(ErrorKind::InvalidOperation, "states() requires entity_id")
+        })?;
 
         Ok(self
             .get_state(entity_id)
@@ -164,11 +160,7 @@ impl Object for DomainProxy {
         self.state_machine.get(&entity_id).map(state_to_value)
     }
 
-    fn call(
-        self: &Arc<Self>,
-        _state: &minijinja::State,
-        _args: &[Value],
-    ) -> Result<Value, Error> {
+    fn call(self: &Arc<Self>, _state: &minijinja::State, _args: &[Value]) -> Result<Value, Error> {
         // Return all entities in this domain as a list
         let entities: Vec<Value> = self
             .state_machine
@@ -229,10 +221,7 @@ impl Object for StateWrapper {
             }
             _ => {
                 // Check if it's an attribute
-                self.0
-                    .attributes
-                    .get(key)
-                    .map(|v| json_to_value(v.clone()))
+                self.0.attributes.get(key).map(|v| json_to_value(v.clone()))
             }
         }
     }
@@ -298,17 +287,15 @@ fn values_equal(a: &Value, b: &Value) -> bool {
 }
 
 /// Function wrapper for is_state
-pub fn is_state_fn(
-    states: Arc<StatesObject>,
-    entity_id: &str,
-    state: Value,
-) -> bool {
+pub fn is_state_fn(states: Arc<StatesObject>, entity_id: &str, state: Value) -> bool {
     // Check for string first (strings are iterable in minijinja, so check this first)
     if let Some(s) = state.as_str() {
         states.is_state(entity_id, s)
     } else if let Ok(iter) = state.try_iter() {
         // Check against multiple states (list/array)
-        let states_vec: Vec<String> = iter.filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+        let states_vec: Vec<String> = iter
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
         let refs: Vec<&str> = states_vec.iter().map(|s| s.as_str()).collect();
         states.is_state_any(entity_id, &refs)
     } else {
@@ -353,7 +340,10 @@ mod tests {
             "on",
             HashMap::from([
                 ("brightness".to_string(), serde_json::json!(255)),
-                ("friendly_name".to_string(), serde_json::json!("Living Room Light")),
+                (
+                    "friendly_name".to_string(),
+                    serde_json::json!("Living Room Light"),
+                ),
             ]),
             Context::new(),
         );

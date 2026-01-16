@@ -86,10 +86,7 @@ fn test_int_from_negative() {
 #[test]
 fn test_int_invalid_with_default() {
     let engine = setup_engine();
-    assert_eq!(
-        engine.render("{{ 'not_a_number' | int(0) }}").unwrap(),
-        "0"
-    );
+    assert_eq!(engine.render("{{ 'not_a_number' | int(0) }}").unwrap(), "0");
 }
 
 #[test]
@@ -245,10 +242,12 @@ fn test_is_string_empty() {
 #[test]
 fn test_is_list_true() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ items | is_list }}",
-        serde_json::json!({"items": [1, 2, 3]}),
-    ).unwrap();
+    let result = engine
+        .render_with_context(
+            "{{ items | is_list }}",
+            serde_json::json!({"items": [1, 2, 3]}),
+        )
+        .unwrap();
     assert_eq!(result, "true");
 }
 
@@ -267,10 +266,9 @@ fn test_is_list_false_number() {
 #[test]
 fn test_is_list_empty() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ items | is_list }}",
-        serde_json::json!({"items": []}),
-    ).unwrap();
+    let result = engine
+        .render_with_context("{{ items | is_list }}", serde_json::json!({"items": []}))
+        .unwrap();
     assert_eq!(result, "true");
 }
 
@@ -279,20 +277,18 @@ fn test_is_list_empty() {
 #[test]
 fn test_is_defined_true() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ value is defined }}",
-        serde_json::json!({"value": 42}),
-    ).unwrap();
+    let result = engine
+        .render_with_context("{{ value is defined }}", serde_json::json!({"value": 42}))
+        .unwrap();
     assert_eq!(result, "true");
 }
 
 #[test]
 fn test_is_defined_false() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ missing is defined }}",
-        serde_json::json!({"other": 42}),
-    ).unwrap();
+    let result = engine
+        .render_with_context("{{ missing is defined }}", serde_json::json!({"other": 42}))
+        .unwrap();
     assert_eq!(result, "false");
 }
 
@@ -325,20 +321,24 @@ fn test_typeof_boolean() {
 #[test]
 fn test_typeof_list() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ typeof(items) }}",
-        serde_json::json!({"items": [1, 2, 3]}),
-    ).unwrap();
+    let result = engine
+        .render_with_context(
+            "{{ typeof(items) }}",
+            serde_json::json!({"items": [1, 2, 3]}),
+        )
+        .unwrap();
     assert_eq!(result, "list");
 }
 
 #[test]
 fn test_typeof_dict() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ typeof(obj) }}",
-        serde_json::json!({"obj": {"key": "value"}}),
-    ).unwrap();
+    let result = engine
+        .render_with_context(
+            "{{ typeof(obj) }}",
+            serde_json::json!({"obj": {"key": "value"}}),
+        )
+        .unwrap();
     // Could be "object" or "mapping" depending on implementation
     assert!(result == "object" || result == "mapping" || result == "dict");
 }
@@ -373,20 +373,24 @@ fn test_range_with_step() {
 #[test]
 fn test_default_filter_used() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ missing | default('fallback') }}",
-        serde_json::json!({"other": 42}),
-    ).unwrap();
+    let result = engine
+        .render_with_context(
+            "{{ missing | default('fallback') }}",
+            serde_json::json!({"other": 42}),
+        )
+        .unwrap();
     assert_eq!(result, "fallback");
 }
 
 #[test]
 fn test_default_filter_not_used() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ value | default('fallback') }}",
-        serde_json::json!({"value": "actual"}),
-    ).unwrap();
+    let result = engine
+        .render_with_context(
+            "{{ value | default('fallback') }}",
+            serde_json::json!({"value": "actual"}),
+        )
+        .unwrap();
     assert_eq!(result, "actual");
 }
 

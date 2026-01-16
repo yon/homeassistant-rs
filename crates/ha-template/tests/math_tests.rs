@@ -124,7 +124,10 @@ fn test_round_negative() {
 #[test]
 fn test_round_large_precision() {
     let engine = setup_engine();
-    assert_eq!(engine.render("{{ 3.14159265 | round(5) }}").unwrap(), "3.14159");
+    assert_eq!(
+        engine.render("{{ 3.14159265 | round(5) }}").unwrap(),
+        "3.14159"
+    );
 }
 
 // ==================== abs filter tests ====================
@@ -257,10 +260,12 @@ fn test_atan_1() {
 #[test]
 fn test_average_list() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ values | average }}",
-        serde_json::json!({"values": [1, 2, 3, 4, 5]}),
-    ).unwrap();
+    let result = engine
+        .render_with_context(
+            "{{ values | average }}",
+            serde_json::json!({"values": [1, 2, 3, 4, 5]}),
+        )
+        .unwrap();
     let value: f64 = result.parse().unwrap();
     assert!((value - 3.0).abs() < 0.0001);
 }
@@ -268,10 +273,12 @@ fn test_average_list() {
 #[test]
 fn test_average_floats() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ values | average }}",
-        serde_json::json!({"values": [1.5, 2.5, 3.5]}),
-    ).unwrap();
+    let result = engine
+        .render_with_context(
+            "{{ values | average }}",
+            serde_json::json!({"values": [1.5, 2.5, 3.5]}),
+        )
+        .unwrap();
     let value: f64 = result.parse().unwrap();
     assert!((value - 2.5).abs() < 0.0001);
 }
@@ -281,10 +288,12 @@ fn test_average_floats() {
 #[test]
 fn test_median_odd() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ values | median }}",
-        serde_json::json!({"values": [1, 3, 2, 4, 5]}),
-    ).unwrap();
+    let result = engine
+        .render_with_context(
+            "{{ values | median }}",
+            serde_json::json!({"values": [1, 3, 2, 4, 5]}),
+        )
+        .unwrap();
     let value: f64 = result.parse().unwrap();
     assert!((value - 3.0).abs() < 0.0001);
 }
@@ -292,10 +301,12 @@ fn test_median_odd() {
 #[test]
 fn test_median_even() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ values | median }}",
-        serde_json::json!({"values": [1, 2, 3, 4]}),
-    ).unwrap();
+    let result = engine
+        .render_with_context(
+            "{{ values | median }}",
+            serde_json::json!({"values": [1, 2, 3, 4]}),
+        )
+        .unwrap();
     let value: f64 = result.parse().unwrap();
     // Median of [1,2,3,4] = (2+3)/2 = 2.5
     assert!((value - 2.5).abs() < 0.0001);

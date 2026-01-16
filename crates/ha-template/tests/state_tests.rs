@@ -30,9 +30,7 @@ fn setup_engine() -> TemplateEngine {
     state_machine.set(
         EntityId::new("light", "bedroom").unwrap(),
         "off",
-        HashMap::from([
-            ("friendly_name".to_string(), json!("Bedroom Light")),
-        ]),
+        HashMap::from([("friendly_name".to_string(), json!("Bedroom Light"))]),
         Context::new(),
     );
 
@@ -49,9 +47,7 @@ fn setup_engine() -> TemplateEngine {
     state_machine.set(
         EntityId::new("sensor", "humidity").unwrap(),
         "65",
-        HashMap::from([
-            ("unit_of_measurement".to_string(), json!("%")),
-        ]),
+        HashMap::from([("unit_of_measurement".to_string(), json!("%"))]),
         Context::new(),
     );
 
@@ -83,9 +79,7 @@ fn setup_engine() -> TemplateEngine {
     state_machine.set(
         EntityId::new("binary_sensor", "motion").unwrap(),
         "on",
-        HashMap::from([
-            ("device_class".to_string(), json!("motion")),
-        ]),
+        HashMap::from([("device_class".to_string(), json!("motion"))]),
         Context::new(),
     );
 
@@ -124,7 +118,9 @@ fn test_states_function_nonexistent_entity_returns_undefined() {
 fn test_states_object_access() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ states.light.living_room.state }}").unwrap(),
+        engine
+            .render("{{ states.light.living_room.state }}")
+            .unwrap(),
         "on"
     );
 }
@@ -134,7 +130,9 @@ fn test_states_object_domain_access() {
     let engine = setup_engine();
     // Access state via domain.object_id
     assert_eq!(
-        engine.render("{{ states.sensor.temperature.state }}").unwrap(),
+        engine
+            .render("{{ states.sensor.temperature.state }}")
+            .unwrap(),
         "23.5"
     );
 }
@@ -143,7 +141,9 @@ fn test_states_object_domain_access() {
 fn test_states_object_entity_id_attribute() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ states.light.living_room.entity_id }}").unwrap(),
+        engine
+            .render("{{ states.light.living_room.entity_id }}")
+            .unwrap(),
         "light.living_room"
     );
 }
@@ -152,7 +152,9 @@ fn test_states_object_entity_id_attribute() {
 fn test_states_object_domain_attribute() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ states.light.living_room.domain }}").unwrap(),
+        engine
+            .render("{{ states.light.living_room.domain }}")
+            .unwrap(),
         "light"
     );
 }
@@ -161,7 +163,9 @@ fn test_states_object_domain_attribute() {
 fn test_states_object_name_attribute() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ states.light.living_room.name }}").unwrap(),
+        engine
+            .render("{{ states.light.living_room.name }}")
+            .unwrap(),
         "Living Room Light"
     );
 }
@@ -172,7 +176,9 @@ fn test_states_object_name_attribute() {
 fn test_is_state_true() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ is_state('light.living_room', 'on') }}").unwrap(),
+        engine
+            .render("{{ is_state('light.living_room', 'on') }}")
+            .unwrap(),
         "true"
     );
 }
@@ -181,7 +187,9 @@ fn test_is_state_true() {
 fn test_is_state_false() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ is_state('light.living_room', 'off') }}").unwrap(),
+        engine
+            .render("{{ is_state('light.living_room', 'off') }}")
+            .unwrap(),
         "false"
     );
 }
@@ -190,7 +198,9 @@ fn test_is_state_false() {
 fn test_is_state_with_list_matching() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ is_state('light.living_room', ['on', 'off']) }}").unwrap(),
+        engine
+            .render("{{ is_state('light.living_room', ['on', 'off']) }}")
+            .unwrap(),
         "true"
     );
 }
@@ -199,7 +209,9 @@ fn test_is_state_with_list_matching() {
 fn test_is_state_with_list_not_matching() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ is_state('light.living_room', ['off', 'unavailable']) }}").unwrap(),
+        engine
+            .render("{{ is_state('light.living_room', ['off', 'unavailable']) }}")
+            .unwrap(),
         "false"
     );
 }
@@ -208,7 +220,9 @@ fn test_is_state_with_list_not_matching() {
 fn test_is_state_nonexistent_entity() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ is_state('light.nonexistent', 'on') }}").unwrap(),
+        engine
+            .render("{{ is_state('light.nonexistent', 'on') }}")
+            .unwrap(),
         "false"
     );
 }
@@ -217,7 +231,9 @@ fn test_is_state_nonexistent_entity() {
 fn test_is_state_unavailable() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ is_state('switch.unavailable_device', 'unavailable') }}").unwrap(),
+        engine
+            .render("{{ is_state('switch.unavailable_device', 'unavailable') }}")
+            .unwrap(),
         "true"
     );
 }
@@ -226,7 +242,9 @@ fn test_is_state_unavailable() {
 fn test_is_state_unknown() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ is_state('switch.unknown_device', 'unknown') }}").unwrap(),
+        engine
+            .render("{{ is_state('switch.unknown_device', 'unknown') }}")
+            .unwrap(),
         "true"
     );
 }
@@ -237,7 +255,9 @@ fn test_is_state_unknown() {
 fn test_state_attr_returns_value() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ state_attr('light.living_room', 'brightness') }}").unwrap(),
+        engine
+            .render("{{ state_attr('light.living_room', 'brightness') }}")
+            .unwrap(),
         "255"
     );
 }
@@ -246,7 +266,9 @@ fn test_state_attr_returns_value() {
 fn test_state_attr_returns_string() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ state_attr('light.living_room', 'friendly_name') }}").unwrap(),
+        engine
+            .render("{{ state_attr('light.living_room', 'friendly_name') }}")
+            .unwrap(),
         "Living Room Light"
     );
 }
@@ -254,14 +276,18 @@ fn test_state_attr_returns_string() {
 #[test]
 fn test_state_attr_nonexistent_attribute() {
     let engine = setup_engine();
-    let result = engine.render("{{ state_attr('light.living_room', 'nonexistent') }}").unwrap();
+    let result = engine
+        .render("{{ state_attr('light.living_room', 'nonexistent') }}")
+        .unwrap();
     assert!(result.is_empty() || result == "undefined");
 }
 
 #[test]
 fn test_state_attr_nonexistent_entity() {
     let engine = setup_engine();
-    let result = engine.render("{{ state_attr('light.nonexistent', 'brightness') }}").unwrap();
+    let result = engine
+        .render("{{ state_attr('light.nonexistent', 'brightness') }}")
+        .unwrap();
     assert!(result.is_empty() || result == "undefined");
 }
 
@@ -269,7 +295,9 @@ fn test_state_attr_nonexistent_entity() {
 fn test_state_attr_numeric_comparison() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ state_attr('device_tracker.paulus', 'battery') > 50 }}").unwrap(),
+        engine
+            .render("{{ state_attr('device_tracker.paulus', 'battery') > 50 }}")
+            .unwrap(),
         "true"
     );
 }
@@ -278,7 +306,9 @@ fn test_state_attr_numeric_comparison() {
 fn test_is_state_attr_matching() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ is_state_attr('light.living_room', 'brightness', 255) }}").unwrap(),
+        engine
+            .render("{{ is_state_attr('light.living_room', 'brightness', 255) }}")
+            .unwrap(),
         "true"
     );
 }
@@ -287,7 +317,9 @@ fn test_is_state_attr_matching() {
 fn test_is_state_attr_not_matching() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ is_state_attr('light.living_room', 'brightness', 100) }}").unwrap(),
+        engine
+            .render("{{ is_state_attr('light.living_room', 'brightness', 100) }}")
+            .unwrap(),
         "false"
     );
 }
@@ -298,7 +330,9 @@ fn test_is_state_attr_not_matching() {
 fn test_has_value_true() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ has_value('light.living_room') }}").unwrap(),
+        engine
+            .render("{{ has_value('light.living_room') }}")
+            .unwrap(),
         "true"
     );
 }
@@ -307,7 +341,9 @@ fn test_has_value_true() {
 fn test_has_value_false_unavailable() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ has_value('switch.unavailable_device') }}").unwrap(),
+        engine
+            .render("{{ has_value('switch.unavailable_device') }}")
+            .unwrap(),
         "false"
     );
 }
@@ -316,7 +352,9 @@ fn test_has_value_false_unavailable() {
 fn test_has_value_false_unknown() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ has_value('switch.unknown_device') }}").unwrap(),
+        engine
+            .render("{{ has_value('switch.unknown_device') }}")
+            .unwrap(),
         "false"
     );
 }
@@ -325,7 +363,9 @@ fn test_has_value_false_unknown() {
 fn test_has_value_nonexistent_entity() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ has_value('switch.nonexistent') }}").unwrap(),
+        engine
+            .render("{{ has_value('switch.nonexistent') }}")
+            .unwrap(),
         "false"
     );
 }
@@ -336,7 +376,9 @@ fn test_has_value_nonexistent_entity() {
 fn test_state_access_via_attributes() {
     let engine = setup_engine();
     // Access attributes directly from state object
-    let result = engine.render("{{ states.light.living_room.attributes.brightness }}").unwrap();
+    let result = engine
+        .render("{{ states.light.living_room.attributes.brightness }}")
+        .unwrap();
     assert_eq!(result, "255");
 }
 
@@ -372,14 +414,17 @@ Light is off
 fn test_sensor_state_as_number() {
     let engine = setup_engine();
     // Test that sensor state can be used in calculations
-    let result = engine.render("{{ states('sensor.temperature') | float * 2 }}").unwrap();
+    let result = engine
+        .render("{{ states('sensor.temperature') | float * 2 }}")
+        .unwrap();
     assert_eq!(result, "47.0");
 }
 
 #[test]
 fn test_multiple_state_checks() {
     let engine = setup_engine();
-    let template = r#"{{ is_state('light.living_room', 'on') and is_state('binary_sensor.motion', 'on') }}"#;
+    let template =
+        r#"{{ is_state('light.living_room', 'on') and is_state('binary_sensor.motion', 'on') }}"#;
     let result = engine.render(template).unwrap();
     assert_eq!(result, "true");
 }
@@ -387,7 +432,8 @@ fn test_multiple_state_checks() {
 #[test]
 fn test_state_in_arithmetic() {
     let engine = setup_engine();
-    let template = r#"{{ states('sensor.temperature') | float + states('sensor.humidity') | float }}"#;
+    let template =
+        r#"{{ states('sensor.temperature') | float + states('sensor.humidity') | float }}"#;
     let result = engine.render(template).unwrap();
     assert_eq!(result, "88.5");
 }
@@ -396,6 +442,8 @@ fn test_state_in_arithmetic() {
 fn test_direct_attribute_access_shorthand() {
     let engine = setup_engine();
     // Access attribute directly on state object (not via .attributes)
-    let result = engine.render("{{ states.light.living_room.brightness }}").unwrap();
+    let result = engine
+        .render("{{ states.light.living_room.brightness }}")
+        .unwrap();
     assert_eq!(result, "255");
 }

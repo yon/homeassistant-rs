@@ -9,7 +9,8 @@ use std::convert::TryFrom;
 
 /// Helper to convert Value to f64
 fn value_to_f64(value: &Value) -> Option<f64> {
-    f64::try_from(value.clone()).ok()
+    f64::try_from(value.clone())
+        .ok()
         .or_else(|| value.as_i64().map(|i| i as f64))
 }
 
@@ -99,12 +100,8 @@ pub fn as_datetime(value: Value) -> Result<Value, Error> {
             return Ok(Value::from_object(DateTimeWrapper(dt.with_timezone(&Utc))));
         }
         // Try parsing as timestamp
-        s.parse::<i64>().map_err(|_| {
-            Error::new(
-                ErrorKind::InvalidOperation,
-                "cannot parse datetime string",
-            )
-        })?
+        s.parse::<i64>()
+            .map_err(|_| Error::new(ErrorKind::InvalidOperation, "cannot parse datetime string"))?
     } else if let Some(i) = value.as_i64() {
         i
     } else if let Some(f) = value_to_f64(&value) {
@@ -116,9 +113,8 @@ pub fn as_datetime(value: Value) -> Result<Value, Error> {
         ));
     };
 
-    let dt = DateTime::from_timestamp(ts, 0).ok_or_else(|| {
-        Error::new(ErrorKind::InvalidOperation, "invalid timestamp")
-    })?;
+    let dt = DateTime::from_timestamp(ts, 0)
+        .ok_or_else(|| Error::new(ErrorKind::InvalidOperation, "invalid timestamp"))?;
 
     Ok(Value::from_object(DateTimeWrapper(dt)))
 }
@@ -177,14 +173,14 @@ pub fn as_timedelta(value: &str) -> Result<Value, Error> {
                 .parse::<i64>()
                 .map_err(|_| Error::new(ErrorKind::InvalidOperation, "invalid timedelta"))?
                 * 86400;
-            return parse_time_to_seconds(time_str.trim())
-                .map(|s| Value::from_object(TimeDeltaWrapper(Duration::seconds(total_seconds + s))));
+            return parse_time_to_seconds(time_str.trim()).map(|s| {
+                Value::from_object(TimeDeltaWrapper(Duration::seconds(total_seconds + s)))
+            });
         }
     }
 
     // Parse HH:MM:SS or MM:SS
-    parse_time_to_seconds(value)
-        .map(|s| Value::from_object(TimeDeltaWrapper(Duration::seconds(s))))
+    parse_time_to_seconds(value).map(|s| Value::from_object(TimeDeltaWrapper(Duration::seconds(s))))
 }
 
 fn parse_time_to_seconds(time_str: &str) -> Result<i64, Error> {
@@ -225,9 +221,8 @@ pub fn relative_time(value: Value) -> Result<String, Error> {
         wrapper.0
     } else {
         let ts = as_timestamp(value)?;
-        DateTime::from_timestamp(ts as i64, 0).ok_or_else(|| {
-            Error::new(ErrorKind::InvalidOperation, "invalid timestamp")
-        })?
+        DateTime::from_timestamp(ts as i64, 0)
+            .ok_or_else(|| Error::new(ErrorKind::InvalidOperation, "invalid timestamp"))?
     };
 
     let now = Utc::now();
@@ -247,9 +242,8 @@ pub fn time_until(value: Value) -> Result<String, Error> {
         wrapper.0
     } else {
         let ts = as_timestamp(value)?;
-        DateTime::from_timestamp(ts as i64, 0).ok_or_else(|| {
-            Error::new(ErrorKind::InvalidOperation, "invalid timestamp")
-        })?
+        DateTime::from_timestamp(ts as i64, 0)
+            .ok_or_else(|| Error::new(ErrorKind::InvalidOperation, "invalid timestamp"))?
     };
 
     let now = Utc::now();
@@ -311,12 +305,7 @@ pub fn iif(
 }
 
 /// Calculate distance between two points
-pub fn distance(
-    lat1: f64,
-    lon1: f64,
-    lat2: Option<f64>,
-    lon2: Option<f64>,
-) -> Result<f64, Error> {
+pub fn distance(lat1: f64, lon1: f64, lat2: Option<f64>, lon2: Option<f64>) -> Result<f64, Error> {
     // If only two args, assume second point is home (0, 0 as placeholder)
     let (lat2, lon2) = match (lat2, lon2) {
         (Some(lat), Some(lon)) => (lat, lon),
@@ -448,10 +437,12 @@ impl minijinja::value::Object for DateTimeWrapper {
     ) -> Result<Value, Error> {
         match name {
             "strftime" => {
-                let format = args
-                    .first()
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| Error::new(ErrorKind::InvalidOperation, "strftime requires format string"))?;
+                let format = args.first().and_then(|v| v.as_str()).ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::InvalidOperation,
+                        "strftime requires format string",
+                    )
+                })?;
                 Ok(Value::from(self.0.format(format).to_string()))
             }
             "timestamp" => Ok(Value::from(self.0.timestamp())),
@@ -461,7 +452,10 @@ impl minijinja::value::Object for DateTimeWrapper {
             "add" => {
                 // DateTime.add(timedelta) -> DateTime
                 let delta = args.first().ok_or_else(|| {
-                    Error::new(ErrorKind::InvalidOperation, "add requires a timedelta argument")
+                    Error::new(
+                        ErrorKind::InvalidOperation,
+                        "add requires a timedelta argument",
+                    )
                 })?;
                 if let Some(td) = delta.downcast_object_ref::<TimeDeltaWrapper>() {
                     Ok(Value::from_object(DateTimeWrapper(self.0 + td.0)))
@@ -490,23 +484,33 @@ impl minijinja::value::Object for DateTimeWrapper {
             }
             // Comparison methods for datetime
             "gt" => {
-                let other = args.first().and_then(|v| v.downcast_object_ref::<DateTimeWrapper>());
+                let other = args
+                    .first()
+                    .and_then(|v| v.downcast_object_ref::<DateTimeWrapper>());
                 Ok(Value::from(other.map(|dt| self.0 > dt.0).unwrap_or(false)))
             }
             "ge" => {
-                let other = args.first().and_then(|v| v.downcast_object_ref::<DateTimeWrapper>());
+                let other = args
+                    .first()
+                    .and_then(|v| v.downcast_object_ref::<DateTimeWrapper>());
                 Ok(Value::from(other.map(|dt| self.0 >= dt.0).unwrap_or(false)))
             }
             "lt" => {
-                let other = args.first().and_then(|v| v.downcast_object_ref::<DateTimeWrapper>());
+                let other = args
+                    .first()
+                    .and_then(|v| v.downcast_object_ref::<DateTimeWrapper>());
                 Ok(Value::from(other.map(|dt| self.0 < dt.0).unwrap_or(false)))
             }
             "le" => {
-                let other = args.first().and_then(|v| v.downcast_object_ref::<DateTimeWrapper>());
+                let other = args
+                    .first()
+                    .and_then(|v| v.downcast_object_ref::<DateTimeWrapper>());
                 Ok(Value::from(other.map(|dt| self.0 <= dt.0).unwrap_or(false)))
             }
             "eq" => {
-                let other = args.first().and_then(|v| v.downcast_object_ref::<DateTimeWrapper>());
+                let other = args
+                    .first()
+                    .and_then(|v| v.downcast_object_ref::<DateTimeWrapper>());
                 Ok(Value::from(other.map(|dt| self.0 == dt.0).unwrap_or(false)))
             }
             _ => Err(Error::new(
@@ -590,13 +594,23 @@ mod tests {
     #[test]
     fn test_iif() {
         assert_eq!(
-            iif(Value::from(true), Some(Value::from("yes")), Some(Value::from("no")), None)
-                .as_str(),
+            iif(
+                Value::from(true),
+                Some(Value::from("yes")),
+                Some(Value::from("no")),
+                None
+            )
+            .as_str(),
             Some("yes")
         );
         assert_eq!(
-            iif(Value::from(false), Some(Value::from("yes")), Some(Value::from("no")), None)
-                .as_str(),
+            iif(
+                Value::from(false),
+                Some(Value::from("yes")),
+                Some(Value::from("no")),
+                None
+            )
+            .as_str(),
             Some("no")
         );
     }

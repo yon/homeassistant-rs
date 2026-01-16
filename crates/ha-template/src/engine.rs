@@ -152,14 +152,16 @@ impl TemplateEngine {
         env.add_function("min", |values: Value| -> Result<Value, minijinja::Error> {
             if let Ok(iter) = values.try_iter() {
                 let nums: Vec<f64> = iter
-                    .filter_map(|v| f64::try_from(v.clone()).ok().or_else(|| v.as_i64().map(|i| i as f64)))
+                    .filter_map(|v| {
+                        f64::try_from(v.clone())
+                            .ok()
+                            .or_else(|| v.as_i64().map(|i| i as f64))
+                    })
                     .collect();
                 if nums.is_empty() {
                     Ok(Value::UNDEFINED)
                 } else {
-                    Ok(Value::from(
-                        nums.into_iter().fold(f64::INFINITY, f64::min),
-                    ))
+                    Ok(Value::from(nums.into_iter().fold(f64::INFINITY, f64::min)))
                 }
             } else {
                 Ok(Value::UNDEFINED)
@@ -169,7 +171,11 @@ impl TemplateEngine {
         env.add_function("max", |values: Value| -> Result<Value, minijinja::Error> {
             if let Ok(iter) = values.try_iter() {
                 let nums: Vec<f64> = iter
-                    .filter_map(|v| f64::try_from(v.clone()).ok().or_else(|| v.as_i64().map(|i| i as f64)))
+                    .filter_map(|v| {
+                        f64::try_from(v.clone())
+                            .ok()
+                            .or_else(|| v.as_i64().map(|i| i as f64))
+                    })
                     .collect();
                 if nums.is_empty() {
                     Ok(Value::UNDEFINED)
@@ -269,7 +275,10 @@ mod tests {
             "on",
             HashMap::from([
                 ("brightness".to_string(), serde_json::json!(255)),
-                ("friendly_name".to_string(), serde_json::json!("Living Room")),
+                (
+                    "friendly_name".to_string(),
+                    serde_json::json!("Living Room"),
+                ),
             ]),
             Context::new(),
         );
@@ -277,9 +286,7 @@ mod tests {
         state_machine.set(
             EntityId::new("sensor", "temperature").unwrap(),
             "23.5",
-            HashMap::from([
-                ("unit_of_measurement".to_string(), serde_json::json!("°C")),
-            ]),
+            HashMap::from([("unit_of_measurement".to_string(), serde_json::json!("°C"))]),
             Context::new(),
         );
 

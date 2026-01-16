@@ -66,7 +66,9 @@ fn test_slugify_uppercase() {
 fn test_slugify_with_separator() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ 'Hello World' | slugify(separator='-') }}").unwrap(),
+        engine
+            .render("{{ 'Hello World' | slugify(separator='-') }}")
+            .unwrap(),
         "hello-world"
     );
 }
@@ -77,7 +79,9 @@ fn test_slugify_with_separator() {
 fn test_regex_replace_basic() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ 'hello world' | regex_replace('\\\\s+', '-') }}").unwrap(),
+        engine
+            .render("{{ 'hello world' | regex_replace('\\\\s+', '-') }}")
+            .unwrap(),
         "hello-world"
     );
 }
@@ -86,7 +90,9 @@ fn test_regex_replace_basic() {
 fn test_regex_replace_digits() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ 'test123abc456' | regex_replace('[0-9]+', 'NUM') }}").unwrap(),
+        engine
+            .render("{{ 'test123abc456' | regex_replace('[0-9]+', 'NUM') }}")
+            .unwrap(),
         "testNUMabcNUM"
     );
 }
@@ -95,7 +101,9 @@ fn test_regex_replace_digits() {
 fn test_regex_replace_no_match() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ 'hello' | regex_replace('[0-9]', 'X') }}").unwrap(),
+        engine
+            .render("{{ 'hello' | regex_replace('[0-9]', 'X') }}")
+            .unwrap(),
         "hello"
     );
 }
@@ -104,7 +112,9 @@ fn test_regex_replace_no_match() {
 fn test_regex_replace_empty_replacement() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ 'test123' | regex_replace('[0-9]+', '') }}").unwrap(),
+        engine
+            .render("{{ 'test123' | regex_replace('[0-9]+', '') }}")
+            .unwrap(),
         "test"
     );
 }
@@ -114,7 +124,9 @@ fn test_regex_replace_empty_replacement() {
 #[test]
 fn test_regex_findall_digits() {
     let engine = setup_engine();
-    let result = engine.render("{{ 'test123abc456' | regex_findall('[0-9]+') }}").unwrap();
+    let result = engine
+        .render("{{ 'test123abc456' | regex_findall('[0-9]+') }}")
+        .unwrap();
     // Should contain 123 and 456
     assert!(result.contains("123") && result.contains("456"));
 }
@@ -122,7 +134,9 @@ fn test_regex_findall_digits() {
 #[test]
 fn test_regex_findall_no_match() {
     let engine = setup_engine();
-    let result = engine.render("{{ 'hello' | regex_findall('[0-9]+') }}").unwrap();
+    let result = engine
+        .render("{{ 'hello' | regex_findall('[0-9]+') }}")
+        .unwrap();
     assert!(result == "[]" || result.is_empty());
 }
 
@@ -131,20 +145,24 @@ fn test_regex_findall_no_match() {
 #[test]
 fn test_to_json_dict() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ data | to_json }}",
-        serde_json::json!({"data": {"key": "value"}}),
-    ).unwrap();
+    let result = engine
+        .render_with_context(
+            "{{ data | to_json }}",
+            serde_json::json!({"data": {"key": "value"}}),
+        )
+        .unwrap();
     assert!(result.contains("key") && result.contains("value"));
 }
 
 #[test]
 fn test_to_json_list() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ items | to_json }}",
-        serde_json::json!({"items": [1, 2, 3]}),
-    ).unwrap();
+    let result = engine
+        .render_with_context(
+            "{{ items | to_json }}",
+            serde_json::json!({"items": [1, 2, 3]}),
+        )
+        .unwrap();
     assert!(result.contains("[") && result.contains("]"));
     assert!(result.contains("1") && result.contains("2") && result.contains("3"));
 }
@@ -152,20 +170,21 @@ fn test_to_json_list() {
 #[test]
 fn test_to_json_string() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ text | to_json }}",
-        serde_json::json!({"text": "hello world"}),
-    ).unwrap();
+    let result = engine
+        .render_with_context(
+            "{{ text | to_json }}",
+            serde_json::json!({"text": "hello world"}),
+        )
+        .unwrap();
     assert!(result.contains("hello world"));
 }
 
 #[test]
 fn test_to_json_number() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ num | to_json }}",
-        serde_json::json!({"num": 42}),
-    ).unwrap();
+    let result = engine
+        .render_with_context("{{ num | to_json }}", serde_json::json!({"num": 42}))
+        .unwrap();
     assert_eq!(result, "42");
 }
 
@@ -174,7 +193,9 @@ fn test_to_json_number() {
 #[test]
 fn test_from_json_dict() {
     let engine = setup_engine();
-    let result = engine.render("{{ '{\"key\": \"value\"}' | from_json }}").unwrap();
+    let result = engine
+        .render("{{ '{\"key\": \"value\"}' | from_json }}")
+        .unwrap();
     assert!(result.contains("key") && result.contains("value"));
 }
 
@@ -182,9 +203,9 @@ fn test_from_json_dict() {
 fn test_from_json_access_key() {
     let engine = setup_engine();
     // Parse JSON and access a key
-    let result = engine.render(
-        "{% set data = '{\"name\": \"test\", \"value\": 42}' | from_json %}{{ data.name }}"
-    ).unwrap();
+    let result = engine
+        .render("{% set data = '{\"name\": \"test\", \"value\": 42}' | from_json %}{{ data.name }}")
+        .unwrap();
     assert_eq!(result, "test");
 }
 
@@ -201,7 +222,9 @@ fn test_from_json_list() {
 fn test_base64_encode() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ 'homeassistant' | base64_encode }}").unwrap(),
+        engine
+            .render("{{ 'homeassistant' | base64_encode }}")
+            .unwrap(),
         "aG9tZWFzc2lzdGFudA=="
     );
 }
@@ -210,7 +233,9 @@ fn test_base64_encode() {
 fn test_base64_encode_hello() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ 'Hello, World!' | base64_encode }}").unwrap(),
+        engine
+            .render("{{ 'Hello, World!' | base64_encode }}")
+            .unwrap(),
         "SGVsbG8sIFdvcmxkIQ=="
     );
 }
@@ -218,10 +243,7 @@ fn test_base64_encode_hello() {
 #[test]
 fn test_base64_encode_empty() {
     let engine = setup_engine();
-    assert_eq!(
-        engine.render("{{ '' | base64_encode }}").unwrap(),
-        ""
-    );
+    assert_eq!(engine.render("{{ '' | base64_encode }}").unwrap(), "");
 }
 
 // ==================== base64_decode filter tests ====================
@@ -230,7 +252,9 @@ fn test_base64_encode_empty() {
 fn test_base64_decode() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ 'aG9tZWFzc2lzdGFudA==' | base64_decode }}").unwrap(),
+        engine
+            .render("{{ 'aG9tZWFzc2lzdGFudA==' | base64_decode }}")
+            .unwrap(),
         "homeassistant"
     );
 }
@@ -239,7 +263,9 @@ fn test_base64_decode() {
 fn test_base64_decode_hello() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ 'SGVsbG8sIFdvcmxkIQ==' | base64_decode }}").unwrap(),
+        engine
+            .render("{{ 'SGVsbG8sIFdvcmxkIQ==' | base64_decode }}")
+            .unwrap(),
         "Hello, World!"
     );
 }
@@ -248,7 +274,9 @@ fn test_base64_decode_hello() {
 fn test_base64_roundtrip() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ 'test string' | base64_encode | base64_decode }}").unwrap(),
+        engine
+            .render("{{ 'test string' | base64_encode | base64_decode }}")
+            .unwrap(),
         "test string"
     );
 }
@@ -266,7 +294,9 @@ fn test_urlencode_spaces() {
 #[test]
 fn test_urlencode_special_chars() {
     let engine = setup_engine();
-    let result = engine.render("{{ 'key=value&foo=bar' | urlencode }}").unwrap();
+    let result = engine
+        .render("{{ 'key=value&foo=bar' | urlencode }}")
+        .unwrap();
     assert!(result.contains("%3D") || result.contains("="));
 }
 
@@ -351,21 +381,30 @@ fn test_ordinal_100() {
 #[test]
 fn test_flatten_nested() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ data | flatten }}",
-        serde_json::json!({"data": [[1, 2], [3, 4]]}),
-    ).unwrap();
+    let result = engine
+        .render_with_context(
+            "{{ data | flatten }}",
+            serde_json::json!({"data": [[1, 2], [3, 4]]}),
+        )
+        .unwrap();
     // Should flatten to [1, 2, 3, 4]
-    assert!(result.contains("1") && result.contains("2") && result.contains("3") && result.contains("4"));
+    assert!(
+        result.contains("1")
+            && result.contains("2")
+            && result.contains("3")
+            && result.contains("4")
+    );
 }
 
 #[test]
 fn test_flatten_already_flat() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ data | flatten }}",
-        serde_json::json!({"data": [1, 2, 3]}),
-    ).unwrap();
+    let result = engine
+        .render_with_context(
+            "{{ data | flatten }}",
+            serde_json::json!({"data": [1, 2, 3]}),
+        )
+        .unwrap();
     assert!(result.contains("1") && result.contains("2") && result.contains("3"));
 }
 
@@ -375,7 +414,9 @@ fn test_flatten_already_flat() {
 fn test_contains_string_true() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ 'hello world' | contains('world') }}").unwrap(),
+        engine
+            .render("{{ 'hello world' | contains('world') }}")
+            .unwrap(),
         "true"
     );
 }
@@ -384,7 +425,9 @@ fn test_contains_string_true() {
 fn test_contains_string_false() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ 'hello world' | contains('foo') }}").unwrap(),
+        engine
+            .render("{{ 'hello world' | contains('foo') }}")
+            .unwrap(),
         "false"
     );
 }
@@ -392,19 +435,23 @@ fn test_contains_string_false() {
 #[test]
 fn test_contains_list_true() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ items | contains(2) }}",
-        serde_json::json!({"items": [1, 2, 3]}),
-    ).unwrap();
+    let result = engine
+        .render_with_context(
+            "{{ items | contains(2) }}",
+            serde_json::json!({"items": [1, 2, 3]}),
+        )
+        .unwrap();
     assert_eq!(result, "true");
 }
 
 #[test]
 fn test_contains_list_false() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ items | contains(5) }}",
-        serde_json::json!({"items": [1, 2, 3]}),
-    ).unwrap();
+    let result = engine
+        .render_with_context(
+            "{{ items | contains(5) }}",
+            serde_json::json!({"items": [1, 2, 3]}),
+        )
+        .unwrap();
     assert_eq!(result, "false");
 }

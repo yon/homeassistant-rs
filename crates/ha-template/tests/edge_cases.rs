@@ -80,7 +80,9 @@ fn test_empty_string_state() {
 fn test_is_state_empty_string() {
     let engine = setup_engine_with_states();
     assert_eq!(
-        engine.render("{{ is_state('sensor.empty_state', '') }}").unwrap(),
+        engine
+            .render("{{ is_state('sensor.empty_state', '') }}")
+            .unwrap(),
         "true"
     );
 }
@@ -88,10 +90,7 @@ fn test_is_state_empty_string() {
 #[test]
 fn test_state_zero() {
     let engine = setup_engine_with_states();
-    assert_eq!(
-        engine.render("{{ states('sensor.zero') }}").unwrap(),
-        "0"
-    );
+    assert_eq!(engine.render("{{ states('sensor.zero') }}").unwrap(), "0");
 }
 
 #[test]
@@ -107,7 +106,9 @@ fn test_is_state_zero() {
 fn test_state_zero_as_number() {
     let engine = setup_engine_with_states();
     assert_eq!(
-        engine.render("{{ states('sensor.zero') | int == 0 }}").unwrap(),
+        engine
+            .render("{{ states('sensor.zero') | int == 0 }}")
+            .unwrap(),
         "true"
     );
 }
@@ -126,7 +127,9 @@ fn test_state_negative() {
 #[test]
 fn test_negative_number_arithmetic() {
     let engine = setup_engine_with_states();
-    let result = engine.render("{{ states('sensor.negative') | int + 42 }}").unwrap();
+    let result = engine
+        .render("{{ states('sensor.negative') | int + 42 }}")
+        .unwrap();
     assert_eq!(result, "0");
 }
 
@@ -159,7 +162,9 @@ fn test_unicode_slugify() {
 #[test]
 fn test_special_chars_state() {
     let engine = setup_engine_with_states();
-    let result = engine.render("{{ states('sensor.special_chars') }}").unwrap();
+    let result = engine
+        .render("{{ states('sensor.special_chars') }}")
+        .unwrap();
     // Should contain the special characters
     assert!(result.contains("<") && result.contains(">") && result.contains("&"));
 }
@@ -184,7 +189,9 @@ fn test_long_state_value() {
 #[test]
 fn test_long_state_length() {
     let engine = setup_engine_with_states();
-    let result = engine.render("{{ states('sensor.long_value') | length }}").unwrap();
+    let result = engine
+        .render("{{ states('sensor.long_value') | length }}")
+        .unwrap();
     assert_eq!(result, "1000");
 }
 
@@ -193,7 +200,9 @@ fn test_long_state_length() {
 #[test]
 fn test_nonexistent_entity_states() {
     let engine = setup_engine();
-    let result = engine.render("{{ states('sensor.does_not_exist') }}").unwrap();
+    let result = engine
+        .render("{{ states('sensor.does_not_exist') }}")
+        .unwrap();
     // Should return empty or undefined
     assert!(result.is_empty() || result == "undefined");
 }
@@ -202,7 +211,9 @@ fn test_nonexistent_entity_states() {
 fn test_nonexistent_entity_is_state() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ is_state('sensor.does_not_exist', 'on') }}").unwrap(),
+        engine
+            .render("{{ is_state('sensor.does_not_exist', 'on') }}")
+            .unwrap(),
         "false"
     );
 }
@@ -210,7 +221,9 @@ fn test_nonexistent_entity_is_state() {
 #[test]
 fn test_nonexistent_entity_state_attr() {
     let engine = setup_engine();
-    let result = engine.render("{{ state_attr('sensor.does_not_exist', 'unit') }}").unwrap();
+    let result = engine
+        .render("{{ state_attr('sensor.does_not_exist', 'unit') }}")
+        .unwrap();
     assert!(result.is_empty() || result == "undefined");
 }
 
@@ -218,7 +231,9 @@ fn test_nonexistent_entity_state_attr() {
 fn test_nonexistent_entity_has_value() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ has_value('sensor.does_not_exist') }}").unwrap(),
+        engine
+            .render("{{ has_value('sensor.does_not_exist') }}")
+            .unwrap(),
         "false"
     );
 }
@@ -348,10 +363,9 @@ fn test_empty_list_max() {
 #[test]
 fn test_single_element_list_average() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ values | average }}",
-        serde_json::json!({"values": [5]}),
-    ).unwrap();
+    let result = engine
+        .render_with_context("{{ values | average }}", serde_json::json!({"values": [5]}))
+        .unwrap();
     assert_eq!(result.parse::<f64>().unwrap(), 5.0);
 }
 
@@ -371,7 +385,9 @@ fn test_empty_list_average() {
 #[test]
 fn test_regex_replace_empty_pattern() {
     let engine = setup_engine();
-    let result = engine.render("{{ 'hello' | regex_replace('', '-') }}").unwrap();
+    let result = engine
+        .render("{{ 'hello' | regex_replace('', '-') }}")
+        .unwrap();
     // Empty pattern behavior may vary
     assert!(!result.is_empty());
 }
@@ -448,10 +464,9 @@ fn test_compare_different_types() {
 #[test]
 fn test_compare_none_values() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ a == b }}",
-        serde_json::json!({"a": null, "b": null}),
-    ).unwrap();
+    let result = engine
+        .render_with_context("{{ a == b }}", serde_json::json!({"a": null, "b": null}))
+        .unwrap();
     assert_eq!(result, "true");
 }
 
@@ -467,20 +482,24 @@ fn test_nested_brackets() {
 #[test]
 fn test_deeply_nested_access() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ a.b.c.d }}",
-        serde_json::json!({"a": {"b": {"c": {"d": 42}}}}),
-    ).unwrap();
+    let result = engine
+        .render_with_context(
+            "{{ a.b.c.d }}",
+            serde_json::json!({"a": {"b": {"c": {"d": 42}}}}),
+        )
+        .unwrap();
     assert_eq!(result, "42");
 }
 
 #[test]
 fn test_missing_nested_key() {
     let engine = setup_engine();
-    let result = engine.render_with_context(
-        "{{ a.b.missing | default('none') }}",
-        serde_json::json!({"a": {"b": {}}}),
-    ).unwrap();
+    let result = engine
+        .render_with_context(
+            "{{ a.b.missing | default('none') }}",
+            serde_json::json!({"a": {"b": {}}}),
+        )
+        .unwrap();
     assert_eq!(result, "none");
 }
 
@@ -496,7 +515,9 @@ fn test_empty_for_loop() {
 #[test]
 fn test_if_with_undefined() {
     let engine = setup_engine();
-    let result = engine.render("{% if undefined_var %}yes{% else %}no{% endif %}").unwrap();
+    let result = engine
+        .render("{% if undefined_var %}yes{% else %}no{% endif %}")
+        .unwrap();
     assert_eq!(result, "no");
 }
 

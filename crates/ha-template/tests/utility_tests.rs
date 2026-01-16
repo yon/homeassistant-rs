@@ -82,7 +82,9 @@ fn test_iif_false_condition() {
 fn test_iif_with_expression() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ iif(5 > 3, 'bigger', 'smaller') }}").unwrap(),
+        engine
+            .render("{{ iif(5 > 3, 'bigger', 'smaller') }}")
+            .unwrap(),
         "bigger"
     );
 }
@@ -100,7 +102,9 @@ fn test_iif_with_state_check() {
     let engine = TemplateEngine::new(state_machine);
 
     assert_eq!(
-        engine.render("{{ iif(is_state('light.test', 'on'), 'Light is on', 'Light is off') }}").unwrap(),
+        engine
+            .render("{{ iif(is_state('light.test', 'on'), 'Light is on', 'Light is off') }}")
+            .unwrap(),
         "Light is on"
     );
 }
@@ -108,20 +112,19 @@ fn test_iif_with_state_check() {
 #[test]
 fn test_iif_numeric_values() {
     let engine = setup_engine();
-    assert_eq!(
-        engine.render("{{ iif(true, 100, 0) }}").unwrap(),
-        "100"
-    );
+    assert_eq!(engine.render("{{ iif(true, 100, 0) }}").unwrap(), "100");
 }
 
 #[test]
 fn test_iif_with_none_condition() {
     let engine = setup_engine();
     // When condition is None/null, should use if_none parameter if provided
-    let result = engine.render_with_context(
-        "{{ iif(value, 'has value', 'no value') }}",
-        serde_json::json!({"value": null}),
-    ).unwrap();
+    let result = engine
+        .render_with_context(
+            "{{ iif(value, 'has value', 'no value') }}",
+            serde_json::json!({"value": null}),
+        )
+        .unwrap();
     assert_eq!(result, "no value");
 }
 
@@ -130,7 +133,9 @@ fn test_iif_truthy_string() {
     let engine = setup_engine();
     // Non-empty string is truthy
     assert_eq!(
-        engine.render("{{ iif('hello', 'truthy', 'falsy') }}").unwrap(),
+        engine
+            .render("{{ iif('hello', 'truthy', 'falsy') }}")
+            .unwrap(),
         "truthy"
     );
 }
@@ -170,7 +175,9 @@ fn test_distance_between_coordinates() {
     let engine = setup_engine();
     // Distance from NYC (40.7128, -74.0060) to LA (34.0522, -118.2437)
     // Should be approximately 3935-3944 km
-    let result = engine.render("{{ distance(40.7128, -74.0060, 34.0522, -118.2437) }}").unwrap();
+    let result = engine
+        .render("{{ distance(40.7128, -74.0060, 34.0522, -118.2437) }}")
+        .unwrap();
     let dist: f64 = result.parse().expect("Should be a number");
     assert!(dist > 3900.0 && dist < 4000.0);
 }
@@ -178,7 +185,9 @@ fn test_distance_between_coordinates() {
 #[test]
 fn test_distance_same_point() {
     let engine = setup_engine();
-    let result = engine.render("{{ distance(40.7128, -74.0060, 40.7128, -74.0060) }}").unwrap();
+    let result = engine
+        .render("{{ distance(40.7128, -74.0060, 40.7128, -74.0060) }}")
+        .unwrap();
     let dist: f64 = result.parse().expect("Should be a number");
     assert!(dist < 0.1); // Should be essentially 0
 }
@@ -188,7 +197,9 @@ fn test_distance_london_to_paris() {
     let engine = setup_engine();
     // London (51.5074, -0.1278) to Paris (48.8566, 2.3522)
     // Should be approximately 343 km
-    let result = engine.render("{{ distance(51.5074, -0.1278, 48.8566, 2.3522) }}").unwrap();
+    let result = engine
+        .render("{{ distance(51.5074, -0.1278, 48.8566, 2.3522) }}")
+        .unwrap();
     let dist: f64 = result.parse().expect("Should be a number");
     assert!(dist > 330.0 && dist < 360.0);
 }
@@ -199,7 +210,9 @@ fn test_distance_southern_hemisphere() {
     // Sydney to Auckland
     // Sydney (-33.8688, 151.2093) to Auckland (-36.8485, 174.7633)
     // Should be approximately 2155 km
-    let result = engine.render("{{ distance(-33.8688, 151.2093, -36.8485, 174.7633) }}").unwrap();
+    let result = engine
+        .render("{{ distance(-33.8688, 151.2093, -36.8485, 174.7633) }}")
+        .unwrap();
     let dist: f64 = result.parse().expect("Should be a number");
     assert!(dist > 2100.0 && dist < 2200.0);
 }
@@ -233,7 +246,9 @@ fn test_ternary_with_comparison() {
 #[test]
 fn test_nested_iif() {
     let engine = setup_engine();
-    let result = engine.render("{{ iif(5 > 10, 'big', iif(5 > 3, 'medium', 'small')) }}").unwrap();
+    let result = engine
+        .render("{{ iif(5 > 10, 'big', iif(5 > 3, 'medium', 'small')) }}")
+        .unwrap();
     assert_eq!(result, "medium");
 }
 
@@ -268,7 +283,9 @@ fn test_not_operator() {
 fn test_complex_boolean_expression() {
     let engine = setup_engine();
     assert_eq!(
-        engine.render("{{ (true and false) or (not false) }}").unwrap(),
+        engine
+            .render("{{ (true and false) or (not false) }}")
+            .unwrap(),
         "true"
     );
 }
