@@ -1,0 +1,21 @@
+[package]
+name = "ha-server"
+description = "Home Assistant Rust server - main binary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "homeassistant"
+path = "src/main.rs"
+
+[dependencies]
+ha-core = { workspace = true }
+ha-event-bus = { workspace = true }
+ha-state-machine = { workspace = true }
+ha-service-registry = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }

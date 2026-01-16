@@ -1,0 +1,19 @@
+[package]
+name = "ha-service-registry"
+description = "Service registry with async handlers for Home Assistant"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ha-core = { workspace = true }
+tokio = { workspace = true }
+dashmap = { workspace = true }
+serde_json = { workspace = true }
+jsonschema = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }

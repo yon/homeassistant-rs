@@ -1,0 +1,86 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ha-core",
+    "crates/ha-event-bus",
+    "crates/ha-state-machine",
+    "crates/ha-service-registry",
+    "crates/ha-config",
+    "crates/ha-config-entries",
+    "crates/ha-registries",
+    "crates/ha-template",
+    "crates/ha-automation",
+    "crates/ha-script",
+    "crates/ha-python-bridge",
+    "crates/ha-api",
+    "crates/ha-recorder",
+    "crates/ha-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0"
+repository = "https://github.com/yon/homeassistant-rs"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.40", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# Web framework
+axum = { version = "0.7", features = ["ws"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# Templates
+minijinja = { version = "2.0", features = ["loader"] }
+
+# Python bridge
+pyo3 = { version = "0.22", features = ["auto-initialize"] }
+pyo3-asyncio-0-21 = { version = "0.21", features = ["tokio-runtime"] }
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Concurrent data structures
+dashmap = "6.0"
+
+# IDs and time
+ulid = "1.1"
+chrono = { version = "0.4", features = ["serde"] }
+
+# Schema validation
+jsonschema = "0.18"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Testing
+tokio-test = "0.4"
+
+# Workspace crates
+ha-core = { path = "crates/ha-core" }
+ha-event-bus = { path = "crates/ha-event-bus" }
+ha-state-machine = { path = "crates/ha-state-machine" }
+ha-service-registry = { path = "crates/ha-service-registry" }
+ha-config = { path = "crates/ha-config" }
+ha-config-entries = { path = "crates/ha-config-entries" }
+ha-registries = { path = "crates/ha-registries" }
+ha-template = { path = "crates/ha-template" }
+ha-automation = { path = "crates/ha-automation" }
+ha-script = { path = "crates/ha-script" }
+ha-python-bridge = { path = "crates/ha-python-bridge" }
+ha-api = { path = "crates/ha-api" }
+ha-recorder = { path = "crates/ha-recorder" }
+ha-server = { path = "crates/ha-server" }
