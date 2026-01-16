@@ -104,19 +104,14 @@ impl<T: EventData> Event<T> {
 }
 
 /// Origin of an event
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EventOrigin {
     /// Event originated locally
+    #[default]
     Local,
     /// Event came from a remote source
     Remote,
-}
-
-impl Default for EventOrigin {
-    fn default() -> Self {
-        Self::Local
-    }
 }
 
 #[cfg(test)]
@@ -148,7 +143,8 @@ mod tests {
     #[test]
     fn test_event_creation() {
         let ctx = Context::new();
-        let event: Event<serde_json::Value> = Event::new("test_event", json!({"key": "value"}), ctx.clone());
+        let event: Event<serde_json::Value> =
+            Event::new("test_event", json!({"key": "value"}), ctx.clone());
 
         assert_eq!(event.event_type.as_str(), "test_event");
         assert_eq!(event.origin, EventOrigin::Local);

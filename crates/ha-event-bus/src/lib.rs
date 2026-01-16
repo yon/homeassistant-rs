@@ -56,7 +56,10 @@ impl EventBus {
     /// Subscribe to events of a specific type
     ///
     /// Returns a receiver that will receive all events of the given type.
-    pub fn subscribe(&self, event_type: impl Into<EventType>) -> broadcast::Receiver<Event<serde_json::Value>> {
+    pub fn subscribe(
+        &self,
+        event_type: impl Into<EventType>,
+    ) -> broadcast::Receiver<Event<serde_json::Value>> {
         let event_type = event_type.into();
         trace!(event_type = %event_type, "Subscribing to event type");
 
