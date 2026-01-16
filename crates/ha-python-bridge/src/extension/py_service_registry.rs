@@ -1,6 +1,6 @@
 //! Python wrapper for ServiceRegistry
 
-use ha_core::{Context, ServiceCall, SupportsResponse};
+use ha_core::{ServiceCall, SupportsResponse};
 use ha_service_registry::{ServiceDescription, ServiceRegistry};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -291,6 +291,7 @@ impl PyServiceRegistry {
     ///
     /// Returns:
     ///     The service response if return_response is True and the service supports it
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (domain, service, service_data=None, context=None, _blocking=true, return_response=false))]
     fn async_call(
         &self,
@@ -310,7 +311,7 @@ impl PyServiceRegistry {
             None => serde_json::Value::Object(Default::default()),
         };
 
-        let ctx = context.map(|c| c.into_inner()).unwrap_or_else(Context::new);
+        let ctx = context.map(|c| c.into_inner()).unwrap_or_default();
 
         let domain = domain.to_string();
         let service = service.to_string();
@@ -369,7 +370,7 @@ impl PyServiceRegistry {
             None => serde_json::Value::Object(Default::default()),
         };
 
-        let ctx = context.map(|c| c.into_inner()).unwrap_or_else(Context::new);
+        let ctx = context.map(|c| c.into_inner()).unwrap_or_default();
 
         let domain = domain.to_string();
         let service = service.to_string();

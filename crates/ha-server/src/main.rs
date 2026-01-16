@@ -334,7 +334,10 @@ impl HomeAssistant {
                     return;
                 }
                 Err(e) => {
-                    warn!("Failed to load entities from {:?}: {}. Using defaults.", entities_file, e);
+                    warn!(
+                        "Failed to load entities from {:?}: {}. Using defaults.",
+                        entities_file, e
+                    );
                 }
             }
         }
@@ -350,15 +353,18 @@ impl HomeAssistant {
 
         let mut count = 0;
         for entity in entities {
-            let entity_id_str = entity.get("entity_id")
+            let entity_id_str = entity
+                .get("entity_id")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Missing entity_id"))?;
 
-            let state = entity.get("state")
+            let state = entity
+                .get("state")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown");
 
-            let attributes: HashMap<String, serde_json::Value> = entity.get("attributes")
+            let attributes: HashMap<String, serde_json::Value> = entity
+                .get("attributes")
                 .and_then(|v| v.as_object())
                 .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
                 .unwrap_or_default();
@@ -367,7 +373,8 @@ impl HomeAssistant {
             let parts: Vec<&str> = entity_id_str.splitn(2, '.').collect();
             if parts.len() == 2 {
                 if let Ok(entity_id) = EntityId::new(parts[0], parts[1]) {
-                    self.states.set(entity_id, state, attributes, Context::new());
+                    self.states
+                        .set(entity_id, state, attributes, Context::new());
                     count += 1;
                 }
             }
@@ -469,14 +476,12 @@ fn load_components(config_dir: &std::path::Path) -> Vec<String> {
 
     if components_file.exists() {
         match std::fs::read_to_string(&components_file) {
-            Ok(content) => {
-                match serde_json::from_str::<Vec<String>>(&content) {
-                    Ok(components) => return components,
-                    Err(e) => {
-                        warn!("Failed to parse components.json: {}", e);
-                    }
+            Ok(content) => match serde_json::from_str::<Vec<String>>(&content) {
+                Ok(components) => return components,
+                Err(e) => {
+                    warn!("Failed to parse components.json: {}", e);
                 }
-            }
+            },
             Err(e) => {
                 warn!("Failed to read components.json: {}", e);
             }
@@ -499,14 +504,12 @@ fn load_services_cache(config_dir: &std::path::Path) -> Option<Arc<serde_json::V
 
     if services_file.exists() {
         match std::fs::read_to_string(&services_file) {
-            Ok(content) => {
-                match serde_json::from_str::<serde_json::Value>(&content) {
-                    Ok(services) => return Some(Arc::new(services)),
-                    Err(e) => {
-                        warn!("Failed to parse services.json: {}", e);
-                    }
+            Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(services) => return Some(Arc::new(services)),
+                Err(e) => {
+                    warn!("Failed to parse services.json: {}", e);
                 }
-            }
+            },
             Err(e) => {
                 warn!("Failed to read services.json: {}", e);
             }
@@ -522,14 +525,12 @@ fn load_events_cache(config_dir: &std::path::Path) -> Option<Arc<serde_json::Val
 
     if events_file.exists() {
         match std::fs::read_to_string(&events_file) {
-            Ok(content) => {
-                match serde_json::from_str::<serde_json::Value>(&content) {
-                    Ok(events) => return Some(Arc::new(events)),
-                    Err(e) => {
-                        warn!("Failed to parse events.json: {}", e);
-                    }
+            Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(events) => return Some(Arc::new(events)),
+                Err(e) => {
+                    warn!("Failed to parse events.json: {}", e);
                 }
-            }
+            },
             Err(e) => {
                 warn!("Failed to read events.json: {}", e);
             }
@@ -560,8 +561,10 @@ async fn main() -> Result<()> {
         info!("Loading configuration from {:?}", config_dir);
         match CoreConfig::load(&config_dir) {
             Ok(cfg) => {
-                info!("Configuration loaded: name={}, location=({}, {})",
-                    cfg.name, cfg.latitude, cfg.longitude);
+                info!(
+                    "Configuration loaded: name={}, location=({}, {})",
+                    cfg.name, cfg.latitude, cfg.longitude
+                );
                 cfg
             }
             Err(e) => {

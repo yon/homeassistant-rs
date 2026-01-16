@@ -74,6 +74,7 @@ pub enum IncomingMessage {
     },
     SupportedFeatures {
         id: u64,
+        #[allow(dead_code)] // Deserialized but not currently used
         features: HashMap<String, serde_json::Value>,
     },
 }
@@ -225,10 +226,7 @@ impl ActiveConnection {
 // =============================================================================
 
 /// WebSocket upgrade handler
-pub async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
@@ -365,7 +363,10 @@ async fn wait_for_auth(
                 // Try to parse as auth message
                 if let Ok(msg) = serde_json::from_str::<IncomingMessage>(&text) {
                     match msg {
-                        IncomingMessage::Auth { access_token, api_password } => {
+                        IncomingMessage::Auth {
+                            access_token,
+                            api_password,
+                        } => {
                             // For now, accept any token (TODO: implement proper auth)
                             // In production, validate against HA's auth system
                             if access_token.is_some() || api_password.is_some() {
@@ -409,7 +410,11 @@ fn lookup_user_id(access_token: Option<&str>) -> Option<String> {
             Some("test-user-id-12345678".to_string())
         }
         // JWT test token (generated from test-long-lived-token-id-456)
-        Some(token) if token.starts_with("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJ0ZXN0LWxvbmctbGl2ZWQtdG9rZW4t") => {
+        Some(token)
+            if token.starts_with(
+                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJ0ZXN0LWxvbmctbGl2ZWQtdG9rZW4t",
+            ) =>
+        {
             Some("test-user-id-12345678".to_string())
         }
         // Accept any token for now, but without user_id unless it's a known test token
@@ -438,8 +443,8 @@ async fn handle_message(
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> Result<(), String> {
     // Parse the message
-    let msg: IncomingMessage = serde_json::from_str(text)
-        .map_err(|e| format!("Invalid message format: {}", e))?;
+    let msg: IncomingMessage =
+        serde_json::from_str(text).map_err(|e| format!("Invalid message format: {}", e))?;
 
     match msg {
         IncomingMessage::Auth { .. } => {
@@ -484,7 +489,17 @@ async fn handle_message(
             return_response,
         } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
-            handle_call_service(conn, id, domain, service, target, service_data, return_response, tx).await
+            handle_call_service(
+                conn,
+                id,
+                domain,
+                service,
+                target,
+                service_data,
+                return_response,
+                tx,
+            )
+            .await
         }
         IncomingMessage::FireEvent {
             id,
@@ -749,6 +764,7 @@ async fn handle_unsubscribe_events(
 }
 
 /// Handle call_service command
+#[allow(clippy::too_many_arguments)]
 async fn handle_call_service(
     conn: &Arc<ActiveConnection>,
     id: u64,
@@ -906,7 +922,12 @@ mod tests {
         }"#;
         let msg: IncomingMessage = serde_json::from_str(json).unwrap();
         match msg {
-            IncomingMessage::CallService { id, domain, service, .. } => {
+            IncomingMessage::CallService {
+                id,
+                domain,
+                service,
+                ..
+            } => {
                 assert_eq!(id, 1);
                 assert_eq!(domain, "light");
                 assert_eq!(service, "turn_on");
