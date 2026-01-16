@@ -323,8 +323,61 @@ impl HomeAssistant {
         info!("Core services registered");
     }
 
-    /// Add some demo entities
-    fn add_demo_entities(&self) {
+    /// Load entities from JSON file or add hardcoded demo entities
+    fn load_entities(&self, config_dir: &std::path::Path) {
+        let entities_file = config_dir.join("demo-entities.json");
+
+        if entities_file.exists() {
+            match self.load_entities_from_file(&entities_file) {
+                Ok(count) => {
+                    info!("Loaded {} entities from {:?}", count, entities_file);
+                    return;
+                }
+                Err(e) => {
+                    warn!("Failed to load entities from {:?}: {}. Using defaults.", entities_file, e);
+                }
+            }
+        }
+
+        // Fallback to hardcoded demo entities
+        self.add_hardcoded_demo_entities();
+    }
+
+    /// Load entities from a JSON file exported from Python HA
+    fn load_entities_from_file(&self, path: &std::path::Path) -> Result<usize> {
+        let content = std::fs::read_to_string(path)?;
+        let entities: Vec<serde_json::Value> = serde_json::from_str(&content)?;
+
+        let mut count = 0;
+        for entity in entities {
+            let entity_id_str = entity.get("entity_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing entity_id"))?;
+
+            let state = entity.get("state")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+
+            let attributes: HashMap<String, serde_json::Value> = entity.get("attributes")
+                .and_then(|v| v.as_object())
+                .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                .unwrap_or_default();
+
+            // Parse entity_id into domain.object_id
+            let parts: Vec<&str> = entity_id_str.splitn(2, '.').collect();
+            if parts.len() == 2 {
+                if let Ok(entity_id) = EntityId::new(parts[0], parts[1]) {
+                    self.states.set(entity_id, state, attributes, Context::new());
+                    count += 1;
+                }
+            }
+        }
+
+        Ok(count)
+    }
+
+    /// Add hardcoded demo entities (fallback)
+    fn add_hardcoded_demo_entities(&self) {
         // Add some demo lights
         self.states.set(
             EntityId::new("light", "living_room").unwrap(),
@@ -450,8 +503,8 @@ async fn main() -> Result<()> {
     // Register core services
     hass.register_core_services();
 
-    // Add demo entities
-    hass.add_demo_entities();
+    // Load entities from config or use demo entities
+    hass.load_entities(&config_dir);
 
     info!("Home Assistant initialized");
 

@@ -135,7 +135,12 @@ impl TestHarness {
             .ignore_field("last_changed")
             .ignore_field("last_updated")
             .ignore_field("last_reported")
-            .ignore_field("context");
+            .ignore_field("context")
+            // Ignore dynamic fields that change at runtime
+            .ignore_field("access_token")
+            .ignore_field("entity_picture")
+            .ignore_field("state")  // Demo sensors change values over time
+            .sort_arrays_by("entity_id");
 
         let python_result = self.python_ws.test_get_states().await;
         let rust_result = self.rust_ws.test_get_states().await;
@@ -290,7 +295,13 @@ impl TestSuites {
         let options = CompareOptions::new()
             .ignore_field("last_changed")
             .ignore_field("last_updated")
-            .ignore_field("context");
+            .ignore_field("last_reported")
+            .ignore_field("context")
+            // Ignore dynamic fields that change at runtime
+            .ignore_field("access_token")
+            .ignore_field("entity_picture")
+            .ignore_field("state")  // Demo sensors change values over time
+            .sort_arrays_by("entity_id");
 
         harness
             .compare_get("/api/states", Some(options.clone()))
@@ -298,8 +309,13 @@ impl TestSuites {
             .print_summary();
 
         // GET /api/states/<entity_id> - test with a demo entity
+        let single_options = CompareOptions::new()
+            .ignore_field("last_changed")
+            .ignore_field("last_updated")
+            .ignore_field("last_reported")
+            .ignore_field("context");
         harness
-            .compare_get("/api/states/sun.sun", Some(options.clone()))
+            .compare_get("/api/states/sun.sun", Some(single_options.clone()))
             .await
             .print_summary();
 
@@ -314,7 +330,7 @@ impl TestSuites {
                         "friendly_name": "Test Comparison Sensor"
                     }
                 })),
-                Some(options),
+                Some(single_options),
             )
             .await
             .print_summary();
