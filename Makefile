@@ -3,8 +3,17 @@
 # Run `make help` to see all available targets.
 
 CARGO := cargo
-RUSTFMT := rustfmt
 CLIPPY := cargo clippy
+RUSTFMT := rustfmt
+
+# Python virtual environment
+# Prefer Homebrew Python 3.13, fall back to python3
+PYTHON_BIN := $(shell command -v /opt/homebrew/opt/python@3.13/bin/python3.13 2>/dev/null || command -v python3)
+VENV := .venv
+VENV_BIN := $(VENV)/bin
+PYTHON := $(VENV_BIN)/python
+MATURIN := $(VENV_BIN)/maturin
+VENV_STAMP := $(VENV)/.stamp
 
 # Default target
 .DEFAULT_GOAL := help
@@ -18,6 +27,14 @@ build: ## Build all crates in debug mode
 .PHONY: build-release
 build-release: ## Build all crates in release mode
 	$(CARGO) build --workspace --release
+
+.PHONY: build-wheel
+build-wheel: $(VENV_STAMP) ## Build Python wheel (Mode 1: extension)
+	$(MATURIN) build --release
+
+.PHONY: build-wheel-debug
+build-wheel-debug: $(VENV_STAMP) ## Build Python wheel in debug mode
+	$(MATURIN) build
 
 ##@ Check & Lint
 
@@ -37,15 +54,16 @@ fmt: ## Format all code with rustfmt
 fmt-check: ## Check if code is formatted correctly
 	$(CARGO) fmt --all -- --check
 
-##@ Documentation
+.PHONY: lint
+lint: fmt-check clippy lint-makefile ## Run all linters
 
-.PHONY: doc
-doc: ## Generate documentation for all crates
-	$(CARGO) doc --workspace --no-deps
-
-.PHONY: doc-open
-doc-open: ## Generate and open documentation in browser
-	$(CARGO) doc --workspace --no-deps --open
+.PHONY: lint-makefile
+lint-makefile: ## Check Makefile targets are alphabetized within sections
+	@awk '/^##@/ { section=$$0; delete targets; n=0 } \
+	     /^\.PHONY:/ { target=$$2; if (n>0 && target<targets[n]) { \
+	         print "Error: " target " should come before " targets[n] " in section: " section; \
+	         exit 1 } \
+	       n++; targets[n]=target }' $(MAKEFILE_LIST) && echo "Makefile targets are alphabetized"
 
 ##@ Development
 
@@ -53,11 +71,19 @@ doc-open: ## Generate and open documentation in browser
 clean: ## Remove build artifacts
 	$(CARGO) clean
 
+.PHONY: clean-all
+clean-all: clean ## Remove build artifacts and Python venv
+	rm -rf $(VENV)
+
 .PHONY: dev
 dev: fmt clippy test ## Run all development checks (format, lint, test)
 
+.PHONY: install-dev
+install-dev: $(VENV_STAMP) ## Install Python extension in development mode
+	$(MATURIN) develop
+
 .PHONY: run
-run: ## Run the Home Assistant server
+run: ## Run the Home Assistant server (Mode 2: standalone)
 	$(CARGO) run --bin homeassistant
 
 .PHONY: run-release
@@ -68,17 +94,36 @@ run-release: ## Run the Home Assistant server in release mode
 watch: ## Watch for changes and rebuild (requires cargo-watch)
 	$(CARGO) watch -x 'build --workspace'
 
+##@ Documentation
+
+.PHONY: doc
+doc: ## Generate documentation for all crates
+	$(CARGO) doc --workspace --no-deps
+
+.PHONY: doc-open
+doc-open: ## Generate and open documentation in browser
+	$(CARGO) doc --workspace --no-deps --open
+
 ##@ Help
 
 .PHONY: help
 help: ## Display this help message
-	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
+
+##@ Python
+
+.PHONY: python-test
+python-test: install-dev ## Run Python tests against Rust extension
+	$(PYTHON) -c "from ha_core_rs import HomeAssistant; h = HomeAssistant(); print(h)"
+
+.PHONY: setup-venv
+setup-venv: $(VENV_STAMP) ## Create Python virtual environment with tools
 
 ##@ Testing
 
 .PHONY: test
-test: ## Run all tests
-	$(CARGO) test --workspace
+test: ## Run all Rust tests (excludes Python bridge, use python-test for that)
+	$(CARGO) test --workspace --exclude ha-python-bridge
 
 .PHONY: test-coverage
 test-coverage: ## Run tests with coverage (requires cargo-tarpaulin)
@@ -109,3 +154,11 @@ tree: ## Display dependency tree
 .PHONY: update
 update: ## Update dependencies
 	$(CARGO) update
+
+# Internal targets (not shown in help)
+
+$(VENV_STAMP):
+	$(PYTHON_BIN) -m venv $(VENV)
+	$(VENV_BIN)/pip install --upgrade pip
+	$(VENV_BIN)/pip install maturin
+	touch $(VENV_STAMP)

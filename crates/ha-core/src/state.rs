@@ -70,7 +70,11 @@ impl State {
             entity_id: self.entity_id.clone(),
             state: new_state,
             attributes: new_attributes,
-            last_changed: if state_changed { now } else { self.last_changed },
+            last_changed: if state_changed {
+                now
+            } else {
+                self.last_changed
+            },
             last_updated: now,
             last_reported: Some(now),
             context,
@@ -89,7 +93,9 @@ impl State {
 
     /// Get an attribute value by key
     pub fn attribute<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
-        self.attributes.get(key).and_then(|v| serde_json::from_value(v.clone()).ok())
+        self.attributes
+            .get(key)
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
     }
 }
 
@@ -164,7 +170,12 @@ mod tests {
         let entity_id = make_entity_id();
         let ctx = Context::new();
 
-        let unavailable = State::new(entity_id.clone(), "unavailable", HashMap::new(), ctx.clone());
+        let unavailable = State::new(
+            entity_id.clone(),
+            "unavailable",
+            HashMap::new(),
+            ctx.clone(),
+        );
         assert!(unavailable.is_unavailable());
         assert!(!unavailable.is_unknown());
 
@@ -186,7 +197,10 @@ mod tests {
         let state = State::new(entity_id, "on", attrs, ctx);
 
         assert_eq!(state.attribute::<i32>("brightness"), Some(200));
-        assert_eq!(state.attribute::<String>("friendly_name"), Some("Test Light".to_string()));
+        assert_eq!(
+            state.attribute::<String>("friendly_name"),
+            Some("Test Light".to_string())
+        );
         assert_eq!(state.attribute::<i32>("nonexistent"), None);
     }
 

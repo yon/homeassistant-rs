@@ -17,10 +17,14 @@ pub enum EntityIdError {
     #[error("object_id cannot be empty")]
     EmptyObjectId,
 
-    #[error("domain contains invalid characters (must be lowercase alphanumeric with underscores)")]
+    #[error(
+        "domain contains invalid characters (must be lowercase alphanumeric with underscores)"
+    )]
     InvalidDomainChars,
 
-    #[error("object_id contains invalid characters (must be lowercase alphanumeric with underscores)")]
+    #[error(
+        "object_id contains invalid characters (must be lowercase alphanumeric with underscores)"
+    )]
     InvalidObjectIdChars,
 }
 
@@ -37,7 +41,10 @@ pub struct EntityId {
 
 impl EntityId {
     /// Create a new EntityId from domain and object_id parts
-    pub fn new(domain: impl Into<String>, object_id: impl Into<String>) -> Result<Self, EntityIdError> {
+    pub fn new(
+        domain: impl Into<String>,
+        object_id: impl Into<String>,
+    ) -> Result<Self, EntityIdError> {
         let domain = domain.into();
         let object_id = object_id.into();
 
@@ -69,7 +76,8 @@ impl EntityId {
 
     /// Check if a string part contains only valid characters
     fn is_valid_part(s: &str) -> bool {
-        s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
     }
 }
 

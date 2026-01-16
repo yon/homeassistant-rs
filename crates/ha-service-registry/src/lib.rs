@@ -129,11 +129,8 @@ impl ServiceRegistry {
 
     /// Register a service with full description
     #[instrument(skip(self, handler))]
-    pub fn register_with_description<F, Fut>(
-        &self,
-        description: ServiceDescription,
-        handler: F,
-    ) where
+    pub fn register_with_description<F, Fut>(&self, description: ServiceDescription, handler: F)
+    where
         F: Fn(ServiceCall) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ServiceResult> + Send + 'static,
     {
@@ -148,7 +145,13 @@ impl ServiceRegistry {
         let handler: ServiceHandler =
             Arc::new(move |call| Box::pin(handler(call)) as ServiceFuture);
 
-        self.services.insert(key, RegisteredService { handler, description });
+        self.services.insert(
+            key,
+            RegisteredService {
+                handler,
+                description,
+            },
+        );
     }
 
     /// Call a service
@@ -306,15 +309,19 @@ mod tests {
         registry.register(
             "test",
             "echo",
-            |call: ServiceCall| async move {
-                Ok(Some(call.service_data))
-            },
+            |call: ServiceCall| async move { Ok(Some(call.service_data)) },
             None,
             SupportsResponse::Optional,
         );
 
         let result = registry
-            .call("test", "echo", json!({"msg": "hello"}), Context::new(), true)
+            .call(
+                "test",
+                "echo",
+                json!({"msg": "hello"}),
+                Context::new(),
+                true,
+            )
             .await
             .unwrap();
 
@@ -378,9 +385,27 @@ mod tests {
     fn test_domain_services() {
         let registry = ServiceRegistry::new();
 
-        registry.register("light", "turn_on", |_: ServiceCall| async { Ok(None) }, None, SupportsResponse::None);
-        registry.register("light", "turn_off", |_: ServiceCall| async { Ok(None) }, None, SupportsResponse::None);
-        registry.register("switch", "toggle", |_: ServiceCall| async { Ok(None) }, None, SupportsResponse::None);
+        registry.register(
+            "light",
+            "turn_on",
+            |_: ServiceCall| async { Ok(None) },
+            None,
+            SupportsResponse::None,
+        );
+        registry.register(
+            "light",
+            "turn_off",
+            |_: ServiceCall| async { Ok(None) },
+            None,
+            SupportsResponse::None,
+        );
+        registry.register(
+            "switch",
+            "toggle",
+            |_: ServiceCall| async { Ok(None) },
+            None,
+            SupportsResponse::None,
+        );
 
         let light_services = registry.domain_services("light");
         assert_eq!(light_services.len(), 2);
@@ -393,9 +418,27 @@ mod tests {
     fn test_domains() {
         let registry = ServiceRegistry::new();
 
-        registry.register("light", "turn_on", |_: ServiceCall| async { Ok(None) }, None, SupportsResponse::None);
-        registry.register("switch", "toggle", |_: ServiceCall| async { Ok(None) }, None, SupportsResponse::None);
-        registry.register("automation", "trigger", |_: ServiceCall| async { Ok(None) }, None, SupportsResponse::None);
+        registry.register(
+            "light",
+            "turn_on",
+            |_: ServiceCall| async { Ok(None) },
+            None,
+            SupportsResponse::None,
+        );
+        registry.register(
+            "switch",
+            "toggle",
+            |_: ServiceCall| async { Ok(None) },
+            None,
+            SupportsResponse::None,
+        );
+        registry.register(
+            "automation",
+            "trigger",
+            |_: ServiceCall| async { Ok(None) },
+            None,
+            SupportsResponse::None,
+        );
 
         let domains = registry.domains();
         assert_eq!(domains.len(), 3);
@@ -408,7 +451,13 @@ mod tests {
     fn test_unregister() {
         let registry = ServiceRegistry::new();
 
-        registry.register("light", "turn_on", |_: ServiceCall| async { Ok(None) }, None, SupportsResponse::None);
+        registry.register(
+            "light",
+            "turn_on",
+            |_: ServiceCall| async { Ok(None) },
+            None,
+            SupportsResponse::None,
+        );
 
         assert!(registry.has_service("light", "turn_on"));
         assert!(registry.unregister("light", "turn_on"));
@@ -420,9 +469,27 @@ mod tests {
     fn test_unregister_domain() {
         let registry = ServiceRegistry::new();
 
-        registry.register("light", "turn_on", |_: ServiceCall| async { Ok(None) }, None, SupportsResponse::None);
-        registry.register("light", "turn_off", |_: ServiceCall| async { Ok(None) }, None, SupportsResponse::None);
-        registry.register("switch", "toggle", |_: ServiceCall| async { Ok(None) }, None, SupportsResponse::None);
+        registry.register(
+            "light",
+            "turn_on",
+            |_: ServiceCall| async { Ok(None) },
+            None,
+            SupportsResponse::None,
+        );
+        registry.register(
+            "light",
+            "turn_off",
+            |_: ServiceCall| async { Ok(None) },
+            None,
+            SupportsResponse::None,
+        );
+        registry.register(
+            "switch",
+            "toggle",
+            |_: ServiceCall| async { Ok(None) },
+            None,
+            SupportsResponse::None,
+        );
 
         let count = registry.unregister_domain("light");
         assert_eq!(count, 2);

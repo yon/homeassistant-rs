@@ -1,0 +1,32 @@
+[build-system]
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "ha-core-rs"
+version = "0.1.0"
+description = "Rust core components for Home Assistant"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",
+    "Topic :: Home Automation",
+]
+keywords = ["home-assistant", "rust", "automation", "iot"]
+
+[project.urls]
+Repository = "https://github.com/yon/homeassistant-rs"
+
+[tool.maturin]
+manifest-path = "crates/ha-python-bridge/Cargo.toml"
+module-name = "ha_core_rs"
+features = ["extension"]
+strip = true
