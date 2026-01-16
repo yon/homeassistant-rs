@@ -441,11 +441,68 @@ impl minijinja::value::Object for DateTimeWrapper {
             }
             "timestamp" => Ok(Value::from(self.0.timestamp())),
             "isoformat" => Ok(Value::from(self.0.to_rfc3339())),
+            "weekday" => Ok(Value::from(self.0.weekday().num_days_from_monday())),
+            // Arithmetic methods for datetime
+            "add" => {
+                // DateTime.add(timedelta) -> DateTime
+                let delta = args.first().ok_or_else(|| {
+                    Error::new(ErrorKind::InvalidOperation, "add requires a timedelta argument")
+                })?;
+                if let Some(td) = delta.downcast_object_ref::<TimeDeltaWrapper>() {
+                    Ok(Value::from_object(DateTimeWrapper(self.0 + td.0)))
+                } else {
+                    Err(Error::new(
+                        ErrorKind::InvalidOperation,
+                        "can only add timedelta to datetime",
+                    ))
+                }
+            }
+            "sub" => {
+                // DateTime.sub(timedelta) -> DateTime or DateTime.sub(datetime) -> TimeDelta
+                let other = args.first().ok_or_else(|| {
+                    Error::new(ErrorKind::InvalidOperation, "sub requires an argument")
+                })?;
+                if let Some(td) = other.downcast_object_ref::<TimeDeltaWrapper>() {
+                    Ok(Value::from_object(DateTimeWrapper(self.0 - td.0)))
+                } else if let Some(dt) = other.downcast_object_ref::<DateTimeWrapper>() {
+                    Ok(Value::from_object(TimeDeltaWrapper(self.0 - dt.0)))
+                } else {
+                    Err(Error::new(
+                        ErrorKind::InvalidOperation,
+                        "can only subtract timedelta or datetime from datetime",
+                    ))
+                }
+            }
+            // Comparison methods for datetime
+            "gt" => {
+                let other = args.first().and_then(|v| v.downcast_object_ref::<DateTimeWrapper>());
+                Ok(Value::from(other.map(|dt| self.0 > dt.0).unwrap_or(false)))
+            }
+            "ge" => {
+                let other = args.first().and_then(|v| v.downcast_object_ref::<DateTimeWrapper>());
+                Ok(Value::from(other.map(|dt| self.0 >= dt.0).unwrap_or(false)))
+            }
+            "lt" => {
+                let other = args.first().and_then(|v| v.downcast_object_ref::<DateTimeWrapper>());
+                Ok(Value::from(other.map(|dt| self.0 < dt.0).unwrap_or(false)))
+            }
+            "le" => {
+                let other = args.first().and_then(|v| v.downcast_object_ref::<DateTimeWrapper>());
+                Ok(Value::from(other.map(|dt| self.0 <= dt.0).unwrap_or(false)))
+            }
+            "eq" => {
+                let other = args.first().and_then(|v| v.downcast_object_ref::<DateTimeWrapper>());
+                Ok(Value::from(other.map(|dt| self.0 == dt.0).unwrap_or(false)))
+            }
             _ => Err(Error::new(
                 ErrorKind::InvalidOperation,
                 format!("unknown method: {}", name),
             )),
         }
+    }
+
+    fn render(self: &std::sync::Arc<Self>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.format("%Y-%m-%d %H:%M:%S%.f%:z"))
     }
 
     fn repr(self: &std::sync::Arc<Self>) -> minijinja::value::ObjectRepr {
