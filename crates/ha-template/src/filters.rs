@@ -464,7 +464,7 @@ fn value_to_json(value: &Value) -> Result<serde_json::Value, Error> {
                 let mut map = serde_json::Map::new();
                 for key in keys {
                     if let Some(k) = key.as_str() {
-                        if let Some(v) = value.get_item(&key).ok() {
+                        if let Ok(v) = value.get_item(&key) {
                             map.insert(k.to_string(), value_to_json(&v)?);
                         }
                     }

@@ -205,7 +205,7 @@ impl Object for StateWrapper {
                 self.0
                     .attributes
                     .get("friendly_name")
-                    .and_then(|v| v.as_str().map(|s| Value::from(s)))
+                    .and_then(|v| v.as_str().map(Value::from))
                     .or_else(|| Some(Value::from(self.0.entity_id.object_id())))
             }
             "last_changed" => Some(Value::from(self.0.last_changed.to_rfc3339())),
