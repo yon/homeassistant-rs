@@ -213,7 +213,7 @@ impl PyEvent {
 }
 
 /// Convert serde_json::Value to Python object
-fn json_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
+pub fn json_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
     use pyo3::IntoPy;
 
     match value {

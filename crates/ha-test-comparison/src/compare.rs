@@ -1,6 +1,7 @@
 //! Response comparison utilities
 
 use crate::client::ApiResponse;
+use crate::ws_client::WsTestResult;
 use serde_json::Value;
 use std::collections::HashSet;
 
@@ -82,6 +83,22 @@ impl CompareOptions {
     pub fn ignore_field(mut self, field: &str) -> Self {
         self.ignore_fields.insert(field.to_string());
         self
+    }
+
+    /// Check if a path should be ignored
+    /// Matches if the path equals an ignored field OR ends with ".{ignored_field}"
+    pub fn should_ignore(&self, path: &str) -> bool {
+        let path = path.trim_start_matches('.');
+        for field in &self.ignore_fields {
+            if path == field {
+                return true;
+            }
+            // Check if path ends with .field (e.g., "foo.bar.context.id" matches "context.id")
+            if path.ends_with(&format!(".{}", field)) {
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -188,7 +205,7 @@ fn compare_json(
     differences: &mut Vec<Difference>,
 ) {
     // Check if this path should be ignored
-    if options.ignore_fields.contains(path.trim_start_matches('.')) {
+    if options.should_ignore(path) {
         return;
     }
 
@@ -202,7 +219,7 @@ fn compare_json(
                     format!("{}.{}", path, key)
                 };
 
-                if options.ignore_fields.contains(&new_path) {
+                if options.should_ignore(&new_path) {
                     continue;
                 }
 
@@ -230,7 +247,7 @@ fn compare_json(
                         format!("{}.{}", path, key)
                     };
 
-                    if !py_obj.contains_key(key) && !options.ignore_fields.contains(&new_path) {
+                    if !py_obj.contains_key(key) && !options.should_ignore(&new_path) {
                         differences.push(Difference {
                             category: DiffCategory::Extra,
                             path: new_path,
@@ -289,5 +306,95 @@ impl ComparisonResult {
                 );
             }
         }
+    }
+}
+
+/// Result of comparing WebSocket test results
+#[derive(Debug)]
+pub struct WsComparisonResult {
+    pub test_name: String,
+    pub passed: bool,
+    pub python_error: Option<String>,
+    pub rust_error: Option<String>,
+    pub differences: Vec<Difference>,
+}
+
+impl WsComparisonResult {
+    /// Print a summary of the comparison
+    pub fn print_summary(&self) {
+        if self.passed {
+            println!("✅ ws:{} - PASS", self.test_name);
+        } else if let Some(ref py_err) = self.python_error {
+            println!("⚠️  ws:{} - Python error: {}", self.test_name, py_err);
+        } else if let Some(ref rs_err) = self.rust_error {
+            println!("❌ ws:{} - Rust error: {}", self.test_name, rs_err);
+        } else {
+            println!(
+                "❌ ws:{} - FAIL ({} differences)",
+                self.test_name,
+                self.differences.len()
+            );
+            for diff in &self.differences {
+                println!(
+                    "   [{:>9}] {} : Python={} Rust={}",
+                    diff.category, diff.path, diff.python_value, diff.rust_value
+                );
+            }
+        }
+    }
+}
+
+/// Compare two WebSocket test results
+pub fn compare_ws_results(
+    test_name: &str,
+    python: &WsTestResult,
+    rust: &WsTestResult,
+    options: &CompareOptions,
+) -> WsComparisonResult {
+    // Check for errors
+    if let Some(ref err) = python.error {
+        return WsComparisonResult {
+            test_name: test_name.to_string(),
+            passed: false,
+            python_error: Some(err.clone()),
+            rust_error: None,
+            differences: Vec::new(),
+        };
+    }
+    if let Some(ref err) = rust.error {
+        return WsComparisonResult {
+            test_name: test_name.to_string(),
+            passed: false,
+            python_error: None,
+            rust_error: Some(err.clone()),
+            differences: Vec::new(),
+        };
+    }
+
+    // Compare exchanges
+    let mut differences = Vec::new();
+
+    if python.exchanges.len() != rust.exchanges.len() {
+        differences.push(Difference {
+            category: DiffCategory::BodyStructure,
+            path: "exchanges.length".to_string(),
+            python_value: python.exchanges.len().to_string(),
+            rust_value: rust.exchanges.len().to_string(),
+        });
+    }
+
+    // Compare each exchange
+    for (i, (py_ex, rs_ex)) in python.exchanges.iter().zip(rust.exchanges.iter()).enumerate() {
+        // Compare responses (requests are identical by construction)
+        let path = format!("exchange[{}].response", i);
+        compare_json(&path, &py_ex.response, &rs_ex.response, options, &mut differences);
+    }
+
+    WsComparisonResult {
+        test_name: test_name.to_string(),
+        passed: differences.is_empty(),
+        python_error: None,
+        rust_error: None,
+        differences,
     }
 }

@@ -4,7 +4,8 @@ build-backend = "maturin"
 
 [project]
 name = "ha-core-rs"
-version = "0.1.0"
+# Version matches Python Home Assistant version being tracked
+version = "2026.1.1"
 description = "Rust core components for Home Assistant"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
@@ -30,3 +31,5 @@ manifest-path = "crates/ha-python-bridge/Cargo.toml"
 module-name = "ha_core_rs"
 features = ["extension"]
 strip = true
+# Use version from pyproject.toml, not Cargo.toml (which uses Rust-style versioning)
+python-packages = []

@@ -4,14 +4,16 @@
 
 use anyhow::Result;
 use ha_api::AppState;
+use ha_config::CoreConfig;
 use ha_core::{Context, EntityId, ServiceCall, SupportsResponse};
 use ha_event_bus::EventBus;
 use ha_service_registry::{ServiceDescription, ServiceRegistry};
 use ha_state_machine::StateMachine;
 use serde_json::json;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::{info, Level};
+use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 /// The central Home Assistant instance
@@ -419,6 +421,30 @@ async fn main() -> Result<()> {
 
     info!("Starting Home Assistant (Rust)");
 
+    // Load configuration
+    // Use HA_CONFIG_DIR env var or default to /config
+    let config_dir = std::env::var("HA_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/config"));
+
+    let config = if config_dir.join("configuration.yaml").exists() {
+        info!("Loading configuration from {:?}", config_dir);
+        match CoreConfig::load(&config_dir) {
+            Ok(cfg) => {
+                info!("Configuration loaded: name={}, location=({}, {})",
+                    cfg.name, cfg.latitude, cfg.longitude);
+                cfg
+            }
+            Err(e) => {
+                warn!("Failed to load configuration: {}. Using defaults.", e);
+                CoreConfig::default()
+            }
+        }
+    } else {
+        info!("No configuration.yaml found, using defaults");
+        CoreConfig::default()
+    };
+
     let hass = HomeAssistant::new();
 
     // Register core services
@@ -434,6 +460,7 @@ async fn main() -> Result<()> {
         event_bus: hass.bus.clone(),
         state_machine: hass.states.clone(),
         service_registry: hass.services.clone(),
+        config: Arc::new(config),
     };
 
     // Start API server

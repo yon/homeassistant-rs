@@ -11,8 +11,12 @@ publish = false
 # HTTP client
 reqwest = { workspace = true }
 
+# WebSocket client
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+
 # Async
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
 
 # Serialization
 serde = { workspace = true }

@@ -1,8 +1,9 @@
 //! Test harness for running comparison tests
 
 use crate::client::HaClient;
-use crate::compare::{compare_responses, CompareOptions, ComparisonResult};
+use crate::compare::{compare_responses, compare_ws_results, CompareOptions, ComparisonResult, WsComparisonResult};
 use crate::config::ComparisonConfig;
+use crate::ws_client::WsClient;
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -11,7 +12,10 @@ pub struct TestHarness {
     pub config: ComparisonConfig,
     pub python_client: HaClient,
     pub rust_client: HaClient,
+    pub python_ws: WsClient,
+    pub rust_ws: WsClient,
     pub results: Vec<ComparisonResult>,
+    pub ws_results: Vec<WsComparisonResult>,
 }
 
 impl TestHarness {
@@ -20,11 +24,21 @@ impl TestHarness {
         let python_client = HaClient::python_ha(&config.python_ha_url, &config.python_ha_token);
         let rust_client = HaClient::rust_ha(&config.rust_ha_url, config.rust_ha_token.as_deref());
 
+        // WebSocket clients use the same token
+        let python_ws = WsClient::python_ha(&config.python_ha_url, &config.python_ha_token);
+        let rust_ws = WsClient::rust_ha(
+            &config.rust_ha_url,
+            config.rust_ha_token.as_deref().unwrap_or(&config.python_ha_token),
+        );
+
         Self {
             config,
             python_client,
             rust_client,
+            python_ws,
+            rust_ws,
             results: Vec::new(),
+            ws_results: Vec::new(),
         }
     }
 
@@ -102,6 +116,88 @@ impl TestHarness {
         self.results.last().unwrap()
     }
 
+    /// Run a WebSocket comparison test
+    pub async fn compare_ws_auth(&mut self) -> &WsComparisonResult {
+        let options = CompareOptions::new()
+            .ignore_field("ha_version"); // Versions may differ
+
+        let python_result = self.python_ws.test_auth_flow().await;
+        let rust_result = self.rust_ws.test_auth_flow().await;
+
+        let result = compare_ws_results("auth_flow", &python_result, &rust_result, &options);
+        self.ws_results.push(result);
+        self.ws_results.last().unwrap()
+    }
+
+    /// Run WebSocket get_states comparison
+    pub async fn compare_ws_get_states(&mut self) -> &WsComparisonResult {
+        let options = CompareOptions::new()
+            .ignore_field("last_changed")
+            .ignore_field("last_updated")
+            .ignore_field("last_reported")
+            .ignore_field("context");
+
+        let python_result = self.python_ws.test_get_states().await;
+        let rust_result = self.rust_ws.test_get_states().await;
+
+        let result = compare_ws_results("get_states", &python_result, &rust_result, &options);
+        self.ws_results.push(result);
+        self.ws_results.last().unwrap()
+    }
+
+    /// Run WebSocket get_config comparison
+    pub async fn compare_ws_get_config(&mut self) -> &WsComparisonResult {
+        let options = CompareOptions::new()
+            .ignore_field("allowlist_external_dirs")
+            .ignore_field("allowlist_external_urls")
+            .ignore_field("whitelist_external_dirs")
+            .ignore_field("components");
+
+        let python_result = self.python_ws.test_get_config().await;
+        let rust_result = self.rust_ws.test_get_config().await;
+
+        let result = compare_ws_results("get_config", &python_result, &rust_result, &options);
+        self.ws_results.push(result);
+        self.ws_results.last().unwrap()
+    }
+
+    /// Run WebSocket ping/pong comparison
+    pub async fn compare_ws_ping(&mut self) -> &WsComparisonResult {
+        let options = CompareOptions::new();
+
+        let python_result = self.python_ws.test_ping_pong().await;
+        let rust_result = self.rust_ws.test_ping_pong().await;
+
+        let result = compare_ws_results("ping_pong", &python_result, &rust_result, &options);
+        self.ws_results.push(result);
+        self.ws_results.last().unwrap()
+    }
+
+    /// Run WebSocket subscribe_events comparison
+    pub async fn compare_ws_subscribe(&mut self) -> &WsComparisonResult {
+        let options = CompareOptions::new();
+
+        let python_result = self.python_ws.test_subscribe_events().await;
+        let rust_result = self.rust_ws.test_subscribe_events().await;
+
+        let result = compare_ws_results("subscribe_events", &python_result, &rust_result, &options);
+        self.ws_results.push(result);
+        self.ws_results.last().unwrap()
+    }
+
+    /// Run WebSocket call_service comparison
+    pub async fn compare_ws_call_service(&mut self) -> &WsComparisonResult {
+        // context.id is already ignored by default in CompareOptions::new()
+        let options = CompareOptions::new();
+
+        let python_result = self.python_ws.test_call_service().await;
+        let rust_result = self.rust_ws.test_call_service().await;
+
+        let result = compare_ws_results("call_service", &python_result, &rust_result, &options);
+        self.ws_results.push(result);
+        self.ws_results.last().unwrap()
+    }
+
     /// Print summary of all results
     pub fn print_summary(&self) {
         println!("\n=== Comparison Test Summary ===");
@@ -110,26 +206,43 @@ impl TestHarness {
         println!("Rust HA: {}", self.config.rust_ha_url);
         println!();
 
-        let passed = self.results.iter().filter(|r| r.passed).count();
-        let total = self.results.len();
+        let rest_passed = self.results.iter().filter(|r| r.passed).count();
+        let rest_total = self.results.len();
 
-        for result in &self.results {
-            result.print_summary();
+        if rest_total > 0 {
+            println!("--- REST API ---");
+            for result in &self.results {
+                result.print_summary();
+            }
+            println!();
         }
 
-        println!();
-        println!("Results: {}/{} passed", passed, total);
+        let ws_passed = self.ws_results.iter().filter(|r| r.passed).count();
+        let ws_total = self.ws_results.len();
 
-        if passed == total {
+        if ws_total > 0 {
+            println!("--- WebSocket API ---");
+            for result in &self.ws_results {
+                result.print_summary();
+            }
+            println!();
+        }
+
+        let total_passed = rest_passed + ws_passed;
+        let total = rest_total + ws_total;
+
+        println!("Results: {}/{} passed", total_passed, total);
+
+        if total_passed == total {
             println!("✅ All tests passed!");
         } else {
-            println!("❌ {} tests failed", total - passed);
+            println!("❌ {} tests failed", total - total_passed);
         }
     }
 
     /// Check if all tests passed
     pub fn all_passed(&self) -> bool {
-        self.results.iter().all(|r| r.passed)
+        self.results.iter().all(|r| r.passed) && self.ws_results.iter().all(|r| r.passed)
     }
 }
 
@@ -149,6 +262,7 @@ impl TestSuites {
         Self::run_state_endpoints(harness).await;
         Self::run_service_endpoints(harness).await;
         Self::run_event_endpoints(harness).await;
+        Self::run_websocket_endpoints(harness).await;
     }
 
     /// Test basic API endpoints
@@ -247,5 +361,28 @@ impl TestSuites {
             )
             .await
             .print_summary();
+    }
+
+    /// Test WebSocket endpoints
+    pub async fn run_websocket_endpoints(harness: &mut TestHarness) {
+        println!("\n--- WebSocket API ---");
+
+        // Auth flow
+        harness.compare_ws_auth().await.print_summary();
+
+        // Ping/pong
+        harness.compare_ws_ping().await.print_summary();
+
+        // Get states
+        harness.compare_ws_get_states().await.print_summary();
+
+        // Get config
+        harness.compare_ws_get_config().await.print_summary();
+
+        // Subscribe events
+        harness.compare_ws_subscribe().await.print_summary();
+
+        // Call service
+        harness.compare_ws_call_service().await.print_summary();
     }
 }
