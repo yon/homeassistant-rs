@@ -35,3 +35,4 @@ venv/
 # Home Assistant config (for testing)
 .storage/
 *.log
+.claude/

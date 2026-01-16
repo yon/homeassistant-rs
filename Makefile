@@ -71,6 +71,11 @@ lint-makefile: ## Check Makefile targets are alphabetized within sections
 clean: ## Remove build artifacts
 	$(CARGO) clean
 
+.PHONY: setup
+setup: $(VENV_STAMP) ## Setup development environment (git hooks, venv)
+	git config core.hooksPath .githooks
+	@echo "Git hooks configured. Pre-commit will run fmt, clippy, and tests."
+
 .PHONY: clean-all
 clean-all: clean ## Remove build artifacts and Python venv
 	rm -rf $(VENV)
@@ -132,6 +137,10 @@ test-coverage: ## Run tests with coverage (requires cargo-tarpaulin)
 .PHONY: test-doc
 test-doc: ## Run documentation tests
 	$(CARGO) test --workspace --doc
+
+.PHONY: test-fallback
+test-fallback: ## Run Python fallback mode tests
+	PYO3_PYTHON=$(PYTHON_BIN) $(CARGO) test -p ha-python-bridge --features fallback --no-default-features --lib
 
 .PHONY: test-verbose
 test-verbose: ## Run all tests with verbose output
