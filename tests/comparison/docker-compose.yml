@@ -1,0 +1,28 @@
+# Home Assistant Test Instance
+#
+# This docker-compose file runs a vanilla Home Assistant instance
+# for API comparison testing. Do NOT use for production.
+#
+# Usage:
+#   make ha-start    # Start HA test instance
+#   make ha-stop     # Stop HA test instance
+#   make ha-logs     # View HA logs
+#   make test-compare # Run comparison tests
+
+services:
+  homeassistant:
+    image: ${HA_IMAGE:-ghcr.io/home-assistant/home-assistant:2026.1.1}
+    container_name: ha-test-instance
+    restart: "no"
+    ports:
+      - "${HA_PORT:-18123}:8123"
+    volumes:
+      - ./ha-config:/config
+    environment:
+      - TZ=UTC
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8123/api/"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s

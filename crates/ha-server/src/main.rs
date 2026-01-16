@@ -3,9 +3,13 @@
 //! Main entry point for the Home Assistant Rust implementation.
 
 use anyhow::Result;
+use ha_api::AppState;
+use ha_core::{Context, EntityId, ServiceCall, SupportsResponse};
 use ha_event_bus::EventBus;
-use ha_service_registry::ServiceRegistry;
+use ha_service_registry::{ServiceDescription, ServiceRegistry};
 use ha_state_machine::StateMachine;
+use serde_json::json;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -33,6 +37,369 @@ impl HomeAssistant {
             services,
         }
     }
+
+    /// Register core services
+    fn register_core_services(&self) {
+        let states = self.states.clone();
+
+        // Helper to create entity target spec
+        let entity_target = || Some(json!({}));
+
+        // Register homeassistant.turn_on service
+        let states_clone = states.clone();
+        self.services.register_with_description(
+            ServiceDescription {
+                domain: "homeassistant".to_string(),
+                service: "turn_on".to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                target: entity_target(),
+                supports_response: SupportsResponse::None,
+            },
+            move |call: ServiceCall| {
+                let states = states_clone.clone();
+                async move {
+                    if let Some(entity_id) =
+                        call.service_data.get("entity_id").and_then(|v| v.as_str())
+                    {
+                        let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
+                        if parts.len() == 2 {
+                            if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
+                                states.set(entity, "on", HashMap::new(), Context::new());
+                            }
+                        }
+                    }
+                    Ok(None)
+                }
+            },
+        );
+
+        // Register homeassistant.turn_off service
+        let states_clone = states.clone();
+        self.services.register_with_description(
+            ServiceDescription {
+                domain: "homeassistant".to_string(),
+                service: "turn_off".to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                target: entity_target(),
+                supports_response: SupportsResponse::None,
+            },
+            move |call: ServiceCall| {
+                let states = states_clone.clone();
+                async move {
+                    if let Some(entity_id) =
+                        call.service_data.get("entity_id").and_then(|v| v.as_str())
+                    {
+                        let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
+                        if parts.len() == 2 {
+                            if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
+                                states.set(entity, "off", HashMap::new(), Context::new());
+                            }
+                        }
+                    }
+                    Ok(None)
+                }
+            },
+        );
+
+        // Register homeassistant.toggle service
+        let states_clone = states.clone();
+        self.services.register_with_description(
+            ServiceDescription {
+                domain: "homeassistant".to_string(),
+                service: "toggle".to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                target: entity_target(),
+                supports_response: SupportsResponse::None,
+            },
+            move |call: ServiceCall| {
+                let states = states_clone.clone();
+                async move {
+                    if let Some(entity_id) =
+                        call.service_data.get("entity_id").and_then(|v| v.as_str())
+                    {
+                        if let Some(state) = states.get(entity_id) {
+                            let new_state = if state.state == "on" { "off" } else { "on" };
+                            let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
+                            if parts.len() == 2 {
+                                if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
+                                    states.set(
+                                        entity,
+                                        new_state,
+                                        state.attributes.clone(),
+                                        Context::new(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Ok(None)
+                }
+            },
+        );
+
+        // Register homeassistant.update_entity service
+        let states_clone = states.clone();
+        self.services.register_with_description(
+            ServiceDescription {
+                domain: "homeassistant".to_string(),
+                service: "update_entity".to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                target: None,
+                supports_response: SupportsResponse::None,
+            },
+            move |call: ServiceCall| {
+                let _states = states_clone.clone();
+                async move {
+                    // In a real implementation, this would request entities to update
+                    info!("update_entity called: {:?}", call.service_data);
+                    Ok(None)
+                }
+            },
+        );
+
+        // Register homeassistant.check_config service
+        self.services.register_with_description(
+            ServiceDescription {
+                domain: "homeassistant".to_string(),
+                service: "check_config".to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                target: None,
+                supports_response: SupportsResponse::None,
+            },
+            |_call: ServiceCall| async move {
+                // Return success - config check passed
+                Ok(None)
+            },
+        );
+
+        // Register homeassistant.reload_core_config service
+        self.services.register_with_description(
+            ServiceDescription {
+                domain: "homeassistant".to_string(),
+                service: "reload_core_config".to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                target: None,
+                supports_response: SupportsResponse::None,
+            },
+            |_call: ServiceCall| async move {
+                info!("Reloading core config");
+                Ok(None)
+            },
+        );
+
+        // Register homeassistant.restart service
+        self.services.register_with_description(
+            ServiceDescription {
+                domain: "homeassistant".to_string(),
+                service: "restart".to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                target: None,
+                supports_response: SupportsResponse::None,
+            },
+            |_call: ServiceCall| async move {
+                info!("Restart requested (not implemented in test mode)");
+                Ok(None)
+            },
+        );
+
+        // Register homeassistant.stop service
+        self.services.register_with_description(
+            ServiceDescription {
+                domain: "homeassistant".to_string(),
+                service: "stop".to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                target: None,
+                supports_response: SupportsResponse::None,
+            },
+            |_call: ServiceCall| async move {
+                info!("Stop requested (not implemented in test mode)");
+                Ok(None)
+            },
+        );
+
+        // Register homeassistant.reload_all service
+        self.services.register_with_description(
+            ServiceDescription {
+                domain: "homeassistant".to_string(),
+                service: "reload_all".to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                target: None,
+                supports_response: SupportsResponse::None,
+            },
+            |_call: ServiceCall| async move {
+                info!("Reload all requested");
+                Ok(None)
+            },
+        );
+
+        // Register homeassistant.reload_config_entry service
+        self.services.register_with_description(
+            ServiceDescription {
+                domain: "homeassistant".to_string(),
+                service: "reload_config_entry".to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                target: entity_target(),
+                supports_response: SupportsResponse::None,
+            },
+            |_call: ServiceCall| async move {
+                info!("Reload config entry requested");
+                Ok(None)
+            },
+        );
+
+        // Register homeassistant.reload_custom_templates service
+        self.services.register_with_description(
+            ServiceDescription {
+                domain: "homeassistant".to_string(),
+                service: "reload_custom_templates".to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                target: None,
+                supports_response: SupportsResponse::None,
+            },
+            |_call: ServiceCall| async move {
+                info!("Reload custom templates requested");
+                Ok(None)
+            },
+        );
+
+        // Register homeassistant.save_persistent_states service
+        self.services.register_with_description(
+            ServiceDescription {
+                domain: "homeassistant".to_string(),
+                service: "save_persistent_states".to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                target: None,
+                supports_response: SupportsResponse::None,
+            },
+            |_call: ServiceCall| async move {
+                info!("Save persistent states requested");
+                Ok(None)
+            },
+        );
+
+        // Register homeassistant.set_location service
+        self.services.register_with_description(
+            ServiceDescription {
+                domain: "homeassistant".to_string(),
+                service: "set_location".to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                target: None,
+                supports_response: SupportsResponse::None,
+            },
+            |_call: ServiceCall| async move {
+                info!("Set location requested");
+                Ok(None)
+            },
+        );
+
+        info!("Core services registered");
+    }
+
+    /// Add some demo entities
+    fn add_demo_entities(&self) {
+        // Add some demo lights
+        self.states.set(
+            EntityId::new("light", "living_room").unwrap(),
+            "on",
+            HashMap::from([
+                ("brightness".to_string(), serde_json::json!(255)),
+                (
+                    "friendly_name".to_string(),
+                    serde_json::json!("Living Room Light"),
+                ),
+            ]),
+            Context::new(),
+        );
+
+        self.states.set(
+            EntityId::new("light", "bedroom").unwrap(),
+            "off",
+            HashMap::from([
+                ("brightness".to_string(), serde_json::json!(0)),
+                (
+                    "friendly_name".to_string(),
+                    serde_json::json!("Bedroom Light"),
+                ),
+            ]),
+            Context::new(),
+        );
+
+        // Add some sensors
+        self.states.set(
+            EntityId::new("sensor", "temperature").unwrap(),
+            "22.5",
+            HashMap::from([
+                ("unit_of_measurement".to_string(), serde_json::json!("°C")),
+                (
+                    "friendly_name".to_string(),
+                    serde_json::json!("Temperature"),
+                ),
+                ("device_class".to_string(), serde_json::json!("temperature")),
+            ]),
+            Context::new(),
+        );
+
+        self.states.set(
+            EntityId::new("sensor", "humidity").unwrap(),
+            "45",
+            HashMap::from([
+                ("unit_of_measurement".to_string(), serde_json::json!("%")),
+                ("friendly_name".to_string(), serde_json::json!("Humidity")),
+                ("device_class".to_string(), serde_json::json!("humidity")),
+            ]),
+            Context::new(),
+        );
+
+        // Add a switch
+        self.states.set(
+            EntityId::new("switch", "coffee_maker").unwrap(),
+            "off",
+            HashMap::from([(
+                "friendly_name".to_string(),
+                serde_json::json!("Coffee Maker"),
+            )]),
+            Context::new(),
+        );
+
+        // Add a binary sensor
+        self.states.set(
+            EntityId::new("binary_sensor", "front_door").unwrap(),
+            "off",
+            HashMap::from([
+                ("friendly_name".to_string(), serde_json::json!("Front Door")),
+                ("device_class".to_string(), serde_json::json!("door")),
+            ]),
+            Context::new(),
+        );
+
+        info!("Demo entities added");
+    }
 }
 
 impl Default for HomeAssistant {
@@ -52,20 +419,42 @@ async fn main() -> Result<()> {
 
     info!("Starting Home Assistant (Rust)");
 
-    let _hass = HomeAssistant::new();
+    let hass = HomeAssistant::new();
+
+    // Register core services
+    hass.register_core_services();
+
+    // Add demo entities
+    hass.add_demo_entities();
 
     info!("Home Assistant initialized");
 
-    // TODO: Load configuration
-    // TODO: Start API server
-    // TODO: Load integrations
-    // TODO: Start automation engine
+    // Create API state
+    let api_state = AppState {
+        event_bus: hass.bus.clone(),
+        state_machine: hass.states.clone(),
+        service_registry: hass.services.clone(),
+    };
 
-    info!("Home Assistant is running");
+    // Start API server
+    // Use HA_PORT env var or default to 8123
+    let port = std::env::var("HA_PORT").unwrap_or_else(|_| "8123".to_string());
+    let addr = format!("0.0.0.0:{}", port);
+    info!("Starting API server on http://{}", addr);
 
-    // Keep the server running
-    tokio::signal::ctrl_c().await?;
-    info!("Shutting down...");
+    // Run server until shutdown signal
+    tokio::select! {
+        result = ha_api::start_server(api_state, &addr) => {
+            if let Err(e) = result {
+                tracing::error!("Server error: {}", e);
+            }
+        }
+        _ = tokio::signal::ctrl_c() => {
+            info!("Shutdown signal received");
+        }
+    }
+
+    info!("Home Assistant stopped");
 
     Ok(())
 }

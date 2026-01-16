@@ -51,6 +51,8 @@ pub struct ServiceDescription {
     pub description: Option<String>,
     /// JSON schema for service data (optional)
     pub schema: Option<serde_json::Value>,
+    /// Target specification for the service (entity/device/area selectors)
+    pub target: Option<serde_json::Value>,
     /// Whether this service supports returning a response
     pub supports_response: SupportsResponse,
 }
@@ -115,6 +117,7 @@ impl ServiceRegistry {
             name: None,
             description: None,
             schema,
+            target: None,
             supports_response,
         };
 
