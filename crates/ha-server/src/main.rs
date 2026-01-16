@@ -463,6 +463,36 @@ impl Default for HomeAssistant {
     }
 }
 
+/// Load components list from JSON file or use defaults
+fn load_components(config_dir: &std::path::Path) -> Vec<String> {
+    let components_file = config_dir.join("components.json");
+
+    if components_file.exists() {
+        match std::fs::read_to_string(&components_file) {
+            Ok(content) => {
+                match serde_json::from_str::<Vec<String>>(&content) {
+                    Ok(components) => return components,
+                    Err(e) => {
+                        warn!("Failed to parse components.json: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Failed to read components.json: {}", e);
+            }
+        }
+    }
+
+    // Default components
+    vec![
+        "homeassistant".to_string(),
+        "api".to_string(),
+        "automation".to_string(),
+        "script".to_string(),
+        "scene".to_string(),
+    ]
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
@@ -506,6 +536,10 @@ async fn main() -> Result<()> {
     // Load entities from config or use demo entities
     hass.load_entities(&config_dir);
 
+    // Load components list from file or use defaults
+    let components = load_components(&config_dir);
+    info!("Loaded {} components", components.len());
+
     info!("Home Assistant initialized");
 
     // Create API state
@@ -514,6 +548,7 @@ async fn main() -> Result<()> {
         state_machine: hass.states.clone(),
         service_registry: hass.services.clone(),
         config: Arc::new(config),
+        components: Arc::new(components),
     };
 
     // Start API server

@@ -31,6 +31,7 @@ pub struct AppState {
     pub state_machine: Arc<StateMachine>,
     pub service_registry: Arc<ServiceRegistry>,
     pub config: Arc<CoreConfig>,
+    pub components: Arc<Vec<String>>,
 }
 
 /// API status response
@@ -212,13 +213,7 @@ async fn get_config(State(state): State<AppState>) -> Json<ConfigResponse> {
     Json(ConfigResponse {
         allowlist_external_dirs: config.allowlist_external_dirs.clone(),
         allowlist_external_urls: config.allowlist_external_urls.clone(),
-        components: vec![
-            "homeassistant".to_string(),
-            "api".to_string(),
-            "automation".to_string(),
-            "script".to_string(),
-            "scene".to_string(),
-        ],
+        components: (*state.components).clone(),
         config_dir: "/config".to_string(),
         config_source: "yaml".to_string(),
         country: config.country.clone(),
