@@ -56,6 +56,8 @@ pub struct CompareOptions {
     pub ignore_headers: HashSet<String>,
     /// Whether to allow extra fields in Rust response
     pub allow_extra_fields: bool,
+    /// Sort arrays by this key before comparing (e.g., "entity_id")
+    pub sort_arrays_by: Option<String>,
 }
 
 impl CompareOptions {
@@ -82,6 +84,11 @@ impl CompareOptions {
 
     pub fn ignore_field(mut self, field: &str) -> Self {
         self.ignore_fields.insert(field.to_string());
+        self
+    }
+
+    pub fn sort_arrays_by(mut self, key: &str) -> Self {
+        self.sort_arrays_by = Some(key.to_string());
         self
     }
 
@@ -259,17 +266,38 @@ fn compare_json(
             }
         }
         (Value::Array(py_arr), Value::Array(rs_arr)) => {
-            if py_arr.len() != rs_arr.len() {
+            // Sort arrays if sort key is specified
+            let (py_sorted, rs_sorted) = if let Some(ref sort_key) = options.sort_arrays_by {
+                let mut py_vec: Vec<_> = py_arr.iter().collect();
+                let mut rs_vec: Vec<_> = rs_arr.iter().collect();
+
+                py_vec.sort_by(|a, b| {
+                    let a_key = a.get(sort_key).and_then(|v| v.as_str()).unwrap_or("");
+                    let b_key = b.get(sort_key).and_then(|v| v.as_str()).unwrap_or("");
+                    a_key.cmp(b_key)
+                });
+                rs_vec.sort_by(|a, b| {
+                    let a_key = a.get(sort_key).and_then(|v| v.as_str()).unwrap_or("");
+                    let b_key = b.get(sort_key).and_then(|v| v.as_str()).unwrap_or("");
+                    a_key.cmp(b_key)
+                });
+
+                (py_vec, rs_vec)
+            } else {
+                (py_arr.iter().collect(), rs_arr.iter().collect())
+            };
+
+            if py_sorted.len() != rs_sorted.len() {
                 differences.push(Difference {
                     category: DiffCategory::BodyStructure,
                     path: format!("{}.length", path),
-                    python_value: py_arr.len().to_string(),
-                    rust_value: rs_arr.len().to_string(),
+                    python_value: py_sorted.len().to_string(),
+                    rust_value: rs_sorted.len().to_string(),
                 });
             }
 
-            // Compare elements (assuming same order for now)
-            for (i, (py_elem, rs_elem)) in py_arr.iter().zip(rs_arr.iter()).enumerate() {
+            // Compare elements
+            for (i, (py_elem, rs_elem)) in py_sorted.iter().zip(rs_sorted.iter()).enumerate() {
                 let new_path = format!("{}[{}]", path, i);
                 compare_json(&new_path, py_elem, rs_elem, options, differences);
             }
