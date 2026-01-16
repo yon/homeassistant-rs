@@ -252,23 +252,39 @@ impl YamlLoader {
     }
 
     /// Process !env_var tag
+    /// Supports: `!env_var VAR` or `!env_var VAR default_value`
     fn process_env_var(&self, value: Value) -> ConfigResult<Value> {
-        let var_name = match value {
+        let input = match value {
             Value::String(s) => s,
             _ => {
                 return Err(ConfigError::InvalidValue {
                     key: "!env_var".to_string(),
-                    reason: "environment variable name must be a string".to_string(),
+                    reason: "environment variable must be a string".to_string(),
                 })
             }
         };
 
-        let env_value = std::env::var(&var_name).map_err(|_| ConfigError::EnvVarNotFound {
-            var: var_name.clone(),
-        })?;
+        // Parse "VAR_NAME" or "VAR_NAME default_value"
+        let parts: Vec<&str> = input.splitn(2, ' ').collect();
+        let var_name = parts[0];
+        let default_value = parts.get(1).map(|s| s.to_string());
 
-        debug!("Substituted env var: {}", var_name);
-        Ok(Value::String(env_value))
+        match std::env::var(var_name) {
+            Ok(env_value) => {
+                debug!("Substituted env var: {}", var_name);
+                Ok(Value::String(env_value))
+            }
+            Err(_) => {
+                if let Some(default) = default_value {
+                    debug!("Using default for env var {}: {}", var_name, default);
+                    Ok(Value::String(default))
+                } else {
+                    Err(ConfigError::EnvVarNotFound {
+                        var: var_name.to_string(),
+                    })
+                }
+            }
+        }
     }
 
     /// Convert a YAML value to a path, resolving relative to source file
@@ -303,7 +319,8 @@ impl YamlLoader {
         }
     }
 
-    /// Get all YAML files in a directory, sorted by name
+    /// Get all YAML files in a directory recursively, sorted by name
+    /// Filters out hidden files/directories (starting with `.`) and `secrets.yaml`
     fn get_yaml_files(&self, dir: &Path) -> ConfigResult<Vec<PathBuf>> {
         if !dir.exists() {
             return Err(ConfigError::DirectoryNotFound {
@@ -317,22 +334,54 @@ impl YamlLoader {
             });
         }
 
-        let mut files: Vec<PathBuf> = fs::read_dir(dir)
-            .map_err(|e| ConfigError::ReadFile {
-                path: dir.to_path_buf(),
-                source: e,
-            })?
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.extension()
-                    .map(|ext| ext == "yaml" || ext == "yml")
-                    .unwrap_or(false)
-            })
-            .collect();
-
+        let mut files = Vec::new();
+        self.collect_yaml_files_recursive(dir, &mut files)?;
         files.sort();
         Ok(files)
+    }
+
+    /// Recursively collect YAML files from a directory
+    fn collect_yaml_files_recursive(
+        &self,
+        dir: &Path,
+        files: &mut Vec<PathBuf>,
+    ) -> ConfigResult<()> {
+        let entries = fs::read_dir(dir).map_err(|e| ConfigError::ReadFile {
+            path: dir.to_path_buf(),
+            source: e,
+        })?;
+
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+            // Skip hidden files and directories
+            if file_name.starts_with('.') {
+                continue;
+            }
+
+            if path.is_dir() {
+                // Skip directories named "ignore" (for testing compatibility)
+                if file_name != "ignore" {
+                    self.collect_yaml_files_recursive(&path, files)?;
+                }
+            } else if path.is_file() {
+                // Check if it's a YAML file
+                let is_yaml = path
+                    .extension()
+                    .map(|ext| ext == "yaml" || ext == "yml")
+                    .unwrap_or(false);
+
+                // Skip secrets.yaml
+                let is_secrets = file_name == "secrets.yaml" || file_name == "secrets.yml";
+
+                if is_yaml && !is_secrets {
+                    files.push(path);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Get a reference to the secrets store
@@ -377,18 +426,48 @@ mod tests {
         file.write_all(content.as_bytes()).unwrap();
     }
 
+    // ==================== Core Parsing Tests ====================
+
     #[test]
-    fn test_load_simple_yaml() {
+    fn test_simple_list() {
+        let dir = TempDir::new().unwrap();
+        write_file(dir.path(), "config.yaml", "config:\n  - simple\n  - list\n");
+
+        let value = load_yaml(dir.path(), "config.yaml").unwrap();
+        let map = value.as_mapping().unwrap();
+        let config = map.get(&Value::String("config".to_string())).unwrap();
+        let seq = config.as_sequence().unwrap();
+        assert_eq!(seq.len(), 2);
+        assert_eq!(seq[0], Value::String("simple".to_string()));
+        assert_eq!(seq[1], Value::String("list".to_string()));
+    }
+
+    #[test]
+    fn test_simple_dict() {
+        let dir = TempDir::new().unwrap();
+        write_file(dir.path(), "config.yaml", "key: value\n");
+
+        let value = load_yaml(dir.path(), "config.yaml").unwrap();
+        let map = value.as_mapping().unwrap();
+        assert_eq!(
+            map.get(&Value::String("key".to_string())),
+            Some(&Value::String("value".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_nested_structure() {
         let dir = TempDir::new().unwrap();
         write_file(
             dir.path(),
             "config.yaml",
             r#"
-key: value
-number: 42
-list:
-  - one
-  - two
+outer:
+  inner:
+    key: value
+  list:
+    - item1
+    - item2
 "#,
         );
 
@@ -396,32 +475,65 @@ list:
         assert!(value.is_mapping());
     }
 
+    // ==================== Environment Variable Tests ====================
+
     #[test]
-    fn test_include() {
+    fn test_environment_variable() {
         let dir = TempDir::new().unwrap();
-        write_file(
-            dir.path(),
-            "included.yaml",
-            "included_key: included_value\n",
-        );
+        std::env::set_var("TEST_HA_PASSWORD", "secret_password");
         write_file(
             dir.path(),
             "config.yaml",
-            "main_key: main_value\nincluded: !include included.yaml\n",
+            "password: !env_var TEST_HA_PASSWORD\n",
         );
 
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
-        let included = map.get(&Value::String("included".to_string())).unwrap();
-        let included_map = included.as_mapping().unwrap();
         assert_eq!(
-            included_map.get(&Value::String("included_key".to_string())),
-            Some(&Value::String("included_value".to_string()))
+            map.get(&Value::String("password".to_string())),
+            Some(&Value::String("secret_password".to_string()))
+        );
+
+        std::env::remove_var("TEST_HA_PASSWORD");
+    }
+
+    #[test]
+    fn test_environment_variable_default() {
+        let dir = TempDir::new().unwrap();
+        // Ensure the var is not set
+        std::env::remove_var("TEST_HA_UNDEFINED_VAR");
+        write_file(
+            dir.path(),
+            "config.yaml",
+            "password: !env_var TEST_HA_UNDEFINED_VAR default_password\n",
+        );
+
+        let value = load_yaml(dir.path(), "config.yaml").unwrap();
+        let map = value.as_mapping().unwrap();
+        assert_eq!(
+            map.get(&Value::String("password".to_string())),
+            Some(&Value::String("default_password".to_string()))
         );
     }
 
     #[test]
-    fn test_secret() {
+    fn test_invalid_environment_variable() {
+        let dir = TempDir::new().unwrap();
+        std::env::remove_var("TEST_HA_MISSING_VAR");
+        write_file(
+            dir.path(),
+            "config.yaml",
+            "password: !env_var TEST_HA_MISSING_VAR\n",
+        );
+
+        let result = load_yaml(dir.path(), "config.yaml");
+        assert!(matches!(result, Err(ConfigError::EnvVarNotFound { .. })));
+    }
+
+    // ==================== Secret Tests ====================
+
+    #[test]
+    fn test_secrets_from_yaml() {
         let dir = TempDir::new().unwrap();
         write_file(dir.path(), "secrets.yaml", "my_password: secret123\n");
         write_file(dir.path(), "config.yaml", "password: !secret my_password\n");
@@ -435,97 +547,108 @@ list:
     }
 
     #[test]
-    fn test_env_var() {
+    fn test_secret_with_numeric_value() {
         let dir = TempDir::new().unwrap();
-        std::env::set_var("TEST_HA_CONFIG_VAR", "env_value");
-        write_file(
-            dir.path(),
-            "config.yaml",
-            "from_env: !env_var TEST_HA_CONFIG_VAR\n",
-        );
+        write_file(dir.path(), "secrets.yaml", "port: 8080\n");
+        write_file(dir.path(), "config.yaml", "port: !secret port\n");
 
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
         assert_eq!(
-            map.get(&Value::String("from_env".to_string())),
-            Some(&Value::String("env_value".to_string()))
+            map.get(&Value::String("port".to_string())),
+            Some(&Value::String("8080".to_string()))
         );
-
-        std::env::remove_var("TEST_HA_CONFIG_VAR");
     }
 
     #[test]
-    fn test_include_dir_list() {
+    fn test_missing_secret() {
         let dir = TempDir::new().unwrap();
-        fs::create_dir(dir.path().join("automations")).unwrap();
-        write_file(
-            dir.path(),
-            "automations/auto1.yaml",
-            "alias: Automation 1\n",
-        );
-        write_file(
-            dir.path(),
-            "automations/auto2.yaml",
-            "alias: Automation 2\n",
-        );
-        write_file(
-            dir.path(),
-            "config.yaml",
-            "automation: !include_dir_list automations\n",
-        );
+        write_file(dir.path(), "secrets.yaml", "existing: value\n");
+        write_file(dir.path(), "config.yaml", "password: !secret nonexistent\n");
 
-        let value = load_yaml(dir.path(), "config.yaml").unwrap();
-        let map = value.as_mapping().unwrap();
-        let automation = map.get(&Value::String("automation".to_string())).unwrap();
-        let seq = automation.as_sequence().unwrap();
-        assert_eq!(seq.len(), 2);
+        let result = load_yaml(dir.path(), "config.yaml");
+        assert!(matches!(result, Err(ConfigError::SecretNotFound { .. })));
     }
 
     #[test]
-    fn test_include_dir_merge_list() {
+    fn test_no_secrets_file() {
         let dir = TempDir::new().unwrap();
-        fs::create_dir(dir.path().join("automations")).unwrap();
+        write_file(dir.path(), "config.yaml", "key: value\n");
+
+        // Should work - no secrets referenced
+        let value = load_yaml(dir.path(), "config.yaml").unwrap();
+        assert!(value.is_mapping());
+    }
+
+    // ==================== Include Tests ====================
+
+    #[test]
+    fn test_include_yaml() {
+        let dir = TempDir::new().unwrap();
         write_file(
             dir.path(),
-            "automations/auto1.yaml",
-            "- alias: Automation 1\n- alias: Automation 2\n",
+            "included.yaml",
+            "included_key: included_value\n",
         );
-        write_file(
-            dir.path(),
-            "automations/auto2.yaml",
-            "- alias: Automation 3\n",
-        );
-        write_file(
-            dir.path(),
-            "config.yaml",
-            "automation: !include_dir_merge_list automations\n",
-        );
+        write_file(dir.path(), "config.yaml", "key: !include included.yaml\n");
 
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
-        let automation = map.get(&Value::String("automation".to_string())).unwrap();
-        let seq = automation.as_sequence().unwrap();
+        let included = map.get(&Value::String("key".to_string())).unwrap();
+        let included_map = included.as_mapping().unwrap();
+        assert_eq!(
+            included_map.get(&Value::String("included_key".to_string())),
+            Some(&Value::String("included_value".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_include_yaml_list() {
+        let dir = TempDir::new().unwrap();
+        write_file(dir.path(), "list.yaml", "- one\n- two\n- three\n");
+        write_file(dir.path(), "config.yaml", "items: !include list.yaml\n");
+
+        let value = load_yaml(dir.path(), "config.yaml").unwrap();
+        let map = value.as_mapping().unwrap();
+        let items = map.get(&Value::String("items".to_string())).unwrap();
+        let seq = items.as_sequence().unwrap();
         assert_eq!(seq.len(), 3);
     }
 
     #[test]
-    fn test_include_dir_named() {
+    fn test_include_nested() {
         let dir = TempDir::new().unwrap();
-        fs::create_dir(dir.path().join("lights")).unwrap();
-        write_file(dir.path(), "lights/bedroom.yaml", "brightness: 100\n");
-        write_file(dir.path(), "lights/kitchen.yaml", "brightness: 50\n");
-        write_file(
-            dir.path(),
-            "config.yaml",
-            "lights: !include_dir_named lights\n",
-        );
+        write_file(dir.path(), "deep.yaml", "deep_key: deep_value\n");
+        write_file(dir.path(), "middle.yaml", "middle: !include deep.yaml\n");
+        write_file(dir.path(), "config.yaml", "outer: !include middle.yaml\n");
 
         let value = load_yaml(dir.path(), "config.yaml").unwrap();
         let map = value.as_mapping().unwrap();
-        let lights = map.get(&Value::String("lights".to_string())).unwrap();
-        let lights_map = lights.as_mapping().unwrap();
-        assert!(lights_map.contains_key(&Value::String("bedroom".to_string())));
-        assert!(lights_map.contains_key(&Value::String("kitchen".to_string())));
+        let outer = map.get(&Value::String("outer".to_string())).unwrap();
+        let outer_map = outer.as_mapping().unwrap();
+        let middle = outer_map.get(&Value::String("middle".to_string())).unwrap();
+        let middle_map = middle.as_mapping().unwrap();
+        assert_eq!(
+            middle_map.get(&Value::String("deep_key".to_string())),
+            Some(&Value::String("deep_value".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_include_relative_path() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("subdir")).unwrap();
+        write_file(dir.path(), "subdir/nested.yaml", "nested: true\n");
+        write_file(
+            dir.path(),
+            "subdir/config.yaml",
+            "data: !include nested.yaml\n",
+        );
+
+        let value = load_yaml(dir.path(), "subdir/config.yaml").unwrap();
+        let map = value.as_mapping().unwrap();
+        let data = map.get(&Value::String("data".to_string())).unwrap();
+        assert!(data.is_mapping());
     }
 
     #[test]
@@ -539,12 +662,287 @@ list:
     }
 
     #[test]
-    fn test_missing_secret() {
+    fn test_include_file_not_found() {
         let dir = TempDir::new().unwrap();
-        write_file(dir.path(), "secrets.yaml", "existing: value\n");
-        write_file(dir.path(), "config.yaml", "password: !secret nonexistent\n");
+        write_file(
+            dir.path(),
+            "config.yaml",
+            "data: !include nonexistent.yaml\n",
+        );
 
         let result = load_yaml(dir.path(), "config.yaml");
-        assert!(matches!(result, Err(ConfigError::SecretNotFound { .. })));
+        assert!(matches!(result, Err(ConfigError::ReadFile { .. })));
+    }
+
+    // ==================== Include Dir List Tests ====================
+
+    #[test]
+    fn test_include_dir_list() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir(dir.path().join("items")).unwrap();
+        write_file(dir.path(), "items/one.yaml", "value: one\n");
+        write_file(dir.path(), "items/two.yaml", "value: two\n");
+        write_file(dir.path(), "config.yaml", "key: !include_dir_list items\n");
+
+        let value = load_yaml(dir.path(), "config.yaml").unwrap();
+        let map = value.as_mapping().unwrap();
+        let key = map.get(&Value::String("key".to_string())).unwrap();
+        let seq = key.as_sequence().unwrap();
+        assert_eq!(seq.len(), 2);
+    }
+
+    #[test]
+    fn test_include_dir_list_recursive() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("items/subdir")).unwrap();
+        write_file(dir.path(), "items/zero.yaml", "value: zero\n");
+        write_file(dir.path(), "items/subdir/one.yaml", "value: one\n");
+        write_file(dir.path(), "items/subdir/two.yaml", "value: two\n");
+        write_file(dir.path(), "config.yaml", "key: !include_dir_list items\n");
+
+        let value = load_yaml(dir.path(), "config.yaml").unwrap();
+        let map = value.as_mapping().unwrap();
+        let key = map.get(&Value::String("key".to_string())).unwrap();
+        let seq = key.as_sequence().unwrap();
+        assert_eq!(seq.len(), 3); // zero, one, two
+    }
+
+    #[test]
+    fn test_include_dir_list_filters_hidden() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("items/.hidden")).unwrap();
+        write_file(dir.path(), "items/visible.yaml", "value: visible\n");
+        write_file(dir.path(), "items/.hidden.yaml", "value: hidden\n");
+        write_file(dir.path(), "items/.hidden/file.yaml", "value: hidden_dir\n");
+        write_file(dir.path(), "config.yaml", "key: !include_dir_list items\n");
+
+        let value = load_yaml(dir.path(), "config.yaml").unwrap();
+        let map = value.as_mapping().unwrap();
+        let key = map.get(&Value::String("key".to_string())).unwrap();
+        let seq = key.as_sequence().unwrap();
+        assert_eq!(seq.len(), 1); // Only visible.yaml
+    }
+
+    // ==================== Include Dir Merge List Tests ====================
+
+    #[test]
+    fn test_include_dir_merge_list() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir(dir.path().join("items")).unwrap();
+        write_file(dir.path(), "items/first.yaml", "- one\n- two\n");
+        write_file(dir.path(), "items/second.yaml", "- three\n");
+        write_file(
+            dir.path(),
+            "config.yaml",
+            "key: !include_dir_merge_list items\n",
+        );
+
+        let value = load_yaml(dir.path(), "config.yaml").unwrap();
+        let map = value.as_mapping().unwrap();
+        let key = map.get(&Value::String("key".to_string())).unwrap();
+        let seq = key.as_sequence().unwrap();
+        assert_eq!(seq.len(), 3);
+    }
+
+    #[test]
+    fn test_include_dir_merge_list_recursive() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("items/subdir")).unwrap();
+        write_file(dir.path(), "items/first.yaml", "- one\n");
+        write_file(dir.path(), "items/subdir/second.yaml", "- two\n- three\n");
+        write_file(dir.path(), "items/subdir/third.yaml", "- four\n");
+        write_file(
+            dir.path(),
+            "config.yaml",
+            "key: !include_dir_merge_list items\n",
+        );
+
+        let value = load_yaml(dir.path(), "config.yaml").unwrap();
+        let map = value.as_mapping().unwrap();
+        let key = map.get(&Value::String("key".to_string())).unwrap();
+        let seq = key.as_sequence().unwrap();
+        assert_eq!(seq.len(), 4);
+    }
+
+    // ==================== Include Dir Named Tests ====================
+
+    #[test]
+    fn test_include_dir_named() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir(dir.path().join("items")).unwrap();
+        write_file(dir.path(), "items/first.yaml", "value: one\n");
+        write_file(dir.path(), "items/second.yaml", "value: two\n");
+        write_file(dir.path(), "config.yaml", "key: !include_dir_named items\n");
+
+        let value = load_yaml(dir.path(), "config.yaml").unwrap();
+        let map = value.as_mapping().unwrap();
+        let key = map.get(&Value::String("key".to_string())).unwrap();
+        let key_map = key.as_mapping().unwrap();
+        assert!(key_map.contains_key(&Value::String("first".to_string())));
+        assert!(key_map.contains_key(&Value::String("second".to_string())));
+    }
+
+    #[test]
+    fn test_include_dir_named_filters_secrets() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir(dir.path().join("items")).unwrap();
+        write_file(dir.path(), "items/first.yaml", "value: one\n");
+        write_file(dir.path(), "items/secrets.yaml", "secret: hidden\n");
+        write_file(dir.path(), "config.yaml", "key: !include_dir_named items\n");
+
+        let value = load_yaml(dir.path(), "config.yaml").unwrap();
+        let map = value.as_mapping().unwrap();
+        let key = map.get(&Value::String("key".to_string())).unwrap();
+        let key_map = key.as_mapping().unwrap();
+        assert!(key_map.contains_key(&Value::String("first".to_string())));
+        assert!(!key_map.contains_key(&Value::String("secrets".to_string())));
+    }
+
+    #[test]
+    fn test_include_dir_named_recursive() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("items/subdir")).unwrap();
+        write_file(dir.path(), "items/first.yaml", "value: one\n");
+        write_file(dir.path(), "items/subdir/second.yaml", "value: two\n");
+        write_file(dir.path(), "items/subdir/third.yaml", "value: three\n");
+        write_file(dir.path(), "config.yaml", "key: !include_dir_named items\n");
+
+        let value = load_yaml(dir.path(), "config.yaml").unwrap();
+        let map = value.as_mapping().unwrap();
+        let key = map.get(&Value::String("key".to_string())).unwrap();
+        let key_map = key.as_mapping().unwrap();
+        assert_eq!(key_map.len(), 3);
+    }
+
+    // ==================== Include Dir Merge Named Tests ====================
+
+    #[test]
+    fn test_include_dir_merge_named() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir(dir.path().join("items")).unwrap();
+        write_file(dir.path(), "items/first.yaml", "key1: one\nkey2: two\n");
+        write_file(dir.path(), "items/second.yaml", "key3: three\n");
+        write_file(
+            dir.path(),
+            "config.yaml",
+            "key: !include_dir_merge_named items\n",
+        );
+
+        let value = load_yaml(dir.path(), "config.yaml").unwrap();
+        let map = value.as_mapping().unwrap();
+        let key = map.get(&Value::String("key".to_string())).unwrap();
+        let key_map = key.as_mapping().unwrap();
+        assert!(key_map.contains_key(&Value::String("key1".to_string())));
+        assert!(key_map.contains_key(&Value::String("key2".to_string())));
+        assert!(key_map.contains_key(&Value::String("key3".to_string())));
+    }
+
+    #[test]
+    fn test_include_dir_merge_named_recursive() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("items/subdir")).unwrap();
+        write_file(dir.path(), "items/first.yaml", "key1: one\n");
+        write_file(
+            dir.path(),
+            "items/subdir/second.yaml",
+            "key2: two\nkey3: three\n",
+        );
+        write_file(dir.path(), "items/subdir/third.yaml", "key4: four\n");
+        write_file(
+            dir.path(),
+            "config.yaml",
+            "key: !include_dir_merge_named items\n",
+        );
+
+        let value = load_yaml(dir.path(), "config.yaml").unwrap();
+        let map = value.as_mapping().unwrap();
+        let key = map.get(&Value::String("key".to_string())).unwrap();
+        let key_map = key.as_mapping().unwrap();
+        assert_eq!(key_map.len(), 4);
+    }
+
+    // ==================== Error Handling Tests ====================
+
+    #[test]
+    fn test_directory_not_found() {
+        let dir = TempDir::new().unwrap();
+        write_file(
+            dir.path(),
+            "config.yaml",
+            "key: !include_dir_list nonexistent\n",
+        );
+
+        let result = load_yaml(dir.path(), "config.yaml");
+        assert!(matches!(result, Err(ConfigError::DirectoryNotFound { .. })));
+    }
+
+    #[test]
+    fn test_yaml_parse_error() {
+        let dir = TempDir::new().unwrap();
+        write_file(
+            dir.path(),
+            "config.yaml",
+            "invalid: yaml: content:\n  - bad",
+        );
+
+        let result = load_yaml(dir.path(), "config.yaml");
+        assert!(matches!(result, Err(ConfigError::ParseYaml { .. })));
+    }
+
+    // ==================== Mixed Usage Tests ====================
+
+    #[test]
+    fn test_combined_tags() {
+        let dir = TempDir::new().unwrap();
+        std::env::set_var("TEST_HA_COMBINED", "env_value");
+        write_file(dir.path(), "secrets.yaml", "api_key: secret_key\n");
+        write_file(dir.path(), "included.yaml", "included: true\n");
+        write_file(
+            dir.path(),
+            "config.yaml",
+            r#"
+secret_val: !secret api_key
+env_val: !env_var TEST_HA_COMBINED
+include_val: !include included.yaml
+"#,
+        );
+
+        let value = load_yaml(dir.path(), "config.yaml").unwrap();
+        let map = value.as_mapping().unwrap();
+        assert_eq!(
+            map.get(&Value::String("secret_val".to_string())),
+            Some(&Value::String("secret_key".to_string()))
+        );
+        assert_eq!(
+            map.get(&Value::String("env_val".to_string())),
+            Some(&Value::String("env_value".to_string()))
+        );
+
+        std::env::remove_var("TEST_HA_COMBINED");
+    }
+
+    #[test]
+    fn test_secrets_in_included_file() {
+        let dir = TempDir::new().unwrap();
+        write_file(dir.path(), "secrets.yaml", "password: secret123\n");
+        write_file(
+            dir.path(),
+            "included.yaml",
+            "db_password: !secret password\n",
+        );
+        write_file(
+            dir.path(),
+            "config.yaml",
+            "database: !include included.yaml\n",
+        );
+
+        let value = load_yaml(dir.path(), "config.yaml").unwrap();
+        let map = value.as_mapping().unwrap();
+        let db = map.get(&Value::String("database".to_string())).unwrap();
+        let db_map = db.as_mapping().unwrap();
+        assert_eq!(
+            db_map.get(&Value::String("db_password".to_string())),
+            Some(&Value::String("secret123".to_string()))
+        );
     }
 }
