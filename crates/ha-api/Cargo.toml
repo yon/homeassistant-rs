@@ -1,5 +1,6 @@
 [package]
 name = "ha-api"
+description = "Home Assistant REST and WebSocket API"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,3 +8,24 @@ license.workspace = true
 
 [dependencies]
 ha-core = { workspace = true }
+ha-event-bus = { workspace = true }
+ha-state-machine = { workspace = true }
+ha-service-registry = { workspace = true }
+
+# Web framework
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Time
+chrono = { workspace = true }
+
+# Logging
+tracing = { workspace = true }

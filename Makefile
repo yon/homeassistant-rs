@@ -71,11 +71,6 @@ lint-makefile: ## Check Makefile targets are alphabetized within sections
 clean: ## Remove build artifacts
 	$(CARGO) clean
 
-.PHONY: setup
-setup: $(VENV_STAMP) ## Setup development environment (git hooks, venv)
-	git config core.hooksPath .githooks
-	@echo "Git hooks configured. Pre-commit will run fmt, clippy, and tests."
-
 .PHONY: clean-all
 clean-all: clean ## Remove build artifacts and Python venv
 	rm -rf $(VENV)
@@ -94,6 +89,11 @@ run: ## Run the Home Assistant server (Mode 2: standalone)
 .PHONY: run-release
 run-release: ## Run the Home Assistant server in release mode
 	$(CARGO) run --bin homeassistant --release
+
+.PHONY: setup
+setup: $(VENV_STAMP) ## Setup development environment (git hooks, venv)
+	git config core.hooksPath .githooks
+	@echo "Git hooks configured. Pre-commit will run fmt, clippy, and tests."
 
 .PHONY: watch
 watch: ## Watch for changes and rebuild (requires cargo-watch)
@@ -123,6 +123,25 @@ python-test: install-dev ## Run Python tests against Rust extension
 
 .PHONY: setup-venv
 setup-venv: $(VENV_STAMP) ## Create Python virtual environment with tools
+
+##@ HA Comparison Testing
+# Detailed targets in tests/Makefile - these delegate to it
+
+.PHONY: ha-start
+ha-start: ## Start HA test instance in Docker
+	$(MAKE) -f tests/Makefile ha-start
+
+.PHONY: ha-status
+ha-status: ## Check status of HA test instance
+	$(MAKE) -f tests/Makefile ha-status
+
+.PHONY: ha-stop
+ha-stop: ## Stop HA test instance
+	$(MAKE) -f tests/Makefile ha-stop
+
+.PHONY: test-compare
+test-compare: ## Run API comparison tests against Python HA
+	$(MAKE) -f tests/Makefile compare
 
 ##@ Testing
 

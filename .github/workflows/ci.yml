@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # Run nightly at 2 AM UTC to test against multiple HA versions
+    - cron: '0 2 * * *'
 
 env:
   CARGO_TERM_COLOR: always
@@ -93,3 +96,132 @@ jobs:
         with:
           name: wheels
           path: target/wheels/*.whl
+
+  # API comparison tests against real Home Assistant
+  comparison-tests:
+    runs-on: ubuntu-latest
+    # Only run on main branch or when explicitly requested
+    if: github.ref == 'refs/heads/main' || contains(github.event.pull_request.labels.*.name, 'run-comparison')
+    env:
+      HA_VERSION: "2026.1.1"
+      PYTHON_HA_PORT: "18123"
+      RUST_HA_PORT: "18124"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-comparison-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Setup HA test configuration
+        run: |
+          chmod +x tests/comparison/setup-ha-test.sh
+          ./tests/comparison/setup-ha-test.sh tests/comparison/ha-config
+
+      - name: Start Home Assistant test instance
+        run: |
+          docker compose -f tests/comparison/docker-compose.yml up -d
+          echo "Waiting for HA to be ready..."
+          timeout 180 bash -c 'until curl -sf http://localhost:18123/api/ > /dev/null 2>&1; do sleep 5; done'
+          echo "HA is ready"
+
+      - name: Build Rust HA server
+        run: cargo build --package ha-server
+
+      - name: Start Rust HA server
+        run: |
+          HA_PORT=${{ env.RUST_HA_PORT }} ./target/debug/homeassistant &
+          sleep 5
+          curl -sf http://localhost:${{ env.RUST_HA_PORT }}/api/ || (echo "Rust HA failed to start"; exit 1)
+          echo "Rust HA is ready"
+
+      - name: Run comparison tests
+        env:
+          PYTHON_HA_URL: http://localhost:${{ env.PYTHON_HA_PORT }}
+          RUST_HA_URL: http://localhost:${{ env.RUST_HA_PORT }}
+          PYTHON_HA_TOKEN: test_api_token_for_comparison_testing_do_not_use_in_production
+          HA_VERSION: ${{ env.HA_VERSION }}
+        run: cargo test -p ha-test-comparison -- --ignored --nocapture
+
+      - name: Collect HA logs on failure
+        if: failure()
+        run: |
+          echo "=== Home Assistant Logs ==="
+          docker compose -f tests/comparison/docker-compose.yml logs
+
+      - name: Cleanup
+        if: always()
+        run: |
+          pkill -f "target/debug/homeassistant" || true
+          docker compose -f tests/comparison/docker-compose.yml down || true
+
+  # Scheduled comparison test against multiple HA versions
+  nightly-comparison:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        ha_version:
+          - "2026.1.1"   # Current
+          - "2025.12.4"  # Previous
+    env:
+      PYTHON_HA_PORT: "18123"
+      RUST_HA_PORT: "18124"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-nightly-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Setup HA test configuration
+        run: |
+          chmod +x tests/comparison/setup-ha-test.sh
+          ./tests/comparison/setup-ha-test.sh tests/comparison/ha-config
+
+      - name: Start Home Assistant ${{ matrix.ha_version }}
+        run: |
+          HA_IMAGE=ghcr.io/home-assistant/home-assistant:${{ matrix.ha_version }} \
+            docker compose -f tests/comparison/docker-compose.yml up -d
+          timeout 180 bash -c 'until curl -sf http://localhost:18123/api/ > /dev/null 2>&1; do sleep 5; done'
+
+      - name: Build and start Rust HA
+        run: |
+          cargo build --package ha-server
+          HA_PORT=${{ env.RUST_HA_PORT }} ./target/debug/homeassistant &
+          sleep 5
+
+      - name: Run comparison tests
+        env:
+          PYTHON_HA_URL: http://localhost:${{ env.PYTHON_HA_PORT }}
+          RUST_HA_URL: http://localhost:${{ env.RUST_HA_PORT }}
+          PYTHON_HA_TOKEN: test_api_token_for_comparison_testing_do_not_use_in_production
+          HA_VERSION: ${{ matrix.ha_version }}
+        run: cargo test -p ha-test-comparison -- --ignored --nocapture
+
+      - name: Cleanup
+        if: always()
+        run: |
+          pkill -f "target/debug/homeassistant" || true
+          docker compose -f tests/comparison/docker-compose.yml down || true
