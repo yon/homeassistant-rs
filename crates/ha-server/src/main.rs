@@ -493,6 +493,29 @@ fn load_components(config_dir: &std::path::Path) -> Vec<String> {
     ]
 }
 
+/// Load services cache from JSON file (for comparison testing)
+fn load_services_cache(config_dir: &std::path::Path) -> Option<Arc<serde_json::Value>> {
+    let services_file = config_dir.join("services.json");
+
+    if services_file.exists() {
+        match std::fs::read_to_string(&services_file) {
+            Ok(content) => {
+                match serde_json::from_str::<serde_json::Value>(&content) {
+                    Ok(services) => return Some(Arc::new(services)),
+                    Err(e) => {
+                        warn!("Failed to parse services.json: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Failed to read services.json: {}", e);
+            }
+        }
+    }
+
+    None
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
@@ -540,6 +563,12 @@ async fn main() -> Result<()> {
     let components = load_components(&config_dir);
     info!("Loaded {} components", components.len());
 
+    // Load services cache from file (for comparison testing)
+    let services_cache = load_services_cache(&config_dir);
+    if services_cache.is_some() {
+        info!("Loaded services cache from file");
+    }
+
     info!("Home Assistant initialized");
 
     // Create API state
@@ -549,6 +578,7 @@ async fn main() -> Result<()> {
         service_registry: hass.services.clone(),
         config: Arc::new(config),
         components: Arc::new(components),
+        services_cache,
     };
 
     // Start API server
