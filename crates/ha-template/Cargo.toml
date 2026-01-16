@@ -1,5 +1,6 @@
 [package]
 name = "ha-template"
+description = "Jinja2-compatible template engine for Home Assistant"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,3 +8,19 @@ license.workspace = true
 
 [dependencies]
 ha-core = { workspace = true }
+ha-event-bus = { workspace = true }
+ha-state-machine = { workspace = true }
+minijinja = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+regex = "1.10"
+slug = "0.1"
+base64 = "0.22"
+urlencoding = "2.1"
+
+[dev-dependencies]
+ha-event-bus = { workspace = true }
+tokio = { workspace = true }
