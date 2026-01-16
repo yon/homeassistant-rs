@@ -27,7 +27,11 @@ impl HomeAssistant {
         let states = Arc::new(StateMachine::new(bus.clone()));
         let services = Arc::new(ServiceRegistry::new());
 
-        Self { bus, states, services }
+        Self {
+            bus,
+            states,
+            services,
+        }
     }
 }
 

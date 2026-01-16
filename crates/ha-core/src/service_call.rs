@@ -41,7 +41,12 @@ impl ServiceCall {
 
     /// Create a service call with empty service data
     pub fn simple(domain: impl Into<String>, service: impl Into<String>, context: Context) -> Self {
-        Self::new(domain, service, serde_json::Value::Object(Default::default()), context)
+        Self::new(
+            domain,
+            service,
+            serde_json::Value::Object(Default::default()),
+            context,
+        )
     }
 
     /// Get the full service identifier (domain.service)
@@ -51,7 +56,9 @@ impl ServiceCall {
 
     /// Get a value from service_data
     pub fn get<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
-        self.service_data.get(key).and_then(|v| serde_json::from_value(v.clone()).ok())
+        self.service_data
+            .get(key)
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
     }
 
     /// Get entity_id(s) from service data
@@ -60,11 +67,10 @@ impl ServiceCall {
     pub fn entity_ids(&self) -> Vec<String> {
         match self.service_data.get("entity_id") {
             Some(serde_json::Value::String(s)) => vec![s.clone()],
-            Some(serde_json::Value::Array(arr)) => {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            }
+            Some(serde_json::Value::Array(arr)) => arr
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect(),
             _ => vec![],
         }
     }
@@ -174,12 +180,7 @@ mod tests {
     #[test]
     fn test_serde_roundtrip() {
         let ctx = Context::new();
-        let call = ServiceCall::new(
-            "light",
-            "turn_on",
-            json!({"entity_id": "light.test"}),
-            ctx,
-        );
+        let call = ServiceCall::new("light", "turn_on", json!({"entity_id": "light.test"}), ctx);
 
         let json = serde_json::to_string(&call).unwrap();
         let parsed: ServiceCall = serde_json::from_str(&json).unwrap();
