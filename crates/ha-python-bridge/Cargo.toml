@@ -13,9 +13,9 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = ["extension"]
 # Mode 1: Build as Python extension module (Rust → Python)
-extension = ["pyo3/extension-module"]
+extension = ["dep:pyo3", "pyo3/extension-module"]
 # Mode 2: Embed Python interpreter for fallback (Python → Rust)
-fallback = []
+fallback = ["dep:pyo3", "pyo3/auto-initialize"]
 
 [dependencies]
 ha-core = { workspace = true }
@@ -26,6 +26,7 @@ pyo3 = { workspace = true, optional = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]

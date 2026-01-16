@@ -10,15 +10,25 @@
 //!
 //! ## Mode 2: Fallback (feature = "fallback")
 //! Embed Python interpreter to delegate unimplemented components to Python HA.
+//! ```rust,ignore
+//! use ha_python_bridge::fallback::FallbackBridge;
+//!
+//! let bridge = FallbackBridge::new(None)?;
+//! bridge.load_integration("hue")?;
+//! ```
 
 #[cfg(feature = "extension")]
 mod extension;
 
 #[cfg(feature = "fallback")]
-mod fallback;
+pub mod fallback;
 
 #[cfg(feature = "extension")]
 use pyo3::prelude::*;
+
+// Re-export fallback types for convenience
+#[cfg(feature = "fallback")]
+pub use fallback::{FallbackBridge, FallbackError, FallbackResult};
 
 /// Python module initialization for Mode 1 (extension)
 #[cfg(feature = "extension")]
