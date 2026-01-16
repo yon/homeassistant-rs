@@ -516,6 +516,29 @@ fn load_services_cache(config_dir: &std::path::Path) -> Option<Arc<serde_json::V
     None
 }
 
+/// Load events cache from JSON file (for comparison testing)
+fn load_events_cache(config_dir: &std::path::Path) -> Option<Arc<serde_json::Value>> {
+    let events_file = config_dir.join("events.json");
+
+    if events_file.exists() {
+        match std::fs::read_to_string(&events_file) {
+            Ok(content) => {
+                match serde_json::from_str::<serde_json::Value>(&content) {
+                    Ok(events) => return Some(Arc::new(events)),
+                    Err(e) => {
+                        warn!("Failed to parse events.json: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Failed to read events.json: {}", e);
+            }
+        }
+    }
+
+    None
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
@@ -569,6 +592,12 @@ async fn main() -> Result<()> {
         info!("Loaded services cache from file");
     }
 
+    // Load events cache from file (for comparison testing)
+    let events_cache = load_events_cache(&config_dir);
+    if events_cache.is_some() {
+        info!("Loaded events cache from file");
+    }
+
     info!("Home Assistant initialized");
 
     // Create API state
@@ -579,6 +608,7 @@ async fn main() -> Result<()> {
         config: Arc::new(config),
         components: Arc::new(components),
         services_cache,
+        events_cache,
     };
 
     // Start API server
