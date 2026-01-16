@@ -74,18 +74,26 @@ pub fn regex_match(value: &str, pattern: &str) -> Result<bool, Error> {
 
 // ==================== Type Conversion Filters ====================
 
-/// Convert value to float with optional default
-pub fn to_float(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
-    let default: Option<f64> = kwargs.get::<Option<f64>>("default")?;
-
-    if value.is_undefined() || value.is_none() {
-        return Ok(default.map(Value::from).unwrap_or(Value::from(0.0)));
+/// Convert value to float with optional default (positional or keyword)
+pub fn to_float(value: Value, default: Option<Value>) -> Result<Value, Error> {
+    // Handle empty string as needing default
+    if value.is_undefined() || value.is_none() || (value.as_str() == Some("")) {
+        return match default {
+            Some(d) => {
+                if let Some(f) = value_to_f64(&d) {
+                    Ok(Value::from(f))
+                } else {
+                    Ok(Value::from(0.0))
+                }
+            }
+            None => Ok(Value::from(0.0)),
+        };
     }
 
     let result = if let Some(f) = value_to_f64(&value) {
         Some(f)
     } else if let Some(s) = value.as_str() {
-        s.parse::<f64>().ok()
+        s.trim().parse::<f64>().ok()
     } else {
         None
     };
@@ -93,7 +101,13 @@ pub fn to_float(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
     match result {
         Some(f) => Ok(Value::from(f)),
         None => match default {
-            Some(d) => Ok(Value::from(d)),
+            Some(d) => {
+                if let Some(f) = value_to_f64(&d) {
+                    Ok(Value::from(f))
+                } else {
+                    Ok(Value::from(0.0))
+                }
+            }
             None => Err(Error::new(
                 ErrorKind::InvalidOperation,
                 "cannot convert to float",
@@ -102,13 +116,22 @@ pub fn to_float(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
     }
 }
 
-/// Convert value to integer with optional default
-pub fn to_int(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
-    let default: Option<i64> = kwargs.get::<Option<i64>>("default")?;
-    let base: i32 = kwargs.get::<Option<i32>>("base")?.unwrap_or(10);
-
-    if value.is_undefined() || value.is_none() {
-        return Ok(default.map(Value::from).unwrap_or(Value::from(0)));
+/// Convert value to integer with optional default (positional or keyword)
+pub fn to_int(value: Value, default: Option<Value>) -> Result<Value, Error> {
+    // Handle empty string as needing default
+    if value.is_undefined() || value.is_none() || (value.as_str() == Some("")) {
+        return match default {
+            Some(d) => {
+                if let Some(i) = d.as_i64() {
+                    Ok(Value::from(i))
+                } else if let Some(f) = value_to_f64(&d) {
+                    Ok(Value::from(f as i64))
+                } else {
+                    Ok(Value::from(0))
+                }
+            }
+            None => Ok(Value::from(0)),
+        };
     }
 
     let result = if let Some(i) = value.as_i64() {
@@ -116,12 +139,11 @@ pub fn to_int(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
     } else if let Some(f) = value_to_f64(&value) {
         Some(f as i64)
     } else if let Some(s) = value.as_str() {
-        if base == 10 {
-            s.parse::<i64>().ok()
-        } else {
-            i64::from_str_radix(s.trim_start_matches("0x").trim_start_matches("0X"), base as u32)
-                .ok()
-        }
+        // Try parsing as integer first
+        s.trim().parse::<i64>().ok().or_else(|| {
+            // If that fails, try parsing as float and truncate
+            s.trim().parse::<f64>().ok().map(|f| f as i64)
+        })
     } else {
         None
     };
@@ -129,7 +151,15 @@ pub fn to_int(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
     match result {
         Some(i) => Ok(Value::from(i)),
         None => match default {
-            Some(d) => Ok(Value::from(d)),
+            Some(d) => {
+                if let Some(i) = d.as_i64() {
+                    Ok(Value::from(i))
+                } else if let Some(f) = value_to_f64(&d) {
+                    Ok(Value::from(f as i64))
+                } else {
+                    Ok(Value::from(0))
+                }
+            }
             None => Err(Error::new(
                 ErrorKind::InvalidOperation,
                 "cannot convert to int",
@@ -139,33 +169,98 @@ pub fn to_int(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
 }
 
 /// Convert value to boolean
-pub fn to_bool(value: Value, kwargs: Kwargs) -> Result<bool, Error> {
-    let default: bool = kwargs.get::<Option<bool>>("default")?.unwrap_or(false);
+pub fn to_bool(value: Value, default: Option<bool>) -> bool {
+    let default = default.unwrap_or(false);
 
     if value.is_undefined() || value.is_none() {
-        return Ok(default);
+        return default;
     }
 
     if let Some(b) = value_to_bool(&value) {
-        return Ok(b);
+        return b;
     }
 
     if let Some(s) = value.as_str() {
-        return Ok(matches!(
+        return matches!(
             s.to_lowercase().as_str(),
             "true" | "yes" | "on" | "1" | "enable" | "enabled"
-        ));
+        );
     }
 
     if let Some(i) = value.as_i64() {
-        return Ok(i != 0);
+        return i != 0;
     }
 
     if let Some(f) = value_to_f64(&value) {
-        return Ok(f != 0.0);
+        return f != 0.0;
     }
 
-    Ok(value.is_true())
+    value.is_true()
+}
+
+// ==================== Type Checking Filters ====================
+
+/// Check if value is a number (integer or float)
+pub fn is_number(value: Value) -> bool {
+    if value.as_i64().is_some() {
+        return true;
+    }
+    if value_to_f64(&value).is_some() {
+        return true;
+    }
+    // Also check if it's a string that can be parsed as a number
+    if let Some(s) = value.as_str() {
+        return s.trim().parse::<f64>().is_ok();
+    }
+    false
+}
+
+/// Check if value is a string
+pub fn is_string(value: Value) -> bool {
+    value.as_str().is_some()
+}
+
+/// Check if value is a list/sequence
+pub fn is_list(value: Value) -> bool {
+    // Check if it's iterable and not a string
+    if value.as_str().is_some() {
+        return false;
+    }
+    value.try_iter().is_ok()
+}
+
+/// Check if a value contains another value
+pub fn contains(value: Value, search: Value) -> bool {
+    // String contains
+    if let (Some(haystack), Some(needle)) = (value.as_str(), search.as_str()) {
+        return haystack.contains(needle);
+    }
+
+    // List/sequence contains
+    if let Ok(iter) = value.try_iter() {
+        for item in iter {
+            // Compare string values (only if both are strings)
+            if let (Some(a), Some(b)) = (item.as_str(), search.as_str()) {
+                if a == b {
+                    return true;
+                }
+            }
+            // Compare integer values
+            if let (Some(a), Some(b)) = (item.as_i64(), search.as_i64()) {
+                if a == b {
+                    return true;
+                }
+            }
+            // Compare float values
+            if let (Some(a), Some(b)) = (value_to_f64(&item), value_to_f64(&search)) {
+                if (a - b).abs() < f64::EPSILON {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
 }
 
 // ==================== Math Filters ====================
@@ -189,6 +284,7 @@ pub fn round_filter(value: f64, precision: Option<i32>, kwargs: Kwargs) -> Resul
 }
 
 /// Clamp a value between min and max
+#[allow(dead_code)]
 pub fn clamp(value: f64, min: f64, max: f64) -> f64 {
     value.clamp(min, max)
 }
@@ -487,29 +583,6 @@ fn flatten_recursive(value: &Value, depth: i32) -> Result<Vec<Value>, Error> {
 }
 
 // ==================== Tests (Jinja2 tests, not unit tests) ====================
-
-/// Test if value is a number
-pub fn is_number(value: Value) -> bool {
-    value_to_f64(&value).is_some() || value.as_i64().is_some()
-}
-
-/// Test if value is a string
-pub fn is_string(value: Value) -> bool {
-    value.as_str().is_some()
-}
-
-/// Test if value is a list/sequence
-pub fn is_list(value: Value) -> bool {
-    value.try_iter().is_ok()
-}
-
-/// Test if string contains substring
-pub fn contains(value: Value, substring: &str) -> bool {
-    value
-        .as_str()
-        .map(|s| s.contains(substring))
-        .unwrap_or(false)
-}
 
 /// Test if value matches regex
 pub fn match_test(value: &str, pattern: &str) -> Result<bool, Error> {

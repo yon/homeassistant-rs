@@ -14,6 +14,7 @@ fn value_to_f64(value: &Value) -> Option<f64> {
 }
 
 /// Helper to convert Value to bool
+#[allow(dead_code)]
 fn value_to_bool(value: &Value) -> Option<bool> {
     bool::try_from(value.clone()).ok()
 }
@@ -344,24 +345,38 @@ pub fn distance(
 
 /// Get the type of a value
 pub fn typeof_fn(value: Value) -> &'static str {
+    use minijinja::value::ValueKind;
+
     if value.is_undefined() {
         "undefined"
     } else if value.is_none() {
         "none"
-    } else if value_to_bool(&value).is_some() {
-        "boolean"
-    } else if value.as_i64().is_some() {
-        "integer"
-    } else if value_to_f64(&value).is_some() {
-        "float"
-    } else if value.as_str().is_some() {
-        "string"
-    } else if value.try_iter().is_ok() {
-        "list"
-    } else if value.as_object().is_some() {
-        "dict"
     } else {
-        "unknown"
+        // Use kind() for accurate type detection
+        match value.kind() {
+            ValueKind::Bool => "boolean",
+            ValueKind::String => "string",
+            ValueKind::Number => {
+                // Distinguish integer from float
+                if value.as_i64().is_some() && value.to_string().parse::<i64>().is_ok() {
+                    "integer"
+                } else {
+                    "float"
+                }
+            }
+            ValueKind::Seq | ValueKind::Iterable => "list",
+            ValueKind::Map => "mapping",
+            ValueKind::Bytes => "bytes",
+            ValueKind::Plain => {
+                // Plain objects (like our DateTimeWrapper) - check if it's a mapping by trying to iterate keys
+                if value.as_object().is_some() {
+                    "mapping"
+                } else {
+                    "unknown"
+                }
+            }
+            _ => "unknown",
+        }
     }
 }
 

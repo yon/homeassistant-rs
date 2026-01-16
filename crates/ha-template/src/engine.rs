@@ -57,6 +57,12 @@ impl TemplateEngine {
         env.add_filter("int", filters::to_int);
         env.add_filter("bool", filters::to_bool);
 
+        // Type checking
+        env.add_filter("is_number", filters::is_number);
+        env.add_filter("is_string", filters::is_string);
+        env.add_filter("is_list", filters::is_list);
+        env.add_filter("contains", filters::contains);
+
         // Math
         env.add_filter("round", filters::round_filter);
         env.add_filter("abs", filters::abs_filter);
