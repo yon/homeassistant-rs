@@ -2,7 +2,7 @@
 //!
 //! Tracks all registered areas (rooms, zones) in the home.
 
-use crate::storage::{Storage, StorageFile, StorageResult, Storable};
+use crate::storage::{Storable, Storage, StorageFile, StorageResult};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};

@@ -12,14 +12,14 @@
 
 pub mod storage;
 
-pub mod entity_registry;
-pub mod device_registry;
 pub mod area_registry;
+pub mod device_registry;
+pub mod entity_registry;
 pub mod floor_registry;
 pub mod label_registry;
 
 // Re-export main types
-pub use storage::{Storage, StorageError, StorageFile, StorageResult, Storable};
+pub use storage::{Storable, Storage, StorageError, StorageFile, StorageResult};
 
 pub use entity_registry::{
     DisabledBy, EntityCategory, EntityEntry, EntityRegistry, EntityRegistryData, HiddenBy,

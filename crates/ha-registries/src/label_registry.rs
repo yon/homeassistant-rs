@@ -2,7 +2,7 @@
 //!
 //! Tracks all registered labels for organizing entities and devices.
 
-use crate::storage::{Storage, StorageFile, StorageResult, Storable};
+use crate::storage::{Storable, Storage, StorageFile, StorageResult};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
@@ -332,8 +332,7 @@ mod tests {
 
         {
             let registry = LabelRegistry::new(storage.clone());
-            let label = LabelEntry::new("Critical")
-                .with_color("#FF0000");
+            let label = LabelEntry::new("Critical").with_color("#FF0000");
             registry.create_with(label);
             registry.save().await.unwrap();
         }

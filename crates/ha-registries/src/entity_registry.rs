@@ -3,7 +3,7 @@
 //! Tracks all registered entities with unique_id tracking, device linking,
 //! and multiple indexes for fast lookups.
 
-use crate::storage::{Storage, StorageFile, StorageResult, Storable};
+use crate::storage::{Storable, Storage, StorageFile, StorageResult};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
@@ -193,18 +193,12 @@ impl EntityEntry {
 
     /// Get the domain from entity_id
     pub fn domain(&self) -> &str {
-        self.entity_id
-            .split('.')
-            .next()
-            .unwrap_or(&self.entity_id)
+        self.entity_id.split('.').next().unwrap_or(&self.entity_id)
     }
 
     /// Get the object_id from entity_id
     pub fn object_id(&self) -> &str {
-        self.entity_id
-            .split('.')
-            .nth(1)
-            .unwrap_or(&self.entity_id)
+        self.entity_id.split('.').nth(1).unwrap_or(&self.entity_id)
     }
 
     /// Check if entity is disabled
@@ -286,11 +280,7 @@ impl EntityRegistry {
 
     /// Load from storage
     pub async fn load(&self) -> StorageResult<()> {
-        if let Some(storage_file) = self
-            .storage
-            .load::<EntityRegistryData>(STORAGE_KEY)
-            .await?
-        {
+        if let Some(storage_file) = self.storage.load::<EntityRegistryData>(STORAGE_KEY).await? {
             info!(
                 "Loading {} entities from storage (v{}.{})",
                 storage_file.data.entities.len(),
