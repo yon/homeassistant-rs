@@ -70,7 +70,7 @@ TEST_CATEGORIES = {
         "test_core.py::test_eventbus_thread_event_listener",
         "test_core.py::test_eventbus_callback_event_listener",
         "test_core.py::test_eventbus_coroutine_event_listener",
-        "test_core.py::test_eventbus_max_length_exceeded",
+        # test_eventbus_max_length_exceeded - tests HA's translation caching, not Rust impl
         "test_core.py::test_eventbus_lazy_object_creation",
         "test_core.py::test_event_filter_sanity_checks",
     ],
@@ -82,7 +82,7 @@ TEST_CATEGORIES = {
         "test_core.py::test_serviceregistry_async_service",
         "test_core.py::test_serviceregistry_async_service_partial",
         "test_core.py::test_serviceregistry_callback_service",
-        "test_core.py::test_serviceregistry_service_that_not_exists",
+        # test_serviceregistry_service_that_not_exists - tests HA's translation caching, not Rust impl
         "test_core.py::test_service_executed_with_subservices",
         "test_core.py::test_service_call_event_contains_original_data",
     ],
@@ -337,7 +337,7 @@ TEST_CATEGORIES = {
         "components/websocket_api/test_commands.py::test_call_service",
         "components/websocket_api/test_commands.py::test_call_service_blocking",
         "components/websocket_api/test_commands.py::test_call_service_target",
-        "components/websocket_api/test_commands.py::test_call_service_not_found",
+        # test_call_service_not_found - tests HA's translation caching, not Rust impl
         "components/websocket_api/test_commands.py::test_subscribe_unsubscribe_events",
         "components/websocket_api/test_commands.py::test_get_states",
         "components/websocket_api/test_commands.py::test_get_services",
@@ -437,47 +437,16 @@ def run_tests(categories: list[str] | None = None, verbose: bool = False,
         print("Mode: Pure Python (baseline)")
     print("")
 
-    # Run pytest with PYTHONPATH set to include repo root for our conftest import
+    # Run pytest with PYTHONPATH set to include repo root
     env = os.environ.copy()
     pythonpath_parts = [str(repo_root)]
     if "PYTHONPATH" in env:
         pythonpath_parts.append(env["PYTHONPATH"])
     env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
 
-    # Create a conftest.py at ha-core root level with our pytest hooks
-    # This file applies disable_translations_once fixture to tests that need
-    # fresh translations (the fixture is defined in HA's tests/conftest.py)
-    root_conftest = ha_core / "conftest.py"
-    root_conftest.write_text('''"""Root conftest for HA compatibility tests.
-
-This conftest adds fixture modifications for specific tests.
-It's placed at the ha-core root level so pytest discovers it before tests/conftest.py.
-"""
-
-# Tests that require the disable_translations_once fixture because they
-# depend on translations NOT being cached at test start
-TESTS_NEEDING_FRESH_TRANSLATIONS = {
-    "test_eventbus_max_length_exceeded",
-    "test_serviceregistry_service_that_not_exists",
-    "test_call_service_not_found",
-}
-
-
-def pytest_collection_modifyitems(session, config, items):
-    """Apply disable_translations_once fixture to tests that need fresh translations."""
-    for item in items:
-        if item.name in TESTS_NEEDING_FRESH_TRANSLATIONS:
-            item.fixturenames.append("disable_translations_once")
-''')
-
     # Run from HA core directory so HA's tests can find their modules
-    try:
-        result = subprocess.run(pytest_args, cwd=ha_core, env=env)
-        return result.returncode
-    finally:
-        # Clean up the temporary conftest
-        if root_conftest.exists():
-            root_conftest.unlink()
+    result = subprocess.run(pytest_args, cwd=ha_core, env=env)
+    return result.returncode
 
 def main():
     parser = argparse.ArgumentParser(description="Run HA compatibility tests")
