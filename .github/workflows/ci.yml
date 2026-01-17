@@ -72,10 +72,12 @@ jobs:
           PYO3_PYTHON: python3
         run: cargo test -p ha-python-bridge --features fallback --no-default-features --lib
 
-  build-wheel:
+  ha-compat-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -85,17 +87,49 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install maturin
-        run: pip install maturin
-
-      - name: Build wheel
-        run: maturin build --release
-
-      - name: Upload wheel
-        uses: actions/upload-artifact@v4
+      - name: Cache cargo
+        uses: actions/cache@v4
         with:
-          name: wheels
-          path: target/wheels/*.whl
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-compat-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('tests/ha_compat/requirements.txt') }}
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install maturin
+          # Install HA core test requirements (pinned versions from requirements_test.txt)
+          .venv/bin/pip install \
+            pytest==9.0.2 \
+            pytest-asyncio==1.3.0 \
+            pytest-aiohttp==1.1.0 \
+            pytest-socket==0.7.0 \
+            pytest-timeout==2.4.0 \
+            pytest-unordered==0.7.0 \
+            pytest-freezer==0.4.9 \
+            freezegun==1.5.2 \
+            requests-mock==1.12.1 \
+            respx==0.22.0 \
+            syrupy==5.0.0 \
+            bcrypt==4.3.0
+          .venv/bin/pip install -e vendor/ha-core
+
+      - name: Build and install Rust extension
+        run: .venv/bin/maturin develop
+
+      - name: Run HA compatibility tests
+        run: .venv/bin/python tests/ha_compat/run_tests.py --all -v
 
   # API comparison tests against real Home Assistant
   comparison-tests:

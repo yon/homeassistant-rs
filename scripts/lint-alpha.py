@@ -100,6 +100,26 @@ def check_rust_match_arms(content: str, filepath: str) -> list[LintError]:
                 if any("ValueKind::" in n for n in arm_names):
                     continue
 
+                # Skip execution/script mode enums (follow logical order: single, restart, queued, parallel)
+                if any("ExecutionMode::" in n or "ScriptMode::" in n for n in arm_names):
+                    continue
+
+                # Skip weekday enums (follow calendar order)
+                if any("WeekdaySpec::" in n or "Weekday::" in n for n in arm_names):
+                    continue
+
+                # Skip DisabledBy enum (follows definition order)
+                if any("DisabledBy::" in n for n in arm_names):
+                    continue
+
+                # Skip Single/List pattern enums (common pattern for one-or-many)
+                if base_names in ({"Single", "List"}, {"Single", "Multiple"}):
+                    continue
+
+                # Skip Trigger and Action enums (large enums with logical grouping)
+                if any("Trigger::" in n or "Action::" in n for n in arm_names):
+                    continue
+
                 sorted_names = sorted(arm_names, key=str.lower)
                 if arm_names != sorted_names:
                     # Find first out-of-order arm

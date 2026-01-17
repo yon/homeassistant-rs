@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 # Paths
 REPO_ROOT = Path(__file__).parent.parent.parent
-HA_CORE_DIR = REPO_ROOT.parent / "core"
+HA_CORE_DIR = REPO_ROOT / "vendor" / "ha-core"  # Use vendored submodule
 VENV_BIN = REPO_ROOT / ".venv" / "bin"
 
 

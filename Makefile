@@ -157,6 +157,14 @@ test-compare: ## Run API comparison tests against Python HA
 test: ## Run all Rust tests (excludes Python bridge, use python-test for that)
 	$(CARGO) test --workspace --exclude ha-python-bridge
 
+.PHONY: test-compat
+test-compat: ## Run HA compatibility tests (Rust-only, fast)
+	$(CARGO) test -p ha-automation --test compat_test
+	$(CARGO) test -p ha-script --test compat_test
+
+.PHONY: test-all
+test-all: test test-compat ## Run all tests including compat tests
+
 .PHONY: test-coverage
 test-coverage: ## Run tests with coverage (requires cargo-tarpaulin)
 	$(CARGO) tarpaulin --workspace --out Html --output-dir target/coverage
