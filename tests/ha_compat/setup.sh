@@ -29,9 +29,21 @@ if [ ! -f "$HA_CORE_DIR/setup.py" ]; then
     echo "Initializing vendored ha-core submodule..."
     cd "$REPO_ROOT"
     git submodule update --init vendor/ha-core
+    # Disable sparse checkout to get full repo
+    git -C vendor/ha-core sparse-checkout disable 2>/dev/null || true
 else
     echo "✓ HA core submodule initialized at $HA_CORE_DIR"
 fi
+
+# Ensure we're on the correct version
+cd "$HA_CORE_DIR"
+CURRENT_TAG=$(git describe --tags --exact-match 2>/dev/null || echo "none")
+if [ "$CURRENT_TAG" != "$HA_VERSION" ]; then
+    echo "Checking out HA version $HA_VERSION..."
+    git fetch --tags
+    git checkout "$HA_VERSION"
+fi
+cd "$REPO_ROOT"
 
 # Step 2: Install HA core with dependencies
 echo ""
