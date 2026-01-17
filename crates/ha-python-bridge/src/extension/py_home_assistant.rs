@@ -1,16 +1,23 @@
 //! Python wrapper for the HomeAssistant struct
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 
+use ha_automation::{ConditionEvaluator, TriggerEvaluator};
 use ha_event_bus::EventBus;
 use ha_service_registry::ServiceRegistry;
 use ha_state_machine::StateMachine;
+use ha_template::TemplateEngine;
 use pyo3::prelude::*;
 use tokio::runtime::Handle;
 use tokio::sync::Notify;
 
-use super::{PyEventBus, PyServiceRegistry, PyStateMachine};
+use super::{
+    PyConditionEvaluator, PyEventBus, PyServiceRegistry, PyStateMachine, PyTemplateEngine,
+    PyTriggerEvaluator,
+};
 
 /// Tracks pending background tasks for async_block_till_done
 #[derive(Default)]
@@ -72,11 +79,17 @@ impl TaskTracker {
 /// - bus: The event bus for pub/sub
 /// - states: The state machine for entity states
 /// - services: The service registry
+/// - template_engine: Template rendering engine
+/// - condition_evaluator: For evaluating conditions
+/// - trigger_evaluator: For evaluating triggers
 #[pyclass(name = "HomeAssistant")]
 pub struct PyHomeAssistant {
     bus: Arc<EventBus>,
     states: Arc<StateMachine>,
     services: Arc<ServiceRegistry>,
+    template_engine: Arc<TemplateEngine>,
+    condition_evaluator: Arc<ConditionEvaluator>,
+    trigger_evaluator: Arc<TriggerEvaluator>,
     task_tracker: Arc<TaskTracker>,
 }
 
@@ -87,12 +100,24 @@ impl PyHomeAssistant {
         let bus = Arc::new(EventBus::new());
         let states = Arc::new(StateMachine::new(bus.clone()));
         let services = Arc::new(ServiceRegistry::new());
+        let template_engine = Arc::new(TemplateEngine::new(states.clone()));
+        let condition_evaluator = Arc::new(ConditionEvaluator::new(
+            states.clone(),
+            template_engine.clone(),
+        ));
+        let trigger_evaluator = Arc::new(TriggerEvaluator::new(
+            states.clone(),
+            template_engine.clone(),
+        ));
         let task_tracker = Arc::new(TaskTracker::new());
 
         Self {
             bus,
             states,
             services,
+            template_engine,
+            condition_evaluator,
+            trigger_evaluator,
             task_tracker,
         }
     }
@@ -113,6 +138,24 @@ impl PyHomeAssistant {
     #[getter]
     fn services(&self) -> PyServiceRegistry {
         PyServiceRegistry::from_arc(self.services.clone())
+    }
+
+    /// Get the template engine
+    #[getter]
+    fn template_engine(&self) -> PyTemplateEngine {
+        PyTemplateEngine::from_arc(self.template_engine.clone())
+    }
+
+    /// Get the condition evaluator
+    #[getter]
+    fn condition_evaluator(&self) -> PyConditionEvaluator {
+        PyConditionEvaluator::from_arc(self.condition_evaluator.clone())
+    }
+
+    /// Get the trigger evaluator
+    #[getter]
+    fn trigger_evaluator(&self) -> PyTriggerEvaluator {
+        PyTriggerEvaluator::from_arc(self.trigger_evaluator.clone())
     }
 
     /// Wait for all pending background tasks to complete

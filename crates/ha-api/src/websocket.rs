@@ -78,6 +78,33 @@ pub enum IncomingMessage {
         #[allow(dead_code)] // Deserialized but not currently used
         features: HashMap<String, serde_json::Value>,
     },
+    #[serde(rename = "automation/config")]
+    AutomationConfig {
+        id: u64,
+        entity_id: String,
+    },
+    #[serde(rename = "script/config")]
+    ScriptConfig {
+        id: u64,
+        entity_id: String,
+    },
+    RenderTemplate {
+        id: u64,
+        template: String,
+        #[serde(default)]
+        variables: Option<HashMap<String, serde_json::Value>>,
+        #[serde(default)]
+        #[allow(dead_code)] // Reserved for future use
+        timeout: Option<f64>,
+        #[serde(default)]
+        #[allow(dead_code)] // Reserved for future use
+        report_errors: Option<bool>,
+    },
+    SubscribeEntities {
+        id: u64,
+        #[serde(default)]
+        entity_ids: Option<Vec<String>>,
+    },
 }
 
 /// Service call target
@@ -452,6 +479,10 @@ async fn handle_message(
             // Already authenticated, ignore
             Ok(())
         }
+        IncomingMessage::AutomationConfig { id, entity_id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_automation_config(conn, id, &entity_id, tx).await
+        }
         IncomingMessage::CallService {
             id,
             domain,
@@ -501,6 +532,24 @@ async fn handle_message(
             });
             tx.send(pong).await.map_err(|e| e.to_string())?;
             Ok(())
+        }
+        IncomingMessage::RenderTemplate {
+            id,
+            template,
+            variables,
+            timeout: _,
+            report_errors: _,
+        } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_render_template(conn, id, &template, variables, tx).await
+        }
+        IncomingMessage::ScriptConfig { id, entity_id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_script_config(conn, id, &entity_id, tx).await
+        }
+        IncomingMessage::SubscribeEntities { id, entity_ids } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_subscribe_entities(conn, id, entity_ids, tx).await
         }
         IncomingMessage::SubscribeEvents { id, event_type } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
@@ -865,6 +914,311 @@ async fn handle_fire_event(
                 "user_id": context.user_id,
             }
         })),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle automation/config command - returns the automation configuration
+async fn handle_automation_config(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    entity_id: &str,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Verify entity_id starts with "automation."
+    if !entity_id.starts_with("automation.") {
+        let result = OutgoingMessage::Result(ResultMessage {
+            id,
+            msg_type: "result",
+            success: false,
+            result: None,
+            error: Some(ErrorInfo {
+                code: "not_found".to_string(),
+                message: "Entity not found".to_string(),
+            }),
+        });
+        return tx.send(result).await.map_err(|e| e.to_string());
+    }
+
+    // Look up the automation entity state
+    match conn.state.state_machine.get(entity_id) {
+        Some(state) => {
+            // The automation config is stored in the entity's attributes
+            // Extract relevant config fields from attributes
+            let config = serde_json::json!({
+                "id": state.attributes.get("id").cloned().unwrap_or(serde_json::json!(entity_id)),
+                "alias": state.attributes.get("friendly_name").cloned().unwrap_or(serde_json::Value::Null),
+                "description": state.attributes.get("description").cloned().unwrap_or(serde_json::Value::Null),
+                "trigger": state.attributes.get("trigger").cloned().unwrap_or(serde_json::json!([])),
+                "condition": state.attributes.get("condition").cloned().unwrap_or(serde_json::json!([])),
+                "action": state.attributes.get("action").cloned().unwrap_or(serde_json::json!([])),
+                "mode": state.attributes.get("mode").cloned().unwrap_or(serde_json::json!("single")),
+            });
+
+            let result = OutgoingMessage::Result(ResultMessage {
+                id,
+                msg_type: "result",
+                success: true,
+                result: Some(serde_json::json!({ "config": config })),
+                error: None,
+            });
+            tx.send(result).await.map_err(|e| e.to_string())
+        }
+        None => {
+            let result = OutgoingMessage::Result(ResultMessage {
+                id,
+                msg_type: "result",
+                success: false,
+                result: None,
+                error: Some(ErrorInfo {
+                    code: "not_found".to_string(),
+                    message: "Entity not found".to_string(),
+                }),
+            });
+            tx.send(result).await.map_err(|e| e.to_string())
+        }
+    }
+}
+
+/// Handle script/config command - returns the script configuration
+async fn handle_script_config(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    entity_id: &str,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Verify entity_id starts with "script."
+    if !entity_id.starts_with("script.") {
+        let result = OutgoingMessage::Result(ResultMessage {
+            id,
+            msg_type: "result",
+            success: false,
+            result: None,
+            error: Some(ErrorInfo {
+                code: "not_found".to_string(),
+                message: "Entity not found".to_string(),
+            }),
+        });
+        return tx.send(result).await.map_err(|e| e.to_string());
+    }
+
+    // Look up the script entity state
+    match conn.state.state_machine.get(entity_id) {
+        Some(state) => {
+            // The script config is stored in the entity's attributes
+            let config = serde_json::json!({
+                "alias": state.attributes.get("friendly_name").cloned().unwrap_or(serde_json::Value::Null),
+                "description": state.attributes.get("description").cloned().unwrap_or(serde_json::Value::Null),
+                "sequence": state.attributes.get("sequence").cloned().unwrap_or(serde_json::json!([])),
+                "mode": state.attributes.get("mode").cloned().unwrap_or(serde_json::json!("single")),
+                "icon": state.attributes.get("icon").cloned().unwrap_or(serde_json::Value::Null),
+            });
+
+            let result = OutgoingMessage::Result(ResultMessage {
+                id,
+                msg_type: "result",
+                success: true,
+                result: Some(serde_json::json!({ "config": config })),
+                error: None,
+            });
+            tx.send(result).await.map_err(|e| e.to_string())
+        }
+        None => {
+            let result = OutgoingMessage::Result(ResultMessage {
+                id,
+                msg_type: "result",
+                success: false,
+                result: None,
+                error: Some(ErrorInfo {
+                    code: "not_found".to_string(),
+                    message: "Entity not found".to_string(),
+                }),
+            });
+            tx.send(result).await.map_err(|e| e.to_string())
+        }
+    }
+}
+
+/// Handle render_template command
+async fn handle_render_template(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    template: &str,
+    variables: Option<HashMap<String, serde_json::Value>>,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // For now, we'll do a simple template rendering
+    // In a full implementation, this would use the TemplateEngine
+
+    // Simple variable substitution for basic templates
+    let mut result_str = template.to_string();
+
+    // Handle variables if provided
+    if let Some(vars) = variables {
+        for (key, value) in vars {
+            let placeholder = format!("{{{{ {} }}}}", key);
+            let value_str = match value {
+                serde_json::Value::String(s) => s,
+                other => other.to_string(),
+            };
+            result_str = result_str.replace(&placeholder, &value_str);
+        }
+    }
+
+    // For entity state templates like {{ states('sensor.temperature') }}
+    // We would need the template engine, but for now return the template as-is
+    // if it contains unresolved Jinja syntax
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::json!({
+            "result": result_str,
+            "listeners": {
+                "all": false,
+                "domains": [],
+                "entities": [],
+                "time": false
+            }
+        })),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle subscribe_entities command
+async fn handle_subscribe_entities(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    entity_ids: Option<Vec<String>>,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Create cancellation channel
+    let (cancel_tx, mut cancel_rx) = broadcast::channel::<()>(1);
+
+    // Store subscription
+    {
+        let mut subs = conn.subscriptions.write().await;
+        subs.insert(id, cancel_tx);
+    }
+
+    // Get initial states for the requested entities
+    let states = conn.state.state_machine.all();
+    let filtered_states: Vec<&ha_core::State> = if let Some(ref ids) = entity_ids {
+        states
+            .iter()
+            .filter(|s| ids.contains(&s.entity_id.to_string()))
+            .collect()
+    } else {
+        states.iter().collect()
+    };
+
+    // Build initial state response
+    let mut additions = serde_json::Map::new();
+    for state in filtered_states {
+        additions.insert(
+            state.entity_id.to_string(),
+            serde_json::json!({
+                "s": state.state,
+                "a": state.attributes,
+                "c": state.context.id.to_string(),
+                "lc": state.last_changed.timestamp_millis() as f64 / 1000.0,
+                "lu": state.last_updated.timestamp_millis() as f64 / 1000.0,
+            }),
+        );
+    }
+
+    // Send initial state event
+    let initial_event = OutgoingMessage::Event(EventMessage {
+        id,
+        msg_type: "event",
+        event: serde_json::json!({
+            "a": additions,
+        }),
+    });
+    tx.send(initial_event).await.map_err(|e| e.to_string())?;
+
+    // Subscribe to state changes
+    let entity_ids_filter = entity_ids.clone();
+    let tx_clone = tx.clone();
+    let sub_id = id;
+
+    let mut event_rx = conn.state.event_bus.subscribe_all();
+
+    // Spawn task to forward state change events
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = cancel_rx.recv() => {
+                    debug!("Entity subscription {} cancelled", sub_id);
+                    break;
+                }
+                result = event_rx.recv() => {
+                    match result {
+                        Ok(event) => {
+                            // Only forward state_changed events
+                            if event.event_type.as_str() != "state_changed" {
+                                continue;
+                            }
+
+                            // Extract entity_id from event data
+                            if let Some(entity_id) = event.data.get("entity_id").and_then(|v| v.as_str()) {
+                                // Filter by entity_ids if specified
+                                if let Some(ref ids) = entity_ids_filter {
+                                    if !ids.contains(&entity_id.to_string()) {
+                                        continue;
+                                    }
+                                }
+
+                                // Build change event
+                                if let Some(new_state) = event.data.get("new_state") {
+                                    let mut changes = serde_json::Map::new();
+                                    changes.insert(
+                                        entity_id.to_string(),
+                                        serde_json::json!({
+                                            "+": {
+                                                "s": new_state.get("state"),
+                                                "a": new_state.get("attributes"),
+                                                "c": new_state.get("context").and_then(|c| c.get("id")),
+                                                "lc": new_state.get("last_changed"),
+                                                "lu": new_state.get("last_updated"),
+                                            }
+                                        }),
+                                    );
+
+                                    let change_event = OutgoingMessage::Event(EventMessage {
+                                        id: sub_id,
+                                        msg_type: "event",
+                                        event: serde_json::json!({
+                                            "c": changes,
+                                        }),
+                                    });
+                                    if tx_clone.send(change_event).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => {
+                            continue;
+                        }
+                        Err(broadcast::error::RecvError::Closed) => {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // Send success response
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::Value::Null),
         error: None,
     });
     tx.send(result).await.map_err(|e| e.to_string())

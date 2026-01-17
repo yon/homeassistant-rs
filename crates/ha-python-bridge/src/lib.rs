@@ -72,6 +72,15 @@ fn ha_core_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<extension::PyAutomation>()?;
     m.add_class::<extension::PyAutomationManager>()?;
 
+    // Condition Evaluation
+    m.add_class::<extension::PyConditionEvaluator>()?;
+    m.add_class::<extension::PyEvalContext>()?;
+
+    // Trigger Evaluation
+    m.add_class::<extension::PyTriggerEvaluator>()?;
+    m.add_class::<extension::PyTriggerData>()?;
+    m.add_class::<extension::PyTriggerEvalContext>()?;
+
     // HomeAssistant wrapper
     m.add_class::<extension::PyHomeAssistant>()?;
 

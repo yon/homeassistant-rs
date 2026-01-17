@@ -101,7 +101,7 @@ TEST_CATEGORIES = {
     ],
 
     # ==========================================================================
-    # Condition/Trigger/Script (tests/helpers/) - ha-automation, ha-script crates
+    # Condition (tests/helpers/test_condition.py) - ha-automation crate
     # ==========================================================================
     "condition": [
         "helpers/test_condition.py::test_and_condition",
@@ -126,6 +126,91 @@ TEST_CATEGORIES = {
         "helpers/test_condition.py::test_state_attribute_boolean",
         "helpers/test_condition.py::test_state_for",
         "helpers/test_condition.py::test_state_for_template",
+    ],
+
+    # ==========================================================================
+    # Trigger (tests/helpers/test_trigger.py) - ha-automation crate
+    # ==========================================================================
+    "trigger": [
+        "helpers/test_trigger.py::test_bad_trigger_platform",
+        "helpers/test_trigger.py::test_trigger_subtype",
+        "helpers/test_trigger.py::test_trigger_variables",
+        "helpers/test_trigger.py::test_if_disabled_trigger_not_firing",
+        "helpers/test_trigger.py::test_trigger_enabled_templates",
+        "helpers/test_trigger.py::test_nested_trigger_list",
+        "helpers/test_trigger.py::test_trigger_enabled_template_limited",
+        "helpers/test_trigger.py::test_trigger_alias",
+        "helpers/test_trigger.py::test_async_initialize_triggers",
+        "helpers/test_trigger.py::test_pluggable_action",
+        "helpers/test_trigger.py::test_platform_multiple_triggers",
+        "helpers/test_trigger.py::test_platform_migrate_trigger",
+        "helpers/test_trigger.py::test_platform_backwards_compatibility_for_new_style_configs",
+        "helpers/test_trigger.py::test_invalid_trigger_platform",
+        "helpers/test_trigger.py::test_subscribe_triggers",
+        "helpers/test_trigger.py::test_subscribe_triggers_no_triggers",
+        "helpers/test_trigger.py::test_numerical_state_attribute_changed_error_handling",
+    ],
+
+    # ==========================================================================
+    # Script (tests/helpers/test_script.py) - ha-script crate
+    # ==========================================================================
+    "script": [
+        # Basic actions
+        "helpers/test_script.py::test_firing_event_basic",
+        "helpers/test_script.py::test_firing_event_template",
+        "helpers/test_script.py::test_calling_service_basic",
+        "helpers/test_script.py::test_calling_service_template",
+        "helpers/test_script.py::test_data_template_with_templated_key",
+        "helpers/test_script.py::test_activating_scene",
+        # Delays
+        "helpers/test_script.py::test_delay_basic",
+        "helpers/test_script.py::test_empty_delay",
+        "helpers/test_script.py::test_delay_template_ok",
+        "helpers/test_script.py::test_delay_template_invalid",
+        "helpers/test_script.py::test_cancel_delay",
+        # Wait actions
+        "helpers/test_script.py::test_wait_basic[template]",
+        "helpers/test_script.py::test_wait_basic[trigger]",
+        "helpers/test_script.py::test_wait_basic_times_out[template]",
+        "helpers/test_script.py::test_wait_basic_times_out[trigger]",
+        "helpers/test_script.py::test_wait_template_not_schedule",
+        "helpers/test_script.py::test_wait_for_trigger_variables",
+        # Conditions
+        "helpers/test_script.py::test_condition_basic",
+        "helpers/test_script.py::test_condition_validation",
+        # Choose/If-Then
+        "helpers/test_script.py::test_choose[1-first]",
+        "helpers/test_script.py::test_choose[2-second]",
+        "helpers/test_script.py::test_choose[3-default]",
+        "helpers/test_script.py::test_if[1-True-then]",
+        "helpers/test_script.py::test_if[2-False-else]",
+        # Repeat
+        "helpers/test_script.py::test_repeat_count[3]",
+        "helpers/test_script.py::test_repeat_count[40]",
+        "helpers/test_script.py::test_repeat_count_0",
+        "helpers/test_script.py::test_repeat_for_each",
+        "helpers/test_script.py::test_repeat_conditional[False-while]",
+        "helpers/test_script.py::test_repeat_conditional[True-until]",
+        # Parallel
+        "helpers/test_script.py::test_parallel",
+        "helpers/test_script.py::test_parallel_error",
+        # Variables
+        "helpers/test_script.py::test_set_variable",
+        "helpers/test_script.py::test_set_redefines_variable",
+        # Control flow
+        "helpers/test_script.py::test_stop_action",
+        "helpers/test_script.py::test_stop_action_with_error",
+        "helpers/test_script.py::test_stop_no_wait[1]",
+        "helpers/test_script.py::test_stop_no_wait[3]",
+        # Execution modes
+        "helpers/test_script.py::test_multiple_runs_no_wait",
+        "helpers/test_script.py::test_multiple_runs_delay",
+        "helpers/test_script.py::test_multiple_runs_wait[template]",
+        "helpers/test_script.py::test_multiple_runs_wait[trigger]",
+        "helpers/test_script.py::test_script_mode_single",
+        "helpers/test_script.py::test_script_mode_queued",
+        "helpers/test_script.py::test_script_mode_2[restart-messages0-last_events0]",
+        "helpers/test_script.py::test_script_mode_2[parallel-messages1-last_events1]",
     ],
 
     # ==========================================================================
@@ -380,14 +465,12 @@ def list_categories():
     print("")
     print(f"Total: {total} tests across {len(TEST_CATEGORIES)} categories")
 
-def run_tests(categories: list[str] | None = None, verbose: bool = False,
-              use_rust: bool = True) -> int:
-    """Run the compatibility tests.
+def run_tests(categories: list[str] | None = None, verbose: bool = False) -> int:
+    """Run the compatibility tests against Rust implementations.
 
     Args:
         categories: List of test categories to run, or None for all
         verbose: Enable verbose output
-        use_rust: If True, patch in Rust components; if False, run pure Python
 
     Returns:
         Exit code (0 for success)
@@ -430,11 +513,7 @@ def run_tests(categories: list[str] | None = None, verbose: bool = False,
     for pattern in patterns:
         pytest_args.append(f"tests/{pattern}")
 
-    print(f"Running {len(patterns)} tests...")
-    if use_rust:
-        print("Mode: Rust extension patched in")
-    else:
-        print("Mode: Pure Python (baseline)")
+    print(f"Running {len(patterns)} tests against Rust...")
     print("")
 
     # Run pytest with PYTHONPATH set to include repo root
@@ -449,13 +528,11 @@ def run_tests(categories: list[str] | None = None, verbose: bool = False,
     return result.returncode
 
 def main():
-    parser = argparse.ArgumentParser(description="Run HA compatibility tests")
+    parser = argparse.ArgumentParser(description="Run HA compatibility tests against Rust")
     parser.add_argument("--list", action="store_true", help="List test categories")
     parser.add_argument("--category", "-c", action="append",
                         help="Test category to run (can specify multiple)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
-    parser.add_argument("--baseline", action="store_true",
-                        help="Run without Rust patches (pure Python)")
     parser.add_argument("--all", "-a", action="store_true", help="Run all categories")
 
     args = parser.parse_args()
@@ -468,11 +545,7 @@ def main():
     if args.all:
         categories = None
 
-    return run_tests(
-        categories=categories,
-        verbose=args.verbose,
-        use_rust=not args.baseline
-    )
+    return run_tests(categories=categories, verbose=args.verbose)
 
 if __name__ == "__main__":
     sys.exit(main())

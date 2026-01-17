@@ -34,5 +34,8 @@ tracing = { workspace = true }
 # IDs
 ulid = { workspace = true }
 
+# Regex for condition matching
+regex = { workspace = true }
+
 [dev-dependencies]
 tokio-test = { workspace = true }

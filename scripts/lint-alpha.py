@@ -120,6 +120,12 @@ def check_rust_match_arms(content: str, filepath: str) -> list[LintError]:
                 if any("Trigger::" in n or "Action::" in n for n in arm_names):
                     continue
 
+                # Skip RepeatCount/RepeatConfig and ChooseConditions (nested match patterns)
+                if any("RepeatCount::" in n or "RepeatConfig::" in n for n in arm_names):
+                    continue
+                if any("ChooseConditions::" in n for n in arm_names):
+                    continue
+
                 sorted_names = sorted(arm_names, key=str.lower)
                 if arm_names != sorted_names:
                     # Find first out-of-order arm
@@ -177,50 +183,14 @@ def check_rust_mod_statements(content: str, filepath: str) -> list[LintError]:
 
 
 def check_rust_use_statements(content: str, filepath: str) -> list[LintError]:
-    """Check that use statements are alphabetized within groups."""
-    errors = []
-    lines = content.split("\n")
+    """Check that use statements are alphabetized within groups.
 
-    # Collect consecutive use statements
-    use_groups = []
-    current_group = []
-
-    for i, line in enumerate(lines):
-        use_match = re.match(r"\s*(pub\s+)?use\s+([a-zA-Z_][a-zA-Z0-9_:{}*,\s]*)\s*;", line)
-        if use_match:
-            # Get the primary crate/module name for sorting
-            use_path = use_match.group(2).strip()
-            current_group.append((use_path, i + 1, line.strip()))
-        else:
-            if current_group:
-                use_groups.append(current_group)
-                current_group = []
-
-    if current_group:
-        use_groups.append(current_group)
-
-    # Check each group is sorted
-    for group in use_groups:
-        if len(group) > 1:
-            paths = [u[0] for u in group]
-
-            # Skip groups starting with super::* (idiomatic in test modules)
-            if paths[0].startswith("super::"):
-                continue
-
-            # Sort by the full use path
-            sorted_paths = sorted(paths)
-            if paths != sorted_paths:
-                for j, (path, line_num, _) in enumerate(group):
-                    if path != sorted_paths[j]:
-                        errors.append(LintError(
-                            filepath,
-                            line_num,
-                            f"use statement not alphabetized"
-                        ))
-                        break
-
-    return errors
+    NOTE: This check is disabled because rustfmt handles use statement ordering.
+    Rustfmt has complex rules for ordering (submodules before direct imports, etc.)
+    that are difficult to replicate. Rely on `cargo fmt` instead.
+    """
+    # Disabled - rustfmt handles use statement ordering
+    return []
 
 
 def check_python_class_members(content: str, filepath: str) -> list[LintError]:
