@@ -353,7 +353,7 @@ fn test_ha_compat_wait_for_trigger_action() {
     let config = json!({
         "wait_for_trigger": [
             {
-                "trigger": "state",
+                "platform": "state",
                 "entity_id": "binary_sensor.motion",
                 "to": "on"
             }

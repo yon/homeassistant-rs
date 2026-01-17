@@ -396,7 +396,7 @@ mod tests {
                 "id": "test_automation",
                 "alias": "Test Automation",
                 "triggers": [
-                    {"trigger": "state", "entity_id": "light.test", "to": "on"}
+                    {"platform": "state", "entity_id": "light.test", "to": "on"}
                 ],
                 "conditions": [
                     {"condition": "time", "after": "08:00:00"}

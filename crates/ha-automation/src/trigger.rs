@@ -68,7 +68,7 @@ impl TriggerData {
 
 /// Trigger definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "trigger", rename_all = "snake_case")]
+#[serde(tag = "platform", rename_all = "snake_case")]
 pub enum Trigger {
     /// Fires when an entity's state changes
     State(StateTrigger),
@@ -570,7 +570,7 @@ mod tests {
     #[test]
     fn test_state_trigger_deserialize() {
         let json = r#"{
-            "trigger": "state",
+            "platform": "state",
             "entity_id": "light.living_room",
             "to": "on"
         }"#;
@@ -583,7 +583,7 @@ mod tests {
     #[test]
     fn test_event_trigger_deserialize() {
         let json = r#"{
-            "trigger": "event",
+            "platform": "event",
             "event_type": "mobile_app_notification_action",
             "event_data": {"action": "confirm"}
         }"#;
@@ -595,7 +595,7 @@ mod tests {
     #[test]
     fn test_time_pattern_trigger() {
         let json = r#"{
-            "trigger": "time_pattern",
+            "platform": "time_pattern",
             "minutes": "/5"
         }"#;
 

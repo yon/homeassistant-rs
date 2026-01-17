@@ -215,7 +215,7 @@ fn test_ha_compat_trigger_condition() {
 #[test]
 fn test_ha_compat_state_trigger() {
     let config = json!({
-        "trigger": "state",
+        "platform": "state",
         "entity_id": "light.kitchen",
         "from": "off",
         "to": "on"
@@ -232,7 +232,7 @@ fn test_ha_compat_state_trigger() {
 #[test]
 fn test_ha_compat_state_trigger_with_for() {
     let config = json!({
-        "trigger": "state",
+        "platform": "state",
         "entity_id": "binary_sensor.motion",
         "to": "on",
         "for": "00:00:05"
@@ -250,7 +250,7 @@ fn test_ha_compat_state_trigger_with_for() {
 #[test]
 fn test_ha_compat_numeric_state_trigger() {
     let config = json!({
-        "trigger": "numeric_state",
+        "platform": "numeric_state",
         "entity_id": "sensor.temperature",
         "above": 17,
         "below": 25
@@ -263,7 +263,7 @@ fn test_ha_compat_numeric_state_trigger() {
 #[test]
 fn test_ha_compat_event_trigger() {
     let config = json!({
-        "trigger": "event",
+        "platform": "event",
         "event_type": "my_custom_event",
         "event_data": {
             "mood": "happy"
@@ -282,7 +282,7 @@ fn test_ha_compat_event_trigger() {
 #[test]
 fn test_ha_compat_time_trigger() {
     let config = json!({
-        "trigger": "time",
+        "platform": "time",
         "at": "07:00:00"
     });
 
@@ -293,7 +293,7 @@ fn test_ha_compat_time_trigger() {
 #[test]
 fn test_ha_compat_time_pattern_trigger() {
     let config = json!({
-        "trigger": "time_pattern",
+        "platform": "time_pattern",
         "minutes": "/5"
     });
 
@@ -308,7 +308,7 @@ fn test_ha_compat_time_pattern_trigger() {
 #[test]
 fn test_ha_compat_template_trigger() {
     let config = json!({
-        "trigger": "template",
+        "platform": "template",
         "value_template": "{{ states('sensor.temp') | float > 25 }}"
     });
 
@@ -323,7 +323,7 @@ fn test_ha_compat_template_trigger() {
 #[test]
 fn test_ha_compat_sun_trigger() {
     let config = json!({
-        "trigger": "sun",
+        "platform": "sun",
         "event": "sunrise",
         "offset": "-00:30:00"
     });
@@ -335,7 +335,7 @@ fn test_ha_compat_sun_trigger() {
 #[test]
 fn test_ha_compat_zone_trigger() {
     let config = json!({
-        "trigger": "zone",
+        "platform": "zone",
         "entity_id": "device_tracker.paulus",
         "zone": "zone.home",
         "event": "enter"
@@ -348,7 +348,7 @@ fn test_ha_compat_zone_trigger() {
 #[test]
 fn test_ha_compat_homeassistant_trigger() {
     let config = json!({
-        "trigger": "homeassistant",
+        "platform": "homeassistant",
         "event": "start"
     });
 
@@ -359,7 +359,7 @@ fn test_ha_compat_homeassistant_trigger() {
 #[test]
 fn test_ha_compat_webhook_trigger() {
     let config = json!({
-        "trigger": "webhook",
+        "platform": "webhook",
         "webhook_id": "my_webhook_id"
     });
 
@@ -384,7 +384,7 @@ fn test_ha_compat_full_automation() {
         "mode": "single",
         "triggers": [
             {
-                "trigger": "sun",
+                "platform": "sun",
                 "event": "sunset",
                 "offset": "-00:30:00"
             }
