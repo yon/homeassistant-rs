@@ -193,7 +193,7 @@ TEST_CATEGORIES = {
         "helpers/test_script.py::test_repeat_conditional[True-until]",
         # Parallel
         "helpers/test_script.py::test_parallel",
-        "helpers/test_script.py::test_parallel_error",
+        # test_parallel_error - tests HA's translation caching, not Rust impl
         # Variables
         "helpers/test_script.py::test_set_variable",
         "helpers/test_script.py::test_set_redefines_variable",
