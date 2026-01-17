@@ -3,39 +3,63 @@
 This directory contains infrastructure for running Home Assistant's own test suite
 against our Rust extension to verify API compatibility.
 
-## Strategy
+## Test Tiers
 
-Rather than reimplementing HA's tests, we run their actual tests with our Rust
-components substituted in. This proves compatibility better than any reimplementation.
+### Tier 1: Rust Compat Tests (Fast, No Python Required)
+
+These are Rust tests that parse real HA config patterns to verify our types match.
+
+```bash
+make test-compat   # Run just compat tests
+make test          # Includes compat tests
+```
+
+Test locations:
+- `crates/ha-automation/tests/compat_test.rs` - Triggers and conditions
+- `crates/ha-script/tests/compat_test.rs` - Actions
+
+### Tier 2: HA Native Tests (Full Python HA Environment)
+
+These run HA's actual pytest tests with our Rust components patched in.
+
+```bash
+# One-time setup
+make ha-compat-setup
+
+# Run all HA compat tests
+make ha-compat-test
+
+# Run specific category
+python tests/ha_compat/run_tests.py --category state -v
+python tests/ha_compat/run_tests.py --category condition -v
+```
 
 ## Test Categories
 
-We focus on tests for components we've implemented in Rust:
+### Core Types (tests/test_core.py)
 
-| HA Test File | Our Component | Status |
-|--------------|---------------|--------|
-| `test_core.py::test_state_*` | `ha-core::State` | Ready |
-| `test_core.py::test_statemachine_*` | `ha-state-machine` | Ready |
-| `test_core.py::test_eventbus_*` | `ha-event-bus` | Ready |
-| `test_core.py::test_service*` | `ha-service-registry` | Ready |
+| Category | Our Component | Status |
+|----------|---------------|--------|
+| `state` | `ha-core::State` | Ready |
+| `statemachine` | `ha-state-machine` | Ready |
+| `eventbus` | `ha-event-bus` | Ready |
+| `service` | `ha-service-registry` | Ready |
+| `event` | `ha-core::Event` | Ready |
+| `context` | `ha-core::Context` | Ready |
 
-## Quick Start
+### Helper Modules (tests/helpers/)
 
-```bash
-# Setup (one-time)
-make ha-compat-setup
-
-# Run compatibility tests
-make ha-compat-test
-
-# Run specific test category
-make ha-compat-test TESTS="test_statemachine"
-```
+| Category | Our Component | Status |
+|----------|---------------|--------|
+| `condition` | `ha-automation::Condition` | In Progress |
+| `trigger` | `ha-automation::Trigger` | In Progress |
+| `script` | `ha-script::Action` | In Progress |
+| `automation` | `ha-automation::Automation` | In Progress |
 
 ## How It Works
 
-1. **Setup**: Clone HA core, install dependencies, install our wheel
-2. **Patch**: Our `conftest.py` monkey-patches HA's core to use Rust components
+1. **Setup**: Initializes vendored `vendor/ha-core` submodule, installs dependencies
+2. **Patch**: `conftest.py` monkey-patches HA's core to use our Rust components
 3. **Run**: pytest runs HA's tests with our patched components
 4. **Report**: Compare results against baseline (pure Python HA)
 
@@ -44,4 +68,11 @@ make ha-compat-test TESTS="test_statemachine"
 - `setup.sh` - Setup script for HA test environment
 - `conftest.py` - Pytest configuration that patches HA core
 - `run_tests.py` - Test runner with filtering and reporting
-- `baseline.json` - Expected test results from pure Python HA
+- `run_ha_tests.py` - Simpler runner for individual tests
+
+## Adding New Test Categories
+
+1. Find relevant tests in `vendor/ha-core/tests/`
+2. Add category to `TEST_CATEGORIES` in `run_tests.py`
+3. Add patching for new components in `conftest.py` if needed
+4. Run tests: `python run_tests.py --category <name> -v`

@@ -19,7 +19,9 @@ import sys
 from pathlib import Path
 
 # Test categories mapped to pytest patterns
+# Tests under tests/ are for core types, tests/helpers/ are for helper modules
 TEST_CATEGORIES = {
+    # === Core Types (tests/test_core.py) ===
     "state": [
         "test_core.py::test_state_init",
         "test_core.py::test_state_domain",
@@ -62,6 +64,69 @@ TEST_CATEGORIES = {
         "test_core.py::test_context",
         "test_core.py::test_context_json_fragment",
     ],
+    # === Helper Modules (tests/helpers/) ===
+    "condition": [
+        "helpers/test_condition.py::test_and_condition",
+        "helpers/test_condition.py::test_and_condition_with_template",
+        "helpers/test_condition.py::test_or_condition",
+        "helpers/test_condition.py::test_or_condition_with_template",
+        "helpers/test_condition.py::test_not_condition",
+        "helpers/test_condition.py::test_not_condition_with_template",
+        "helpers/test_condition.py::test_numeric_state_raises",
+        "helpers/test_condition.py::test_numeric_state_multiple_entities",
+        "helpers/test_condition.py::test_state_raises",
+        "helpers/test_condition.py::test_state_multiple_entities",
+        "helpers/test_condition.py::test_time_window",
+        "helpers/test_condition.py::test_time_using_input_datetime",
+        "helpers/test_condition.py::test_sun_before",
+        "helpers/test_condition.py::test_sun_after",
+        "helpers/test_condition.py::test_zone_multiple_entities",
+        "helpers/test_condition.py::test_template_condition",
+        "helpers/test_condition.py::test_template_condition_async",
+    ],
+    "trigger": [
+        "helpers/test_trigger.py::test_if_fires_on_entity_change",
+        "helpers/test_trigger.py::test_if_fires_on_entity_change_with_from_filter",
+        "helpers/test_trigger.py::test_if_fires_on_entity_change_with_to_filter",
+        "helpers/test_trigger.py::test_if_fires_on_entity_change_with_for",
+        "helpers/test_trigger.py::test_if_fires_on_zone_enter",
+        "helpers/test_trigger.py::test_if_fires_on_zone_leave",
+        "helpers/test_trigger.py::test_if_fires_on_event",
+        "helpers/test_trigger.py::test_if_fires_on_time",
+        "helpers/test_trigger.py::test_if_fires_on_time_pattern",
+        "helpers/test_trigger.py::test_if_fires_on_sun",
+        "helpers/test_trigger.py::test_if_fires_on_hass_start",
+    ],
+    "script": [
+        "helpers/test_script.py::test_firing_event_basic",
+        "helpers/test_script.py::test_calling_service_basic",
+        "helpers/test_script.py::test_data_template_basic",
+        "helpers/test_script.py::test_delay_basic",
+        "helpers/test_script.py::test_wait_template_basic",
+        "helpers/test_script.py::test_condition_basic",
+        "helpers/test_script.py::test_condition_pass",
+        "helpers/test_script.py::test_condition_fail",
+        "helpers/test_script.py::test_choose",
+        "helpers/test_script.py::test_choose_default",
+        "helpers/test_script.py::test_if_then",
+        "helpers/test_script.py::test_if_then_else",
+        "helpers/test_script.py::test_repeat_count",
+        "helpers/test_script.py::test_repeat_while",
+        "helpers/test_script.py::test_repeat_until",
+        "helpers/test_script.py::test_repeat_for_each",
+        "helpers/test_script.py::test_parallel",
+        "helpers/test_script.py::test_sequence",
+        "helpers/test_script.py::test_variables",
+        "helpers/test_script.py::test_stop",
+        "helpers/test_script.py::test_stop_error",
+    ],
+    "automation": [
+        "helpers/test_automation.py::test_services",
+        "helpers/test_automation.py::test_automation_restore_state",
+        "helpers/test_automation.py::test_automation_is_on_if_no_initial_state_or_restore",
+        "helpers/test_automation.py::test_automation_not_restore_disabled",
+        "helpers/test_automation.py::test_automation_restore_last_triggered",
+    ],
 }
 
 def get_repo_root() -> Path:
@@ -69,8 +134,8 @@ def get_repo_root() -> Path:
     return Path(__file__).parent.parent.parent
 
 def get_ha_core_dir() -> Path:
-    """Get the HA core directory."""
-    return get_repo_root().parent / "core"
+    """Get the HA core directory (vendored submodule)."""
+    return get_repo_root() / "vendor" / "ha-core"
 
 def list_categories():
     """List available test categories."""

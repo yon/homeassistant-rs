@@ -13,31 +13,24 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-HA_CORE_DIR="$REPO_ROOT/../core"
+# Use vendored ha-core submodule instead of separate clone
+HA_CORE_DIR="$REPO_ROOT/vendor/ha-core"
 VENV="$REPO_ROOT/.venv"
 HA_VERSION="2026.1.1"
 
 echo "=== Home Assistant Compatibility Test Setup ==="
 echo "Repo root: $REPO_ROOT"
-echo "HA core dir: $HA_CORE_DIR"
+echo "HA core dir: $HA_CORE_DIR (vendored submodule)"
 echo "Target HA version: $HA_VERSION"
 echo ""
 
-# Step 1: Clone HA core if needed
-if [ ! -d "$HA_CORE_DIR" ]; then
-    echo "Cloning Home Assistant core ($HA_VERSION)..."
-    git clone --depth 1 --branch "$HA_VERSION" \
-        https://github.com/home-assistant/core.git "$HA_CORE_DIR"
-else
-    echo "✓ HA core already exists at $HA_CORE_DIR"
-    # Verify version
-    cd "$HA_CORE_DIR"
-    CURRENT_TAG=$(git describe --tags --exact-match 2>/dev/null || echo "unknown")
-    if [ "$CURRENT_TAG" != "$HA_VERSION" ]; then
-        echo "  Warning: HA core is at $CURRENT_TAG, expected $HA_VERSION"
-        echo "  Run 'rm -rf $HA_CORE_DIR' and re-run setup to update"
-    fi
+# Step 1: Initialize submodule if needed
+if [ ! -f "$HA_CORE_DIR/setup.py" ]; then
+    echo "Initializing vendored ha-core submodule..."
     cd "$REPO_ROOT"
+    git submodule update --init vendor/ha-core
+else
+    echo "✓ HA core submodule initialized at $HA_CORE_DIR"
 fi
 
 # Step 2: Install HA core with dependencies
