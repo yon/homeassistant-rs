@@ -426,16 +426,6 @@ def run_tests(categories: list[str] | None = None, verbose: bool = False,
         "-x",  # Stop on first failure
     ]
 
-    # Add conftest path for Rust patching
-    # We copy our conftest to HA's test directory so pytest auto-discovers it
-    rust_conftest_path = None
-    if use_rust:
-        import shutil
-        our_conftest = Path(__file__).parent / "conftest.py"
-        # Use a unique name so it doesn't conflict with HA's conftest.py
-        rust_conftest_path = ha_core / "conftest_rust.py"
-        shutil.copy(our_conftest, rust_conftest_path)
-
     # Add test patterns (relative to ha_core since we run from there)
     for pattern in patterns:
         pytest_args.append(f"tests/{pattern}")
@@ -454,14 +444,40 @@ def run_tests(categories: list[str] | None = None, verbose: bool = False,
         pythonpath_parts.append(env["PYTHONPATH"])
     env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
 
+    # Create a conftest.py at ha-core root level with our pytest hooks
+    # This file applies disable_translations_once fixture to tests that need
+    # fresh translations (the fixture is defined in HA's tests/conftest.py)
+    root_conftest = ha_core / "conftest.py"
+    root_conftest.write_text('''"""Root conftest for HA compatibility tests.
+
+This conftest adds fixture modifications for specific tests.
+It's placed at the ha-core root level so pytest discovers it before tests/conftest.py.
+"""
+
+# Tests that require the disable_translations_once fixture because they
+# depend on translations NOT being cached at test start
+TESTS_NEEDING_FRESH_TRANSLATIONS = {
+    "test_eventbus_max_length_exceeded",
+    "test_serviceregistry_service_that_not_exists",
+    "test_call_service_not_found",
+}
+
+
+def pytest_collection_modifyitems(session, config, items):
+    """Apply disable_translations_once fixture to tests that need fresh translations."""
+    for item in items:
+        if item.name in TESTS_NEEDING_FRESH_TRANSLATIONS:
+            item.fixturenames.append("disable_translations_once")
+''')
+
     # Run from HA core directory so HA's tests can find their modules
     try:
         result = subprocess.run(pytest_args, cwd=ha_core, env=env)
         return result.returncode
     finally:
         # Clean up the temporary conftest
-        if rust_conftest_path and rust_conftest_path.exists():
-            rust_conftest_path.unlink()
+        if root_conftest.exists():
+            root_conftest.unlink()
 
 def main():
     parser = argparse.ArgumentParser(description="Run HA compatibility tests")
