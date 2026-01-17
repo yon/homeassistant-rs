@@ -7,3 +7,27 @@ license.workspace = true
 
 [dependencies]
 ha-core = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Concurrent data structures
+dashmap = { workspace = true }
+
+# IDs and time
+ulid = { workspace = true }
+chrono = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Async
+tokio = { workspace = true, features = ["fs", "sync"] }
+
+# Logging
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+tempfile = "3.10"
