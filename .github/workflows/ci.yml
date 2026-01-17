@@ -97,6 +97,51 @@ jobs:
           name: wheels
           path: target/wheels/*.whl
 
+  ha-compat-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-compat-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('tests/ha_compat/requirements.txt') }}
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install maturin pytest pytest-asyncio orjson ulid-py
+          .venv/bin/pip install -e vendor/ha-core
+
+      - name: Build and install Rust extension
+        run: .venv/bin/maturin develop
+
+      - name: Run HA compatibility tests
+        run: .venv/bin/python tests/ha_compat/run_tests.py --all -v
+
   # API comparison tests against real Home Assistant
   comparison-tests:
     runs-on: ubuntu-latest
