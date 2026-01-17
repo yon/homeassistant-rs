@@ -4,8 +4,6 @@
 //! trigger→condition→action pipeline for automations. It listens for events,
 //! matches them against triggers, evaluates conditions, and executes action sequences.
 
-// TODO: Wire up to main server - currently unused
-#![allow(dead_code)]
 #![allow(clippy::too_many_arguments)]
 
 use ha_automation::{

@@ -3,6 +3,7 @@
 use ha_template::TemplateEngine;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use std::sync::Arc;
 
 use super::py_state_machine::PyStateMachine;
 use super::py_types::py_to_json;
@@ -105,7 +106,7 @@ impl PyTemplate {
 /// Python wrapper for the TemplateEngine itself (for advanced usage)
 #[pyclass(name = "TemplateEngine")]
 pub struct PyTemplateEngine {
-    inner: TemplateEngine,
+    inner: Arc<TemplateEngine>,
 }
 
 #[pymethods]
@@ -114,7 +115,7 @@ impl PyTemplateEngine {
     #[new]
     fn new(state_machine: &PyStateMachine) -> Self {
         Self {
-            inner: TemplateEngine::new(state_machine.inner().clone()),
+            inner: Arc::new(TemplateEngine::new(state_machine.inner().clone())),
         }
     }
 
@@ -167,6 +168,16 @@ impl PyTemplateEngine {
 
     fn __repr__(&self) -> String {
         "TemplateEngine()".to_string()
+    }
+}
+
+impl PyTemplateEngine {
+    pub fn from_arc(inner: Arc<TemplateEngine>) -> Self {
+        Self { inner }
+    }
+
+    pub fn inner(&self) -> &Arc<TemplateEngine> {
+        &self.inner
     }
 }
 
