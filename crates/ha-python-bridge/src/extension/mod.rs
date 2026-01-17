@@ -7,6 +7,7 @@
 
 mod py_area_registry;
 mod py_automation;
+mod py_condition;
 mod py_config_entries;
 mod py_device_registry;
 mod py_entity_registry;
@@ -18,10 +19,12 @@ mod py_service_registry;
 mod py_state_machine;
 mod py_storage;
 mod py_template;
+mod py_trigger;
 mod py_types;
 
 pub use py_area_registry::{PyAreaEntry, PyAreaRegistry};
 pub use py_automation::{PyAutomation, PyAutomationManager};
+pub use py_condition::{PyConditionEvaluator, PyEvalContext};
 pub use py_config_entries::{PyConfigEntries, PyConfigEntry};
 pub use py_device_registry::{PyDeviceEntry, PyDeviceRegistry};
 pub use py_entity_registry::{PyEntityEntry, PyEntityRegistry};
@@ -33,4 +36,5 @@ pub use py_service_registry::PyServiceRegistry;
 pub use py_state_machine::PyStateMachine;
 pub use py_storage::PyStorage;
 pub use py_template::{PyTemplate, PyTemplateEngine};
+pub use py_trigger::{PyTriggerData, PyTriggerEvalContext, PyTriggerEvaluator};
 pub use py_types::{PyContext, PyEntityId, PyEvent, PyState};

@@ -2093,9 +2093,10 @@ class RustAutomationManager:
 # Tests that require the disable_translations_once fixture because they
 # depend on translations NOT being cached at test start
 TESTS_NEEDING_FRESH_TRANSLATIONS = {
-    "test_eventbus_max_length_exceeded",
-    "test_serviceregistry_service_that_not_exists",
     "test_call_service_not_found",
+    "test_eventbus_max_length_exceeded",
+    "test_parallel_error",
+    "test_serviceregistry_service_that_not_exists",
 }
 
 
@@ -2145,6 +2146,36 @@ def patch_ha_core():
 
     # Clean up
     _rust_hass = None
+
+
+# NOTE: Condition/trigger patching is NOT enabled by default because:
+# 1. HA's condition tests check specific tracing, error messages, and validation
+# 2. Our Rust evaluator implements the core logic but not all HA-specific behaviors
+# 3. Core type patching (State, Context, etc.) already exercises Rust code paths
+#
+# To enable Rust condition evaluation patching for specific tests, use:
+#     USE_RUST_CONDITIONS=1 .venv/bin/python tests/ha_compat/run_tests.py ...
+USE_RUST_CONDITIONS = os.environ.get("USE_RUST_CONDITIONS", "0") == "1"
+
+
+@pytest.fixture(autouse=True)
+def patch_condition_helper():
+    """Optionally patch HA condition helper with Rust implementation.
+
+    Enable by setting USE_RUST_CONDITIONS=1 environment variable.
+    This is separate from core patching because condition tests may depend
+    on specific HA behaviors (tracing, error messages, etc.).
+    """
+    if not USE_RUST_CONDITIONS or not USE_RUST_COMPONENTS or not _rust_available:
+        yield
+        return
+
+    try:
+        from homeassistant.helpers import condition
+        with patch.object(condition, 'async_from_config', rust_async_from_config):
+            yield
+    except ImportError:
+        yield
 
 
 # =============================================================================
@@ -2242,3 +2273,71 @@ def rust_template_engine(rust_state_machine):
     if not _rust_available:
         pytest.skip("ha_core_rs not available")
     return RustTemplateEngine(rust_state_machine)
+
+
+# =============================================================================
+# Rust-backed Condition Evaluation wrappers
+# =============================================================================
+
+class RustConditionChecker:
+    """A callable condition checker backed by Rust ConditionEvaluator.
+
+    This syncs states from HA's state machine to Rust before evaluation,
+    allowing the Rust evaluator to see current entity states.
+    """
+
+    def __init__(self, rust_hass, condition_config: dict):
+        self._rust_hass = rust_hass
+        self._config = condition_config
+
+    def _sync_states_from_ha(self, hass: Any) -> None:
+        """Sync states from HA's state machine to Rust."""
+        rust_states = self._rust_hass.states
+
+        # Get all states from HA and set them in Rust
+        for state in hass.states.async_all():
+            attrs = dict(state.attributes) if state.attributes else {}
+            rust_states.set(state.entity_id, state.state, attrs)
+
+    def __call__(self, hass: Any, variables: dict | None = None) -> bool:
+        """Evaluate the condition.
+
+        Syncs states from HA to Rust, then evaluates using the Rust evaluator.
+        """
+        # Sync states from HA to Rust state machine
+        self._sync_states_from_ha(hass)
+
+        # Evaluate using Rust
+        return self._rust_hass.condition_evaluator.evaluate(self._config, variables or {})
+
+
+async def rust_async_from_config(hass: Any, config: dict) -> RustConditionChecker:
+    """Create a condition checker from config using Rust evaluator.
+
+    This matches the signature of homeassistant.helpers.condition.async_from_config.
+    """
+    if not _rust_available:
+        raise RuntimeError("ha_core_rs not available")
+
+    rust_hass = _get_rust_hass()
+    return RustConditionChecker(rust_hass, config)
+
+
+@pytest.fixture
+def rust_condition_evaluator():
+    """Provide a Rust-backed ConditionEvaluator for testing."""
+    if not _rust_available:
+        pytest.skip("ha_core_rs not available")
+
+    rust_hass = _get_rust_hass()
+    return rust_hass.condition_evaluator
+
+
+@pytest.fixture
+def rust_trigger_evaluator():
+    """Provide a Rust-backed TriggerEvaluator for testing."""
+    if not _rust_available:
+        pytest.skip("ha_core_rs not available")
+
+    rust_hass = _get_rust_hass()
+    return rust_hass.trigger_evaluator

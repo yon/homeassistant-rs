@@ -2,28 +2,36 @@
 //!
 //! Main entry point for the Home Assistant Rust implementation.
 
+mod automation_engine;
+
 use anyhow::Result;
 use ha_api::AppState;
+use ha_automation::AutomationConfig;
 use ha_config::CoreConfig;
 use ha_core::{Context, EntityId, ServiceCall, SupportsResponse};
 use ha_event_bus::EventBus;
 use ha_service_registry::{ServiceDescription, ServiceRegistry};
 use ha_state_machine::StateMachine;
+use ha_template::TemplateEngine;
 use serde_json::json;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tracing::{info, warn, Level};
+use tracing::{debug, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 /// The central Home Assistant instance
 pub struct HomeAssistant {
+    /// Automation engine for trigger→condition→action flow
+    pub automation_engine: automation_engine::AutomationEngine,
     /// Event bus for pub/sub communication
     pub bus: Arc<EventBus>,
-    /// State machine for entity states
-    pub states: Arc<StateMachine>,
     /// Service registry for service calls
     pub services: Arc<ServiceRegistry>,
+    /// State machine for entity states
+    pub states: Arc<StateMachine>,
+    /// Template engine for rendering templates
+    pub template_engine: Arc<TemplateEngine>,
 }
 
 impl HomeAssistant {
@@ -32,11 +40,21 @@ impl HomeAssistant {
         let bus = Arc::new(EventBus::new());
         let states = Arc::new(StateMachine::new(bus.clone()));
         let services = Arc::new(ServiceRegistry::new());
+        let template_engine = Arc::new(TemplateEngine::new(states.clone()));
+
+        let automation_engine = automation_engine::AutomationEngine::new(
+            bus.clone(),
+            states.clone(),
+            services.clone(),
+            template_engine.clone(),
+        );
 
         Self {
+            automation_engine,
             bus,
-            states,
             services,
+            states,
+            template_engine,
         }
     }
 
@@ -323,6 +341,386 @@ impl HomeAssistant {
         info!("Core services registered");
     }
 
+    /// Register automation domain services
+    fn register_automation_services(&self) {
+        let states = self.states.clone();
+        let manager = self.automation_engine.manager();
+
+        // Helper for automation entity target
+        let automation_target = || {
+            Some(json!({
+                "entity": {
+                    "domain": "automation"
+                }
+            }))
+        };
+
+        // Register automation.turn_on service - enable automation
+        let states_clone = states.clone();
+        let manager_clone = manager.clone();
+        self.services.register_with_description(
+            ServiceDescription {
+                domain: "automation".to_string(),
+                service: "turn_on".to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                target: automation_target(),
+                supports_response: SupportsResponse::None,
+            },
+            move |call: ServiceCall| {
+                let states = states_clone.clone();
+                let manager = manager_clone.clone();
+                async move {
+                    if let Some(entity_id) =
+                        call.service_data.get("entity_id").and_then(|v| v.as_str())
+                    {
+                        let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
+                        if parts.len() == 2 && parts[0] == "automation" {
+                            let automation_id = parts[1];
+
+                            // Enable in automation manager
+                            let manager_guard = manager.read().await;
+                            if manager_guard.get(automation_id).is_some() {
+                                drop(manager_guard);
+                                let manager_guard = manager.write().await;
+                                let _ = manager_guard.enable(automation_id);
+                            }
+
+                            // Update entity state
+                            if let Some(state) = states.get(entity_id) {
+                                if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
+                                    states.set(
+                                        entity,
+                                        "on",
+                                        state.attributes.clone(),
+                                        Context::new(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Ok(None)
+                }
+            },
+        );
+
+        // Register automation.turn_off service - disable automation
+        let states_clone = states.clone();
+        let manager_clone = manager.clone();
+        self.services.register_with_description(
+            ServiceDescription {
+                domain: "automation".to_string(),
+                service: "turn_off".to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                target: automation_target(),
+                supports_response: SupportsResponse::None,
+            },
+            move |call: ServiceCall| {
+                let states = states_clone.clone();
+                let manager = manager_clone.clone();
+                async move {
+                    if let Some(entity_id) =
+                        call.service_data.get("entity_id").and_then(|v| v.as_str())
+                    {
+                        let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
+                        if parts.len() == 2 && parts[0] == "automation" {
+                            let automation_id = parts[1];
+
+                            // Disable in automation manager
+                            let manager_guard = manager.read().await;
+                            if manager_guard.get(automation_id).is_some() {
+                                drop(manager_guard);
+                                let manager_guard = manager.write().await;
+                                let _ = manager_guard.disable(automation_id);
+                            }
+
+                            // Update entity state
+                            if let Some(state) = states.get(entity_id) {
+                                if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
+                                    states.set(
+                                        entity,
+                                        "off",
+                                        state.attributes.clone(),
+                                        Context::new(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Ok(None)
+                }
+            },
+        );
+
+        // Register automation.toggle service
+        let states_clone = states.clone();
+        let manager_clone = manager.clone();
+        self.services.register_with_description(
+            ServiceDescription {
+                domain: "automation".to_string(),
+                service: "toggle".to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                target: automation_target(),
+                supports_response: SupportsResponse::None,
+            },
+            move |call: ServiceCall| {
+                let states = states_clone.clone();
+                let manager = manager_clone.clone();
+                async move {
+                    if let Some(entity_id) =
+                        call.service_data.get("entity_id").and_then(|v| v.as_str())
+                    {
+                        let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
+                        if parts.len() == 2 && parts[0] == "automation" {
+                            let automation_id = parts[1];
+
+                            // Toggle in automation manager and get new state
+                            let manager_guard = manager.read().await;
+                            let new_enabled = if manager_guard.get(automation_id).is_some() {
+                                drop(manager_guard);
+                                let manager_guard = manager.write().await;
+                                manager_guard.toggle(automation_id).unwrap_or(true)
+                            } else {
+                                // Automation not in manager, toggle based on entity state
+                                if let Some(state) = states.get(entity_id) {
+                                    state.state != "on"
+                                } else {
+                                    true
+                                }
+                            };
+
+                            // Update entity state
+                            if let Some(state) = states.get(entity_id) {
+                                let new_state = if new_enabled { "on" } else { "off" };
+                                if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
+                                    states.set(
+                                        entity,
+                                        new_state,
+                                        state.attributes.clone(),
+                                        Context::new(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Ok(None)
+                }
+            },
+        );
+
+        // Register automation.trigger service - manually trigger an automation
+        let manager_clone = manager.clone();
+        self.services.register_with_description(
+            ServiceDescription {
+                domain: "automation".to_string(),
+                service: "trigger".to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                target: automation_target(),
+                supports_response: SupportsResponse::None,
+            },
+            move |call: ServiceCall| {
+                let manager = manager_clone.clone();
+                async move {
+                    if let Some(entity_id) =
+                        call.service_data.get("entity_id").and_then(|v| v.as_str())
+                    {
+                        let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
+                        if parts.len() == 2 && parts[0] == "automation" {
+                            let automation_id = parts[1];
+                            let manager_guard = manager.read().await;
+                            if let Some(automation) = manager_guard.get(automation_id) {
+                                info!(
+                                    "Triggering automation: {} ({})",
+                                    automation.display_name(),
+                                    automation_id
+                                );
+                                // Note: Full trigger would require access to the AutomationEngine
+                                // For now, log the trigger request
+                            } else {
+                                warn!("Automation not found: {}", automation_id);
+                            }
+                        }
+                    }
+                    Ok(None)
+                }
+            },
+        );
+
+        // Register automation.reload service
+        self.services.register_with_description(
+            ServiceDescription {
+                domain: "automation".to_string(),
+                service: "reload".to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                target: None,
+                supports_response: SupportsResponse::None,
+            },
+            |_call: ServiceCall| async move {
+                // Note: Full reload would require reloading from config
+                // For now, just log the request
+                info!("Reloading automations (not fully implemented)");
+                Ok(None)
+            },
+        );
+
+        info!("Automation services registered");
+    }
+
+    /// Register script domain services
+    fn register_script_services(&self) {
+        let states = self.states.clone();
+
+        // Helper for script entity target
+        let script_target = || {
+            Some(json!({
+                "entity": {
+                    "domain": "script"
+                }
+            }))
+        };
+
+        // Register script.turn_on service - run the script
+        let states_clone = states.clone();
+        self.services.register_with_description(
+            ServiceDescription {
+                domain: "script".to_string(),
+                service: "turn_on".to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                target: script_target(),
+                supports_response: SupportsResponse::None,
+            },
+            move |call: ServiceCall| {
+                let states = states_clone.clone();
+                async move {
+                    if let Some(entity_id) =
+                        call.service_data.get("entity_id").and_then(|v| v.as_str())
+                    {
+                        if let Some(state) = states.get(entity_id) {
+                            let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
+                            if parts.len() == 2 && parts[0] == "script" {
+                                if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
+                                    // Set to "on" while running (scripts run once then go to off)
+                                    states.set(
+                                        entity,
+                                        "on",
+                                        state.attributes.clone(),
+                                        Context::new(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Ok(None)
+                }
+            },
+        );
+
+        // Register script.turn_off service - stop the script
+        let states_clone = states.clone();
+        self.services.register_with_description(
+            ServiceDescription {
+                domain: "script".to_string(),
+                service: "turn_off".to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                target: script_target(),
+                supports_response: SupportsResponse::None,
+            },
+            move |call: ServiceCall| {
+                let states = states_clone.clone();
+                async move {
+                    if let Some(entity_id) =
+                        call.service_data.get("entity_id").and_then(|v| v.as_str())
+                    {
+                        if let Some(state) = states.get(entity_id) {
+                            let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
+                            if parts.len() == 2 && parts[0] == "script" {
+                                if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
+                                    states.set(
+                                        entity,
+                                        "off",
+                                        state.attributes.clone(),
+                                        Context::new(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Ok(None)
+                }
+            },
+        );
+
+        // Register script.toggle service
+        let states_clone = states.clone();
+        self.services.register_with_description(
+            ServiceDescription {
+                domain: "script".to_string(),
+                service: "toggle".to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                target: script_target(),
+                supports_response: SupportsResponse::None,
+            },
+            move |call: ServiceCall| {
+                let states = states_clone.clone();
+                async move {
+                    if let Some(entity_id) =
+                        call.service_data.get("entity_id").and_then(|v| v.as_str())
+                    {
+                        if let Some(state) = states.get(entity_id) {
+                            let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
+                            if parts.len() == 2 && parts[0] == "script" {
+                                let new_state = if state.state == "on" { "off" } else { "on" };
+                                if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
+                                    states.set(
+                                        entity,
+                                        new_state,
+                                        state.attributes.clone(),
+                                        Context::new(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Ok(None)
+                }
+            },
+        );
+
+        // Register script.reload service
+        self.services.register_with_description(
+            ServiceDescription {
+                domain: "script".to_string(),
+                service: "reload".to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                target: None,
+                supports_response: SupportsResponse::None,
+            },
+            |_call: ServiceCall| async move {
+                info!("Reloading scripts");
+                Ok(None)
+            },
+        );
+
+        info!("Script services registered");
+    }
+
     /// Load entities from JSON file or add hardcoded demo entities
     fn load_entities(&self, config_dir: &std::path::Path) {
         let entities_file = config_dir.join("demo-entities.json");
@@ -540,6 +938,57 @@ fn load_events_cache(config_dir: &std::path::Path) -> Option<Arc<serde_json::Val
     None
 }
 
+/// Load automations from configuration.yaml
+fn load_automations(config_dir: &Path) -> Vec<AutomationConfig> {
+    let config_file = config_dir.join("configuration.yaml");
+
+    if !config_file.exists() {
+        debug!("No configuration.yaml found, no automations to load");
+        return Vec::new();
+    }
+
+    // Load the full YAML with includes resolved
+    let yaml = match ha_config::load_yaml(config_dir, "configuration.yaml") {
+        Ok(yaml) => yaml,
+        Err(e) => {
+            warn!("Failed to load configuration.yaml: {}", e);
+            return Vec::new();
+        }
+    };
+
+    // Extract the automation key
+    let automation_value = match yaml.get("automation") {
+        Some(v) => v.clone(),
+        None => {
+            debug!("No 'automation' key in configuration.yaml");
+            return Vec::new();
+        }
+    };
+
+    // Handle both single automation and list of automations
+    let automations_array = if automation_value.is_sequence() {
+        automation_value
+    } else if automation_value.is_mapping() {
+        // Single automation, wrap in array
+        serde_yaml::Value::Sequence(vec![automation_value])
+    } else {
+        debug!("automation key is not a mapping or sequence");
+        return Vec::new();
+    };
+
+    // Deserialize to Vec<AutomationConfig>
+    match serde_yaml::from_value::<Vec<AutomationConfig>>(automations_array) {
+        Ok(configs) => {
+            info!("Loaded {} automation(s) from configuration", configs.len());
+            configs
+        }
+        Err(e) => {
+            warn!("Failed to parse automations: {}", e);
+            Vec::new()
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
@@ -582,6 +1031,10 @@ async fn main() -> Result<()> {
     // Register core services
     hass.register_core_services();
 
+    // Register automation and script services
+    hass.register_automation_services();
+    hass.register_script_services();
+
     // Load entities from config or use demo entities
     hass.load_entities(&config_dir);
 
@@ -600,6 +1053,38 @@ async fn main() -> Result<()> {
     if events_cache.is_some() {
         info!("Loaded events cache from file");
     }
+
+    // Load automations from configuration
+    let automation_configs = load_automations(&config_dir);
+    if !automation_configs.is_empty() {
+        // Create automation entities in state machine
+        for config in &automation_configs {
+            let automation_id = config
+                .id
+                .clone()
+                .unwrap_or_else(|| config.alias.clone().unwrap_or_default());
+            if !automation_id.is_empty() {
+                let entity_id = EntityId::new("automation", &automation_id).unwrap();
+                let state = if config.enabled { "on" } else { "off" };
+                let mut attributes = HashMap::new();
+                if let Some(alias) = &config.alias {
+                    attributes.insert("friendly_name".to_string(), json!(alias));
+                }
+                hass.states
+                    .set(entity_id, state, attributes, Context::new());
+            }
+        }
+
+        // Load automations into the engine
+        let manager = hass.automation_engine.manager();
+        let manager_guard = manager.blocking_write();
+        if let Err(e) = manager_guard.load(automation_configs) {
+            warn!("Failed to load automations into engine: {}", e);
+        }
+    }
+
+    // Start the automation engine
+    hass.automation_engine.start().await;
 
     info!("Home Assistant initialized");
 
@@ -632,7 +1117,582 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Stop the automation engine
+    hass.automation_engine.stop();
+
     info!("Home Assistant stopped");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_load_automations_no_config() {
+        let temp_dir = TempDir::new().unwrap();
+        let automations = load_automations(temp_dir.path());
+        assert!(automations.is_empty());
+    }
+
+    #[test]
+    fn test_load_automations_empty_list() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_content = r#"
+homeassistant:
+  name: Test
+automation: []
+"#;
+        fs::write(temp_dir.path().join("configuration.yaml"), config_content).unwrap();
+        let automations = load_automations(temp_dir.path());
+        assert!(automations.is_empty());
+    }
+
+    #[test]
+    fn test_load_automations_single() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_content = r#"
+homeassistant:
+  name: Test
+automation:
+  - id: test_automation
+    alias: Test Automation
+    trigger:
+      - trigger: state
+        entity_id: sensor.test
+    action:
+      - action: homeassistant.turn_on
+        target:
+          entity_id: light.test
+"#;
+        fs::write(temp_dir.path().join("configuration.yaml"), config_content).unwrap();
+        let automations = load_automations(temp_dir.path());
+        assert_eq!(automations.len(), 1);
+        assert_eq!(automations[0].id, Some("test_automation".to_string()));
+        assert_eq!(automations[0].alias, Some("Test Automation".to_string()));
+        assert!(automations[0].enabled);
+    }
+
+    #[test]
+    fn test_load_automations_multiple() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_content = r#"
+homeassistant:
+  name: Test
+automation:
+  - id: auto1
+    alias: First
+    trigger:
+      - trigger: state
+        entity_id: sensor.a
+    action: []
+  - id: auto2
+    alias: Second
+    enabled: false
+    trigger:
+      - trigger: state
+        entity_id: sensor.b
+    action: []
+"#;
+        fs::write(temp_dir.path().join("configuration.yaml"), config_content).unwrap();
+        let automations = load_automations(temp_dir.path());
+        assert_eq!(automations.len(), 2);
+        assert_eq!(automations[0].id, Some("auto1".to_string()));
+        assert!(automations[0].enabled);
+        assert_eq!(automations[1].id, Some("auto2".to_string()));
+        assert!(!automations[1].enabled);
+    }
+
+    #[test]
+    fn test_load_automations_no_automation_key() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_content = r#"
+homeassistant:
+  name: Test
+script: []
+"#;
+        fs::write(temp_dir.path().join("configuration.yaml"), config_content).unwrap();
+        let automations = load_automations(temp_dir.path());
+        assert!(automations.is_empty());
+    }
+
+    #[test]
+    fn test_home_assistant_new() {
+        let hass = HomeAssistant::new();
+        assert!(!hass.automation_engine.is_running());
+    }
+
+    #[tokio::test]
+    async fn test_automation_engine_start_stop() {
+        let hass = HomeAssistant::new();
+        assert!(!hass.automation_engine.is_running());
+
+        hass.automation_engine.start().await;
+        assert!(hass.automation_engine.is_running());
+
+        hass.automation_engine.stop();
+        // Give the engine time to stop
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        assert!(!hass.automation_engine.is_running());
+    }
+
+    #[tokio::test]
+    async fn test_automation_manager_load() {
+        let hass = HomeAssistant::new();
+
+        let configs = vec![AutomationConfig {
+            id: Some("test_auto".to_string()),
+            alias: Some("Test Automation".to_string()),
+            description: None,
+            triggers: vec![],
+            conditions: vec![],
+            actions: vec![],
+            mode: ha_automation::ExecutionMode::Single,
+            max: None,
+            enabled: true,
+            variables: serde_json::Value::Null,
+            trace: None,
+        }];
+
+        let manager = hass.automation_engine.manager();
+        let manager_guard = manager.write().await;
+        manager_guard.load(configs).unwrap();
+
+        assert_eq!(manager_guard.count(), 1);
+        let automation = manager_guard.get("test_auto").unwrap();
+        assert_eq!(automation.alias, Some("Test Automation".to_string()));
+        assert!(automation.enabled);
+    }
+
+    #[tokio::test]
+    async fn test_automation_enable_disable() {
+        let hass = HomeAssistant::new();
+
+        let configs = vec![AutomationConfig {
+            id: Some("test_auto".to_string()),
+            alias: Some("Test".to_string()),
+            description: None,
+            triggers: vec![],
+            conditions: vec![],
+            actions: vec![],
+            mode: ha_automation::ExecutionMode::Single,
+            max: None,
+            enabled: true,
+            variables: serde_json::Value::Null,
+            trace: None,
+        }];
+
+        let manager = hass.automation_engine.manager();
+        {
+            let manager_guard = manager.write().await;
+            manager_guard.load(configs).unwrap();
+        }
+
+        // Verify initially enabled
+        {
+            let manager_guard = manager.read().await;
+            let automation = manager_guard.get("test_auto").unwrap();
+            assert!(automation.enabled);
+        }
+
+        // Disable
+        {
+            let manager_guard = manager.write().await;
+            manager_guard.disable("test_auto").unwrap();
+        }
+
+        // Verify disabled
+        {
+            let manager_guard = manager.read().await;
+            let automation = manager_guard.get("test_auto").unwrap();
+            assert!(!automation.enabled);
+        }
+
+        // Enable
+        {
+            let manager_guard = manager.write().await;
+            manager_guard.enable("test_auto").unwrap();
+        }
+
+        // Verify enabled
+        {
+            let manager_guard = manager.read().await;
+            let automation = manager_guard.get("test_auto").unwrap();
+            assert!(automation.enabled);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_event_trigger_fires_automation() {
+        use ha_automation::trigger::{EventTrigger, Trigger};
+        use ha_core::Event;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let hass = HomeAssistant::new();
+
+        // Track service calls
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let call_count_clone = call_count.clone();
+
+        // Register a test service
+        hass.services.register(
+            "test",
+            "automation_action",
+            move |_call| {
+                let count = call_count_clone.clone();
+                async move {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    Ok(None)
+                }
+            },
+            None,
+            SupportsResponse::None,
+        );
+
+        // Create automation with event trigger
+        let configs = vec![AutomationConfig {
+            id: Some("event_auto".to_string()),
+            alias: Some("Event Automation".to_string()),
+            description: None,
+            triggers: vec![Trigger::Event(EventTrigger {
+                id: None,
+                event_type: "test_event".to_string(),
+                event_data: None,
+                context: None,
+            })],
+            conditions: vec![],
+            actions: vec![json!({
+                "service": "test.automation_action"
+            })],
+            mode: ha_automation::ExecutionMode::Single,
+            max: None,
+            enabled: true,
+            variables: serde_json::Value::Null,
+            trace: None,
+        }];
+
+        // Load automation
+        {
+            let manager = hass.automation_engine.manager();
+            let manager_guard = manager.write().await;
+            manager_guard.load(configs).unwrap();
+        }
+
+        // Start the engine
+        hass.automation_engine.start().await;
+
+        // Give engine time to start
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Fire the event
+        let event = Event::new("test_event", json!({}), Context::new());
+        hass.bus.fire(event);
+
+        // Give automation time to process
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Verify action was called
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            1,
+            "Action should have been called once"
+        );
+
+        // Fire again
+        let event = Event::new("test_event", json!({}), Context::new());
+        hass.bus.fire(event);
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            2,
+            "Action should have been called twice"
+        );
+
+        // Stop engine
+        hass.automation_engine.stop();
+    }
+
+    #[tokio::test]
+    async fn test_state_trigger_fires_automation() {
+        use ha_automation::trigger::{EntityIdSpec, StateMatch, StateTrigger, Trigger};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let hass = HomeAssistant::new();
+
+        // Track service calls
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let call_count_clone = call_count.clone();
+
+        // Register a test service
+        hass.services.register(
+            "test",
+            "state_action",
+            move |_call| {
+                let count = call_count_clone.clone();
+                async move {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    Ok(None)
+                }
+            },
+            None,
+            SupportsResponse::None,
+        );
+
+        // Set up initial entity state
+        hass.states.set(
+            EntityId::new("sensor", "test").unwrap(),
+            "off",
+            HashMap::new(),
+            Context::new(),
+        );
+
+        // Create automation with state trigger
+        let configs = vec![AutomationConfig {
+            id: Some("state_auto".to_string()),
+            alias: Some("State Automation".to_string()),
+            description: None,
+            triggers: vec![Trigger::State(StateTrigger {
+                id: None,
+                entity_id: EntityIdSpec::Single("sensor.test".to_string()),
+                attribute: None,
+                from: Some(StateMatch::Single("off".to_string())),
+                to: Some(StateMatch::Single("on".to_string())),
+                not_from: vec![],
+                not_to: vec![],
+                r#for: None,
+            })],
+            conditions: vec![],
+            actions: vec![json!({
+                "service": "test.state_action"
+            })],
+            mode: ha_automation::ExecutionMode::Single,
+            max: None,
+            enabled: true,
+            variables: serde_json::Value::Null,
+            trace: None,
+        }];
+
+        // Load automation
+        {
+            let manager = hass.automation_engine.manager();
+            let manager_guard = manager.write().await;
+            manager_guard.load(configs).unwrap();
+        }
+
+        // Start the engine
+        hass.automation_engine.start().await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Change state from off to on - should trigger
+        hass.states.set(
+            EntityId::new("sensor", "test").unwrap(),
+            "on",
+            HashMap::new(),
+            Context::new(),
+        );
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            1,
+            "Action should have been called on state change"
+        );
+
+        // Change state to something else - should not trigger (wrong transition)
+        hass.states.set(
+            EntityId::new("sensor", "test").unwrap(),
+            "unknown",
+            HashMap::new(),
+            Context::new(),
+        );
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            1,
+            "Action should not be called for wrong transition"
+        );
+
+        // Stop engine
+        hass.automation_engine.stop();
+    }
+
+    #[tokio::test]
+    async fn test_disabled_automation_does_not_fire() {
+        use ha_automation::trigger::{EventTrigger, Trigger};
+        use ha_core::Event;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let hass = HomeAssistant::new();
+
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let call_count_clone = call_count.clone();
+
+        hass.services.register(
+            "test",
+            "disabled_action",
+            move |_call| {
+                let count = call_count_clone.clone();
+                async move {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    Ok(None)
+                }
+            },
+            None,
+            SupportsResponse::None,
+        );
+
+        // Create disabled automation
+        let configs = vec![AutomationConfig {
+            id: Some("disabled_auto".to_string()),
+            alias: Some("Disabled Automation".to_string()),
+            description: None,
+            triggers: vec![Trigger::Event(EventTrigger {
+                id: None,
+                event_type: "disabled_test_event".to_string(),
+                event_data: None,
+                context: None,
+            })],
+            conditions: vec![],
+            actions: vec![json!({
+                "service": "test.disabled_action"
+            })],
+            mode: ha_automation::ExecutionMode::Single,
+            max: None,
+            enabled: false, // Disabled!
+            variables: serde_json::Value::Null,
+            trace: None,
+        }];
+
+        {
+            let manager = hass.automation_engine.manager();
+            let manager_guard = manager.write().await;
+            manager_guard.load(configs).unwrap();
+        }
+
+        hass.automation_engine.start().await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Fire the event
+        let event = Event::new("disabled_test_event", json!({}), Context::new());
+        hass.bus.fire(event);
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Should NOT have been called
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            0,
+            "Disabled automation should not fire"
+        );
+
+        hass.automation_engine.stop();
+    }
+
+    #[tokio::test]
+    async fn test_condition_blocks_automation() {
+        use ha_automation::condition::{Condition, StateCondition};
+        use ha_automation::trigger::{EntityIdSpec, EventTrigger, StateMatch, Trigger};
+        use ha_core::Event;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let hass = HomeAssistant::new();
+
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let call_count_clone = call_count.clone();
+
+        hass.services.register(
+            "test",
+            "condition_action",
+            move |_call| {
+                let count = call_count_clone.clone();
+                async move {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    Ok(None)
+                }
+            },
+            None,
+            SupportsResponse::None,
+        );
+
+        // Set up entity for condition check
+        hass.states.set(
+            EntityId::new("input_boolean", "gate").unwrap(),
+            "off", // Condition will check for "on"
+            HashMap::new(),
+            Context::new(),
+        );
+
+        // Create automation with condition that won't pass
+        let configs = vec![AutomationConfig {
+            id: Some("condition_auto".to_string()),
+            alias: Some("Condition Automation".to_string()),
+            description: None,
+            triggers: vec![Trigger::Event(EventTrigger {
+                id: None,
+                event_type: "condition_test_event".to_string(),
+                event_data: None,
+                context: None,
+            })],
+            conditions: vec![Condition::State(StateCondition {
+                entity_id: EntityIdSpec::Single("input_boolean.gate".to_string()),
+                state: StateMatch::Single("on".to_string()),
+                attribute: None,
+                r#for: None,
+                match_regex: false,
+            })],
+            actions: vec![json!({
+                "service": "test.condition_action"
+            })],
+            mode: ha_automation::ExecutionMode::Single,
+            max: None,
+            enabled: true,
+            variables: serde_json::Value::Null,
+            trace: None,
+        }];
+
+        {
+            let manager = hass.automation_engine.manager();
+            let manager_guard = manager.write().await;
+            manager_guard.load(configs).unwrap();
+        }
+
+        hass.automation_engine.start().await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Fire event - trigger matches but condition fails
+        let event = Event::new("condition_test_event", json!({}), Context::new());
+        hass.bus.fire(event);
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            0,
+            "Action should not fire when condition fails"
+        );
+
+        // Now set the gate to on
+        hass.states.set(
+            EntityId::new("input_boolean", "gate").unwrap(),
+            "on",
+            HashMap::new(),
+            Context::new(),
+        );
+
+        // Fire event again - now condition should pass
+        let event = Event::new("condition_test_event", json!({}), Context::new());
+        hass.bus.fire(event);
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            1,
+            "Action should fire when condition passes"
+        );
+
+        hass.automation_engine.stop();
+    }
 }

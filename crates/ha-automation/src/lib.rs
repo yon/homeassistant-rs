@@ -23,11 +23,15 @@
 
 pub mod automation;
 pub mod condition;
+pub mod eval;
 pub mod trigger;
+pub mod trigger_eval;
 
 pub use automation::{
     Automation, AutomationConfig, AutomationError, AutomationManager, AutomationResult,
     ExecutionMode,
 };
 pub use condition::{Condition, ConditionError, ConditionResult};
+pub use eval::{ConditionEvaluator, EvalContext};
 pub use trigger::{Trigger, TriggerData, TriggerError, TriggerResult};
+pub use trigger_eval::{TriggerEvalContext, TriggerEvaluator};
