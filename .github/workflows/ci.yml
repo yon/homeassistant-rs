@@ -133,8 +133,9 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/pip install --upgrade pip
-          .venv/bin/pip install maturin pytest pytest-asyncio orjson ulid-py
-          .venv/bin/pip install freezegun pytest-socket requests-mock respx syrupy bcrypt
+          .venv/bin/pip install maturin
+          # Install HA core test requirements (includes pytest, freezegun, etc.)
+          .venv/bin/pip install -r vendor/ha-core/requirements_test.txt
           .venv/bin/pip install -e vendor/ha-core
 
       - name: Build and install Rust extension
