@@ -373,6 +373,7 @@ impl PyEntityRegistry {
     }
 
     /// Update an entity
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         entity_id,
         *,

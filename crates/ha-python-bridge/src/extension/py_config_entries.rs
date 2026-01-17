@@ -281,6 +281,7 @@ impl PyConfigEntries {
     }
 
     /// Add a new config entry
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (domain, title, *, data=None, options=None, unique_id=None, source=None, version=None, minor_version=None))]
     fn async_add(
         &self,
@@ -339,6 +340,7 @@ impl PyConfigEntries {
     }
 
     /// Update an existing entry
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (entry_id, *, title=None, data=None, options=None, unique_id=None, version=None, minor_version=None))]
     fn async_update_entry(
         &self,

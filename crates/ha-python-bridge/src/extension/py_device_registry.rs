@@ -29,7 +29,7 @@ impl PyDeviceEntry {
     fn identifiers(&self, py: Python<'_>) -> PyResult<Py<PySet>> {
         let set = PySet::empty_bound(py)?;
         for ident in &self.inner.identifiers {
-            let tuple = PyTuple::new_bound(py, &[ident.domain(), ident.id()]);
+            let tuple = PyTuple::new_bound(py, [ident.domain(), ident.id()]);
             set.add(tuple)?;
         }
         Ok(set.unbind())
@@ -39,7 +39,7 @@ impl PyDeviceEntry {
     fn connections(&self, py: Python<'_>) -> PyResult<Py<PySet>> {
         let set = PySet::empty_bound(py)?;
         for conn in &self.inner.connections {
-            let tuple = PyTuple::new_bound(py, &[conn.connection_type(), conn.id()]);
+            let tuple = PyTuple::new_bound(py, [conn.connection_type(), conn.id()]);
             set.add(tuple)?;
         }
         Ok(set.unbind())
@@ -350,6 +350,7 @@ impl PyDeviceRegistry {
     }
 
     /// Update a device
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         device_id,
         *,

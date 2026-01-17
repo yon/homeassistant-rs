@@ -203,6 +203,7 @@ impl PyAreaRegistry {
     }
 
     /// Update an area
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (area_id, *, name=None, aliases=None, floor_id=None, icon=None, picture=None, labels=None))]
     fn async_update(
         &self,
