@@ -192,48 +192,6 @@ class RustState:
         )
 
     @property
-    def name(self) -> str:
-        return self.attributes.get('friendly_name') or self.object_id.replace('_', ' ')
-
-    @property
-    def last_changed_timestamp(self) -> float:
-        if "last_changed_timestamp" not in self._cache:
-            if self.last_changed == self.last_updated:
-                self._cache["last_changed_timestamp"] = self.last_updated_timestamp
-            else:
-                self._cache["last_changed_timestamp"] = self.last_changed.timestamp()
-        return self._cache["last_changed_timestamp"]
-
-    @property
-    def last_reported_timestamp(self) -> float:
-        if "last_reported_timestamp" not in self._cache:
-            self._cache["last_reported_timestamp"] = self.last_reported.timestamp()
-        return self._cache["last_reported_timestamp"]
-
-    @property
-    def json_fragment(self) -> Any:
-        import orjson
-        if "json_fragment" not in self._cache:
-            self._cache["json_fragment"] = orjson.Fragment(orjson.dumps(self.as_dict()))
-        return self._cache["json_fragment"]
-
-    @property
-    def as_dict_json(self) -> bytes:
-        import orjson
-        if "as_dict_json" not in self._cache:
-            d = {
-                "entity_id": self.entity_id,
-                "state": self.state,
-                "attributes": self.attributes,
-                "last_changed": self.last_changed.isoformat(),
-                "last_reported": self.last_reported.isoformat(),
-                "last_updated": self.last_updated.isoformat(),
-                "context": self.context.as_dict(),
-            }
-            self._cache["as_dict_json"] = orjson.dumps(d)
-        return self._cache["as_dict_json"]
-
-    @property
     def as_compressed_state(self) -> dict[str, Any]:
         result = {
             "s": self.state,
@@ -255,8 +213,47 @@ class RustState:
             )
         return self._cache["as_compressed_state_json"]
 
-    def expire(self) -> None:
-        pass
+    @property
+    def as_dict_json(self) -> bytes:
+        import orjson
+        if "as_dict_json" not in self._cache:
+            d = {
+                "entity_id": self.entity_id,
+                "state": self.state,
+                "attributes": self.attributes,
+                "last_changed": self.last_changed.isoformat(),
+                "last_reported": self.last_reported.isoformat(),
+                "last_updated": self.last_updated.isoformat(),
+                "context": self.context.as_dict(),
+            }
+            self._cache["as_dict_json"] = orjson.dumps(d)
+        return self._cache["as_dict_json"]
+
+    @property
+    def json_fragment(self) -> Any:
+        import orjson
+        if "json_fragment" not in self._cache:
+            self._cache["json_fragment"] = orjson.Fragment(orjson.dumps(self.as_dict()))
+        return self._cache["json_fragment"]
+
+    @property
+    def last_changed_timestamp(self) -> float:
+        if "last_changed_timestamp" not in self._cache:
+            if self.last_changed == self.last_updated:
+                self._cache["last_changed_timestamp"] = self.last_updated_timestamp
+            else:
+                self._cache["last_changed_timestamp"] = self.last_changed.timestamp()
+        return self._cache["last_changed_timestamp"]
+
+    @property
+    def last_reported_timestamp(self) -> float:
+        if "last_reported_timestamp" not in self._cache:
+            self._cache["last_reported_timestamp"] = self.last_reported.timestamp()
+        return self._cache["last_reported_timestamp"]
+
+    @property
+    def name(self) -> str:
+        return self.attributes.get('friendly_name') or self.object_id.replace('_', ' ')
 
     def as_dict(self) -> ReadOnlyDict:
         if "as_dict" not in self._cache:
@@ -271,14 +268,8 @@ class RustState:
             })
         return self._cache["as_dict"]
 
-    def __repr__(self) -> str:
-        last_changed_str = self.last_changed.isoformat()
-        if self.last_changed.tzinfo is None:
-            last_changed_str += "+00:00"
-        attrs_str = ""
-        if self.attributes:
-            attrs_str = "; " + ", ".join(f"{k}={v}" for k, v in self.attributes.items())
-        return f"<state {self.entity_id}={self.state}{attrs_str} @ {last_changed_str}>"
+    def expire(self) -> None:
+        pass
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, RustState):
@@ -288,6 +279,15 @@ class RustState:
             and self.state == other.state
             and self.attributes == other.attributes
         )
+
+    def __repr__(self) -> str:
+        last_changed_str = self.last_changed.isoformat()
+        if self.last_changed.tzinfo is None:
+            last_changed_str += "+00:00"
+        attrs_str = ""
+        if self.attributes:
+            attrs_str = "; " + ", ".join(f"{k}={v}" for k, v in self.attributes.items())
+        return f"<state {self.entity_id}={self.state}{attrs_str} @ {last_changed_str}>"
 
 
 # =============================================================================
@@ -325,12 +325,11 @@ class RustContext:
         return self._id
 
     @property
-    def user_id(self) -> str | None:
-        return self._user_id
-
-    @property
-    def parent_id(self) -> str | None:
-        return self._parent_id
+    def json_fragment(self) -> Any:
+        import orjson
+        if "json_fragment" not in self._cache:
+            self._cache["json_fragment"] = orjson.Fragment(orjson.dumps(self.as_dict()))
+        return self._cache["json_fragment"]
 
     @property
     def origin_event(self) -> Any:
@@ -341,11 +340,12 @@ class RustContext:
         self._origin_event = value
 
     @property
-    def json_fragment(self) -> Any:
-        import orjson
-        if "json_fragment" not in self._cache:
-            self._cache["json_fragment"] = orjson.Fragment(orjson.dumps(self.as_dict()))
-        return self._cache["json_fragment"]
+    def parent_id(self) -> str | None:
+        return self._parent_id
+
+    @property
+    def user_id(self) -> str | None:
+        return self._user_id
 
     def as_dict(self) -> ReadOnlyDict:
         return ReadOnlyDict({
@@ -354,13 +354,13 @@ class RustContext:
             "user_id": self._user_id,
         })
 
-    def __repr__(self) -> str:
-        return f"<Context id={self._id}, user_id={self._user_id}>"
-
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, RustContext):
             return False
         return self._id == other._id
+
+    def __repr__(self) -> str:
+        return f"<Context id={self._id}, user_id={self._user_id}>"
 
 
 # =============================================================================
@@ -391,29 +391,6 @@ class RustStateMachine:
             result[entity_id] = RustState.from_rust(rust_state, ctx)
         return result
 
-    def entity_ids(self, domain_filter: str | None = None) -> list[str]:
-        if domain_filter:
-            return self._rust_states.entity_ids(domain_filter)
-        return self._rust_states.all_entity_ids()
-
-    def async_entity_ids(
-        self, domain_filter: str | Iterable[str] | None = None
-    ) -> list[str]:
-        if domain_filter is None:
-            return self._rust_states.all_entity_ids()
-        if isinstance(domain_filter, str):
-            return self._rust_states.entity_ids(domain_filter)
-        # Multiple domains
-        result = []
-        for domain in domain_filter:
-            result.extend(self._rust_states.entity_ids(domain))
-        return result
-
-    def async_entity_ids_count(
-        self, domain_filter: str | Iterable[str] | None = None
-    ) -> int:
-        return len(self.async_entity_ids(domain_filter))
-
     def all(self, domain_filter: str | Iterable[str] | None = None) -> list[RustState]:
         if domain_filter is None:
             rust_states = self._rust_states.all()
@@ -434,23 +411,30 @@ class RustStateMachine:
     ) -> list[RustState]:
         return self.all(domain_filter)
 
-    def get(self, entity_id: str) -> RustState | None:
+    def async_available(self, entity_id: str) -> bool:
         entity_id = entity_id.lower()
-        rust_state = self._rust_states.get(entity_id)
-        if rust_state is None:
-            return None
-        return RustState.from_rust(rust_state, self._contexts.get(entity_id))
+        return (
+            self._rust_states.get(entity_id) is None
+            and entity_id not in self._reservations
+        )
 
-    def is_state(self, entity_id: str, state: str) -> bool:
-        return self._rust_states.is_state(entity_id.lower(), state)
+    def async_entity_ids(
+        self, domain_filter: str | Iterable[str] | None = None
+    ) -> list[str]:
+        if domain_filter is None:
+            return self._rust_states.all_entity_ids()
+        if isinstance(domain_filter, str):
+            return self._rust_states.entity_ids(domain_filter)
+        # Multiple domains
+        result = []
+        for domain in domain_filter:
+            result.extend(self._rust_states.entity_ids(domain))
+        return result
 
-    def remove(self, entity_id: str) -> bool:
-        entity_id = entity_id.lower()
-        result = self._rust_states.remove(entity_id)
-        if result is not None:
-            self._contexts.pop(entity_id, None)
-            return True
-        return False
+    def async_entity_ids_count(
+        self, domain_filter: str | Iterable[str] | None = None
+    ) -> int:
+        return len(self.async_entity_ids(domain_filter))
 
     def async_remove(self, entity_id: str, context: RustContext | None = None) -> bool:
         entity_id = entity_id.lower()
@@ -469,25 +453,8 @@ class RustStateMachine:
         )
         return True
 
-    def set(
-        self,
-        entity_id: str,
-        new_state: str,
-        attributes: dict[str, Any] | None = None,
-        force_update: bool = False,
-        context: RustContext | None = None,
-    ) -> None:
-        self.async_set(entity_id, new_state, attributes, force_update, context)
-
     def async_reserve(self, entity_id: str) -> None:
         self._reservations.add(entity_id.lower())
-
-    def async_available(self, entity_id: str) -> bool:
-        entity_id = entity_id.lower()
-        return (
-            self._rust_states.get(entity_id) is None
-            and entity_id not in self._reservations
-        )
 
     def async_set(
         self,
@@ -581,6 +548,39 @@ class RustStateMachine:
             context=context,
         )
 
+    def entity_ids(self, domain_filter: str | None = None) -> list[str]:
+        if domain_filter:
+            return self._rust_states.entity_ids(domain_filter)
+        return self._rust_states.all_entity_ids()
+
+    def get(self, entity_id: str) -> RustState | None:
+        entity_id = entity_id.lower()
+        rust_state = self._rust_states.get(entity_id)
+        if rust_state is None:
+            return None
+        return RustState.from_rust(rust_state, self._contexts.get(entity_id))
+
+    def is_state(self, entity_id: str, state: str) -> bool:
+        return self._rust_states.is_state(entity_id.lower(), state)
+
+    def remove(self, entity_id: str) -> bool:
+        entity_id = entity_id.lower()
+        result = self._rust_states.remove(entity_id)
+        if result is not None:
+            self._contexts.pop(entity_id, None)
+            return True
+        return False
+
+    def set(
+        self,
+        entity_id: str,
+        new_state: str,
+        attributes: dict[str, Any] | None = None,
+        force_update: bool = False,
+        context: RustContext | None = None,
+    ) -> None:
+        self.async_set(entity_id, new_state, attributes, force_update, context)
+
 
 # =============================================================================
 # Rust-backed EventBus wrapper
@@ -599,25 +599,9 @@ class RustEventBus:
         self._listeners: dict[str, list[tuple[Callable, Callable | None]]] = {}
         self._loop = asyncio.get_event_loop()
 
-    def async_listeners(self) -> dict[str, int]:
-        return {event_type: len(listeners) for event_type, listeners in self._listeners.items()}
-
-    def listeners(self) -> dict[str, int]:
-        return self.async_listeners()
-
     @property
     def _debug(self) -> bool:
         return False
-
-    def fire(
-        self,
-        event_type: str,
-        event_data: dict[str, Any] | None = None,
-        origin: EventOrigin = EventOrigin.local,
-        context: RustContext | None = None,
-        time_fired: float | None = None,
-    ) -> None:
-        self.async_fire(event_type, event_data, origin, context, time_fired)
 
     def async_fire(
         self,
@@ -680,13 +664,6 @@ class RustEventBus:
             except Exception as e:
                 print(f"Error in event listener: {e}")
 
-    def listen(
-        self,
-        event_type: str,
-        listener: Callable,
-    ) -> Callable[[], None]:
-        return self.async_listen(event_type, listener)
-
     def async_listen(
         self,
         event_type: str,
@@ -708,13 +685,6 @@ class RustEventBus:
 
         return remove_listener
 
-    def listen_once(
-        self,
-        event_type: str,
-        listener: Callable,
-    ) -> Callable[[], None]:
-        return self.async_listen_once(event_type, listener)
-
     def async_listen_once(
         self,
         event_type: str,
@@ -734,6 +704,36 @@ class RustEventBus:
 
         remove_listener = self.async_listen(event_type, one_time_listener, run_immediately)
         return remove_listener
+
+    def async_listeners(self) -> dict[str, int]:
+        return {event_type: len(listeners) for event_type, listeners in self._listeners.items()}
+
+    def fire(
+        self,
+        event_type: str,
+        event_data: dict[str, Any] | None = None,
+        origin: EventOrigin = EventOrigin.local,
+        context: RustContext | None = None,
+        time_fired: float | None = None,
+    ) -> None:
+        self.async_fire(event_type, event_data, origin, context, time_fired)
+
+    def listen(
+        self,
+        event_type: str,
+        listener: Callable,
+    ) -> Callable[[], None]:
+        return self.async_listen(event_type, listener)
+
+    def listen_once(
+        self,
+        event_type: str,
+        listener: Callable,
+    ) -> Callable[[], None]:
+        return self.async_listen_once(event_type, listener)
+
+    def listeners(self) -> dict[str, int]:
+        return self.async_listeners()
 
 
 # =============================================================================
@@ -771,17 +771,6 @@ class RustEvent:
             context.origin_event = self
 
     @property
-    def time_fired(self) -> datetime:
-        if "time_fired" not in self._cache:
-            if dt_util is not None:
-                self._cache["time_fired"] = dt_util.utc_from_timestamp(self.time_fired_timestamp)
-            else:
-                self._cache["time_fired"] = datetime.fromtimestamp(
-                    self.time_fired_timestamp, tz=timezone.utc
-                )
-        return self._cache["time_fired"]
-
-    @property
     def _as_dict(self) -> dict[str, Any]:
         if "_as_dict" not in self._cache:
             self._cache["_as_dict"] = {
@@ -793,6 +782,24 @@ class RustEvent:
             }
         return self._cache["_as_dict"]
 
+    @property
+    def json_fragment(self) -> Any:
+        import orjson
+        if "json_fragment" not in self._cache:
+            self._cache["json_fragment"] = orjson.Fragment(orjson.dumps(self._as_dict))
+        return self._cache["json_fragment"]
+
+    @property
+    def time_fired(self) -> datetime:
+        if "time_fired" not in self._cache:
+            if dt_util is not None:
+                self._cache["time_fired"] = dt_util.utc_from_timestamp(self.time_fired_timestamp)
+            else:
+                self._cache["time_fired"] = datetime.fromtimestamp(
+                    self.time_fired_timestamp, tz=timezone.utc
+                )
+        return self._cache["time_fired"]
+
     def as_dict(self) -> ReadOnlyDict:
         if "_as_read_only_dict" not in self._cache:
             as_dict = self._as_dict
@@ -802,20 +809,6 @@ class RustEvent:
                 as_dict["context"] = ReadOnlyDict(as_dict["context"])
             self._cache["_as_read_only_dict"] = ReadOnlyDict(as_dict)
         return self._cache["_as_read_only_dict"]
-
-    @property
-    def json_fragment(self) -> Any:
-        import orjson
-        if "json_fragment" not in self._cache:
-            self._cache["json_fragment"] = orjson.Fragment(orjson.dumps(self._as_dict))
-        return self._cache["json_fragment"]
-
-    def __repr__(self) -> str:
-        origin_char = "L" if self.origin == EventOrigin.local else "R"
-        if self.data:
-            data_str = ", ".join(f"{k}={v}" for k, v in self.data.items())
-            return f"<Event {self.event_type}[{origin_char}]: {data_str}>"
-        return f"<Event {self.event_type}[{origin_char}]>"
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, RustEvent):
@@ -827,6 +820,13 @@ class RustEvent:
             and self.time_fired_timestamp == other.time_fired_timestamp
             and self.context == other.context
         )
+
+    def __repr__(self) -> str:
+        origin_char = "L" if self.origin == EventOrigin.local else "R"
+        if self.data:
+            data_str = ", ".join(f"{k}={v}" for k, v in self.data.items())
+            return f"<Event {self.event_type}[{origin_char}]: {data_str}>"
+        return f"<Event {self.event_type}[{origin_char}]>"
 
 
 # =============================================================================
@@ -854,12 +854,6 @@ class RustServiceCall:
         self.context = context or RustContext()
         self.return_response = return_response
 
-    def __repr__(self) -> str:
-        if self.data:
-            data_str = ", ".join(f"{k}={v}" for k, v in self.data.items())
-            return f"<ServiceCall {self.domain}.{self.service} (c:{self.context.id}): {data_str}>"
-        return f"<ServiceCall {self.domain}.{self.service} (c:{self.context.id})>"
-
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, RustServiceCall):
             return False
@@ -868,6 +862,12 @@ class RustServiceCall:
             and self.service == other.service
             and self.data == other.data
         )
+
+    def __repr__(self) -> str:
+        if self.data:
+            data_str = ", ".join(f"{k}={v}" for k, v in self.data.items())
+            return f"<ServiceCall {self.domain}.{self.service} (c:{self.context.id}): {data_str}>"
+        return f"<ServiceCall {self.domain}.{self.service} (c:{self.context.id})>"
 
 
 # =============================================================================
@@ -1100,6 +1100,9 @@ class RustEntityRegistry:
         )
         return RustEntityEntry(entry)
 
+    def async_remove(self, entity_id: str) -> None:
+        self._rust_registry.async_remove(entity_id)
+
     def async_update_entity(
         self,
         entity_id: str,
@@ -1107,9 +1110,6 @@ class RustEntityRegistry:
     ) -> RustEntityEntry:
         entry = self._rust_registry.async_update_entity(entity_id, **kwargs)
         return RustEntityEntry(entry)
-
-    def async_remove(self, entity_id: str) -> None:
-        self._rust_registry.async_remove(entity_id)
 
     @property
     def entities(self) -> dict[str, RustEntityEntry]:
@@ -1245,6 +1245,22 @@ class RustDeviceRegistry:
     async def async_save(self) -> None:
         self._rust_registry.async_save()
 
+    def async_entries_for_area(self, area_id: str) -> list[RustDeviceEntry]:
+        return [
+            RustDeviceEntry(entry)
+            for entry in self._rust_registry.async_entries_for_area(area_id)
+        ]
+
+    def async_entries_for_config_entry(
+        self, config_entry_id: str
+    ) -> list[RustDeviceEntry]:
+        return [
+            RustDeviceEntry(entry)
+            for entry in self._rust_registry.async_entries_for_config_entry(
+                config_entry_id
+            )
+        ]
+
     def async_get(self, device_id: str) -> RustDeviceEntry | None:
         entry = self._rust_registry.async_get(device_id)
         return RustDeviceEntry(entry) if entry else None
@@ -1296,6 +1312,9 @@ class RustDeviceRegistry:
         )
         return RustDeviceEntry(entry)
 
+    def async_remove_device(self, device_id: str) -> None:
+        self._rust_registry.async_remove_device(device_id)
+
     def async_update_device(
         self,
         device_id: str,
@@ -1303,25 +1322,6 @@ class RustDeviceRegistry:
     ) -> RustDeviceEntry:
         entry = self._rust_registry.async_update_device(device_id, **kwargs)
         return RustDeviceEntry(entry)
-
-    def async_remove_device(self, device_id: str) -> None:
-        self._rust_registry.async_remove_device(device_id)
-
-    def async_entries_for_area(self, area_id: str) -> list[RustDeviceEntry]:
-        return [
-            RustDeviceEntry(entry)
-            for entry in self._rust_registry.async_entries_for_area(area_id)
-        ]
-
-    def async_entries_for_config_entry(
-        self, config_entry_id: str
-    ) -> list[RustDeviceEntry]:
-        return [
-            RustDeviceEntry(entry)
-            for entry in self._rust_registry.async_entries_for_config_entry(
-                config_entry_id
-            )
-        ]
 
     @property
     def devices(self) -> dict[str, RustDeviceEntry]:
@@ -1413,14 +1413,6 @@ class RustAreaRegistry:
     async def async_save(self) -> None:
         self._rust_registry.async_save()
 
-    def async_get(self, area_id: str) -> RustAreaEntry | None:
-        entry = self._rust_registry.async_get(area_id)
-        return RustAreaEntry(entry) if entry else None
-
-    def async_get_area_by_name(self, name: str) -> RustAreaEntry | None:
-        entry = self._rust_registry.async_get_area_by_name(name)
-        return RustAreaEntry(entry) if entry else None
-
     def async_create(
         self,
         name: str,
@@ -1441,6 +1433,17 @@ class RustAreaRegistry:
         )
         return RustAreaEntry(entry)
 
+    def async_delete(self, area_id: str) -> None:
+        self._rust_registry.async_delete(area_id)
+
+    def async_get(self, area_id: str) -> RustAreaEntry | None:
+        entry = self._rust_registry.async_get(area_id)
+        return RustAreaEntry(entry) if entry else None
+
+    def async_get_area_by_name(self, name: str) -> RustAreaEntry | None:
+        entry = self._rust_registry.async_get_area_by_name(name)
+        return RustAreaEntry(entry) if entry else None
+
     def async_update(
         self,
         area_id: str,
@@ -1448,9 +1451,6 @@ class RustAreaRegistry:
     ) -> RustAreaEntry:
         entry = self._rust_registry.async_update(area_id, **kwargs)
         return RustAreaEntry(entry)
-
-    def async_delete(self, area_id: str) -> None:
-        self._rust_registry.async_delete(area_id)
 
     @property
     def areas(self) -> dict[str, RustAreaEntry]:
@@ -1534,14 +1534,6 @@ class RustFloorRegistry:
     async def async_save(self) -> None:
         self._rust_registry.async_save()
 
-    def async_get(self, floor_id: str) -> RustFloorEntry | None:
-        entry = self._rust_registry.async_get(floor_id)
-        return RustFloorEntry(entry) if entry else None
-
-    def async_get_floor_by_name(self, name: str) -> RustFloorEntry | None:
-        entry = self._rust_registry.async_get_floor_by_name(name)
-        return RustFloorEntry(entry) if entry else None
-
     def async_create(
         self,
         name: str,
@@ -1558,6 +1550,17 @@ class RustFloorRegistry:
         )
         return RustFloorEntry(entry)
 
+    def async_delete(self, floor_id: str) -> None:
+        self._rust_registry.async_delete(floor_id)
+
+    def async_get(self, floor_id: str) -> RustFloorEntry | None:
+        entry = self._rust_registry.async_get(floor_id)
+        return RustFloorEntry(entry) if entry else None
+
+    def async_get_floor_by_name(self, name: str) -> RustFloorEntry | None:
+        entry = self._rust_registry.async_get_floor_by_name(name)
+        return RustFloorEntry(entry) if entry else None
+
     def async_update(
         self,
         floor_id: str,
@@ -1565,9 +1568,6 @@ class RustFloorRegistry:
     ) -> RustFloorEntry:
         entry = self._rust_registry.async_update(floor_id, **kwargs)
         return RustFloorEntry(entry)
-
-    def async_delete(self, floor_id: str) -> None:
-        self._rust_registry.async_delete(floor_id)
 
     def sorted_by_level(self) -> list[RustFloorEntry]:
         return [
@@ -1657,14 +1657,6 @@ class RustLabelRegistry:
     async def async_save(self) -> None:
         self._rust_registry.async_save()
 
-    def async_get(self, label_id: str) -> RustLabelEntry | None:
-        entry = self._rust_registry.async_get(label_id)
-        return RustLabelEntry(entry) if entry else None
-
-    def async_get_label_by_name(self, name: str) -> RustLabelEntry | None:
-        entry = self._rust_registry.async_get_label_by_name(name)
-        return RustLabelEntry(entry) if entry else None
-
     def async_create(
         self,
         name: str,
@@ -1681,6 +1673,17 @@ class RustLabelRegistry:
         )
         return RustLabelEntry(entry)
 
+    def async_delete(self, label_id: str) -> None:
+        self._rust_registry.async_delete(label_id)
+
+    def async_get(self, label_id: str) -> RustLabelEntry | None:
+        entry = self._rust_registry.async_get(label_id)
+        return RustLabelEntry(entry) if entry else None
+
+    def async_get_label_by_name(self, name: str) -> RustLabelEntry | None:
+        entry = self._rust_registry.async_get_label_by_name(name)
+        return RustLabelEntry(entry) if entry else None
+
     def async_update(
         self,
         label_id: str,
@@ -1688,9 +1691,6 @@ class RustLabelRegistry:
     ) -> RustLabelEntry:
         entry = self._rust_registry.async_update(label_id, **kwargs)
         return RustLabelEntry(entry)
-
-    def async_delete(self, label_id: str) -> None:
-        self._rust_registry.async_delete(label_id)
 
     @property
     def labels(self) -> dict[str, RustLabelEntry]:
@@ -1758,12 +1758,6 @@ class RustTemplateEngine:
         else:
             self._rust_engine = ha_core_rs.TemplateEngine(state_machine)
 
-    def render(self, template: str) -> str:
-        return self._rust_engine.render(template)
-
-    def render_with_context(self, template: str, context: dict) -> str:
-        return self._rust_engine.render_with_context(template, context)
-
     def evaluate(self, template: str) -> Any:
         return self._rust_engine.evaluate(template)
 
@@ -1773,6 +1767,12 @@ class RustTemplateEngine:
     @staticmethod
     def is_template(template: str) -> bool:
         return ha_core_rs.TemplateEngine.is_template(template)
+
+    def render(self, template: str) -> str:
+        return self._rust_engine.render(template)
+
+    def render_with_context(self, template: str, context: dict) -> str:
+        return self._rust_engine.render_with_context(template, context)
 
 
 # =============================================================================
@@ -1887,28 +1887,6 @@ class RustConfigEntries:
     async def async_save(self) -> None:
         self._rust_entries.async_save()
 
-    def async_get_entry(self, entry_id: str) -> RustConfigEntry | None:
-        entry = self._rust_entries.async_get_entry(entry_id)
-        return RustConfigEntry(entry) if entry else None
-
-    def async_entries(self, domain: str | None = None) -> list[RustConfigEntry]:
-        return [
-            RustConfigEntry(entry)
-            for entry in self._rust_entries.async_entries(domain)
-        ]
-
-    def async_loaded_entries(self, domain: str) -> list[RustConfigEntry]:
-        return [
-            RustConfigEntry(entry)
-            for entry in self._rust_entries.async_loaded_entries(domain)
-        ]
-
-    def async_get_entry_by_unique_id(
-        self, domain: str, unique_id: str
-    ) -> RustConfigEntry | None:
-        entry = self._rust_entries.async_get_entry_by_unique_id(domain, unique_id)
-        return RustConfigEntry(entry) if entry else None
-
     async def async_add(
         self,
         domain: str,
@@ -1933,13 +1911,30 @@ class RustConfigEntries:
         )
         return RustConfigEntry(entry)
 
-    async def async_update_entry(
-        self,
-        entry_id: str,
-        **kwargs,
-    ) -> RustConfigEntry:
-        entry = self._rust_entries.async_update_entry(entry_id, **kwargs)
-        return RustConfigEntry(entry)
+    def async_entries(self, domain: str | None = None) -> list[RustConfigEntry]:
+        return [
+            RustConfigEntry(entry)
+            for entry in self._rust_entries.async_entries(domain)
+        ]
+
+    def async_get_entry(self, entry_id: str) -> RustConfigEntry | None:
+        entry = self._rust_entries.async_get_entry(entry_id)
+        return RustConfigEntry(entry) if entry else None
+
+    def async_get_entry_by_unique_id(
+        self, domain: str, unique_id: str
+    ) -> RustConfigEntry | None:
+        entry = self._rust_entries.async_get_entry_by_unique_id(domain, unique_id)
+        return RustConfigEntry(entry) if entry else None
+
+    def async_loaded_entries(self, domain: str) -> list[RustConfigEntry]:
+        return [
+            RustConfigEntry(entry)
+            for entry in self._rust_entries.async_loaded_entries(domain)
+        ]
+
+    async def async_reload(self, entry_id: str) -> None:
+        self._rust_entries.async_reload(entry_id)
 
     async def async_remove(self, entry_id: str) -> RustConfigEntry:
         entry = self._rust_entries.async_remove(entry_id)
@@ -1951,14 +1946,19 @@ class RustConfigEntries:
     async def async_unload(self, entry_id: str) -> None:
         self._rust_entries.async_unload(entry_id)
 
-    async def async_reload(self, entry_id: str) -> None:
-        self._rust_entries.async_reload(entry_id)
-
-    def entry_ids(self) -> list[str]:
-        return self._rust_entries.entry_ids()
+    async def async_update_entry(
+        self,
+        entry_id: str,
+        **kwargs,
+    ) -> RustConfigEntry:
+        entry = self._rust_entries.async_update_entry(entry_id, **kwargs)
+        return RustConfigEntry(entry)
 
     def domains(self) -> list[str]:
         return self._rust_entries.domains()
+
+    def entry_ids(self) -> list[str]:
+        return self._rust_entries.entry_ids()
 
     def __len__(self) -> int:
         return len(self._rust_entries)
@@ -2044,43 +2044,43 @@ class RustAutomationManager:
             raise RuntimeError("ha_core_rs not available")
         self._rust_manager = ha_core_rs.AutomationManager()
 
-    async def async_load(self, configs: list) -> None:
-        self._rust_manager.async_load(configs)
-
-    async def async_reload(self, configs: list) -> None:
-        self._rust_manager.async_reload(configs)
-
-    def async_get(self, automation_id: str) -> RustAutomation | None:
-        automation = self._rust_manager.async_get(automation_id)
-        return RustAutomation(automation) if automation else None
-
     def async_all(self) -> list[RustAutomation]:
         return [
             RustAutomation(automation)
             for automation in self._rust_manager.async_all()
         ]
 
-    async def async_enable(self, automation_id: str) -> None:
-        self._rust_manager.async_enable(automation_id)
-
     async def async_disable(self, automation_id: str) -> None:
         self._rust_manager.async_disable(automation_id)
 
-    async def async_toggle(self, automation_id: str) -> bool:
-        return self._rust_manager.async_toggle(automation_id)
+    async def async_enable(self, automation_id: str) -> None:
+        self._rust_manager.async_enable(automation_id)
+
+    def async_get(self, automation_id: str) -> RustAutomation | None:
+        automation = self._rust_manager.async_get(automation_id)
+        return RustAutomation(automation) if automation else None
+
+    async def async_load(self, configs: list) -> None:
+        self._rust_manager.async_load(configs)
+
+    async def async_reload(self, configs: list) -> None:
+        self._rust_manager.async_reload(configs)
 
     async def async_remove(self, automation_id: str) -> RustAutomation:
         automation = self._rust_manager.async_remove(automation_id)
         return RustAutomation(automation)
 
-    def mark_triggered(self, automation_id: str) -> None:
-        self._rust_manager.mark_triggered(automation_id)
+    async def async_toggle(self, automation_id: str) -> bool:
+        return self._rust_manager.async_toggle(automation_id)
+
+    def decrement_runs(self, automation_id: str) -> None:
+        self._rust_manager.decrement_runs(automation_id)
 
     def increment_runs(self, automation_id: str) -> None:
         self._rust_manager.increment_runs(automation_id)
 
-    def decrement_runs(self, automation_id: str) -> None:
-        self._rust_manager.decrement_runs(automation_id)
+    def mark_triggered(self, automation_id: str) -> None:
+        self._rust_manager.mark_triggered(automation_id)
 
     def __len__(self) -> int:
         return len(self._rust_manager)
