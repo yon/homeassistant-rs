@@ -4,7 +4,7 @@
 //! and multiple indexes for fast lookups.
 
 use crate::entity_registry::DisabledBy;
-use crate::storage::{Storage, StorageFile, StorageResult, Storable};
+use crate::storage::{Storable, Storage, StorageFile, StorageResult};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
@@ -211,11 +211,7 @@ impl DeviceEntry {
     }
 
     /// Add a connection
-    pub fn with_connection(
-        mut self,
-        conn_type: impl Into<String>,
-        id: impl Into<String>,
-    ) -> Self {
+    pub fn with_connection(mut self, conn_type: impl Into<String>, id: impl Into<String>) -> Self {
         self.connections.push(DeviceConnection::new(conn_type, id));
         self
     }
@@ -629,7 +625,8 @@ mod tests {
         let identifiers = vec![DeviceIdentifier::new("hue", "bridge123")];
         let connections = vec![DeviceConnection::new("mac", "AA:BB:CC:DD:EE:FF")];
 
-        let entry = registry.get_or_create(&identifiers, &connections, Some("config1"), "Hue Bridge");
+        let entry =
+            registry.get_or_create(&identifiers, &connections, Some("config1"), "Hue Bridge");
 
         assert_eq!(entry.name, "Hue Bridge");
         assert_eq!(entry.identifiers.len(), 1);
