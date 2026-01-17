@@ -3,13 +3,15 @@
 //! Tracks all registered entities with unique_id tracking, device linking,
 //! and multiple indexes for fast lookups.
 
-use crate::storage::{Storable, Storage, StorageFile, StorageResult};
+use std::collections::HashSet;
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
-use std::sync::Arc;
 use tracing::{debug, info};
+
+use crate::storage::{Storable, Storage, StorageFile, StorageResult};
 
 /// Storage key for entity registry
 pub const STORAGE_KEY: &str = "core.entity_registry";

@@ -3,14 +3,16 @@
 //! Tracks all registered devices with identifiers, connections,
 //! and multiple indexes for fast lookups.
 
-use crate::entity_registry::DisabledBy;
-use crate::storage::{Storable, Storage, StorageFile, StorageResult};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use tracing::{debug, info};
+
+use crate::entity_registry::DisabledBy;
+use crate::storage::{Storable, Storage, StorageFile, StorageResult};
 
 /// Storage key for device registry
 pub const STORAGE_KEY: &str = "core.device_registry";

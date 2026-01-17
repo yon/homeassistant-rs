@@ -2,12 +2,14 @@
 //!
 //! Tracks all registered labels for organizing entities and devices.
 
-use crate::storage::{Storable, Storage, StorageFile, StorageResult};
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tracing::{debug, info};
+
+use crate::storage::{Storable, Storage, StorageFile, StorageResult};
 
 /// Storage key for label registry
 pub const STORAGE_KEY: &str = "core.label_registry";

@@ -7,13 +7,13 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-ha-core = { workspace = true }
-tokio = { workspace = true }
 dashmap = { workspace = true }
-serde_json = { workspace = true }
+ha-core = { workspace = true }
 jsonschema = { workspace = true }
-tracing = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }

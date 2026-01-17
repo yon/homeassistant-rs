@@ -12,8 +12,8 @@ publish = false
 reqwest = { workspace = true }
 
 # WebSocket client
-tokio-tungstenite = "0.24"
 futures-util = "0.3"
+tokio-tungstenite = "0.24"
 
 # Async
 tokio = { workspace = true, features = ["time"] }

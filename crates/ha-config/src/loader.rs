@@ -414,7 +414,9 @@ pub fn load_yaml_string(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::io::Write;
+
     use tempfile::TempDir;
 
     fn write_file(dir: &Path, name: &str, content: &str) {

@@ -1,14 +1,16 @@
 //! Python wrapper for EventBus
 
-use super::py_types::{py_to_json, PyContext, PyEvent};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use ha_core::Event;
 use ha_event_bus::EventBus;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::{debug, error};
+
+use super::py_types::{py_to_json, PyContext, PyEvent};
 
 /// Python wrapper for EventBus
 #[pyclass(name = "EventBus")]

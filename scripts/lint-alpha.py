@@ -82,6 +82,24 @@ def check_rust_match_arms(content: str, filepath: str) -> list[LintError]:
             # Check if arms are sorted (case-insensitive)
             if len(arms) > 1:
                 arm_names = [a[0] for a in arms]
+
+                # Skip idiomatic Rust patterns (Ok/Err, Some/None, Poll::Ready/Pending)
+                # Also skip if match contains these (nested matches)
+                base_names = {n.split("::")[-1] for n in arm_names}
+                if base_names in ({"Ok", "Err"}, {"Some", "None"}, {"Ready", "Pending"}):
+                    continue
+                # Skip if match contains Ok/Err or Some/None (might be nested)
+                if {"Ok", "Err"}.issubset(base_names) or {"Some", "None"}.issubset(base_names):
+                    continue
+
+                # Skip serde_json::Value and serde_yaml::Value (follow enum definition order)
+                if any("::Value::" in n or n.startswith("Value::") for n in arm_names):
+                    continue
+
+                # Skip ValueKind matches (minijinja internal)
+                if any("ValueKind::" in n for n in arm_names):
+                    continue
+
                 sorted_names = sorted(arm_names, key=str.lower)
                 if arm_names != sorted_names:
                     # Find first out-of-order arm
@@ -164,8 +182,13 @@ def check_rust_use_statements(content: str, filepath: str) -> list[LintError]:
     # Check each group is sorted
     for group in use_groups:
         if len(group) > 1:
-            # Sort by the full use path
             paths = [u[0] for u in group]
+
+            # Skip groups starting with super::* (idiomatic in test modules)
+            if paths[0].startswith("super::"):
+                continue
+
+            # Sort by the full use path
             sorted_paths = sorted(paths)
             if paths != sorted_paths:
                 for j, (path, line_num, _) in enumerate(group):
@@ -192,6 +215,10 @@ def check_python_class_members(content: str, filepath: str) -> list[LintError]:
         class_match = re.match(r"^class\s+(\w+)", line)
         if class_match:
             class_name = class_match.group(1)
+            # Skip test classes (test methods shouldn't be alphabetized)
+            if class_name.startswith("Test"):
+                i += 1
+                continue
             class_indent = len(line) - len(line.lstrip())
             i += 1
 
@@ -220,15 +247,29 @@ def check_python_class_members(content: str, filepath: str) -> list[LintError]:
                     i += 1
                     continue
 
-                # Check for method definition
-                def_match = re.match(r"\s+def\s+(\w+)\s*\(", member_line)
+                # Skip @xxx.setter decorators (property setters)
+                if re.match(r"\s+@\w+\.setter\s*$", member_line):
+                    i += 2  # Skip decorator and method def
+                    continue
+
+                # Skip @classmethod decorators
+                if re.match(r"\s+@classmethod\s*$", member_line):
+                    i += 2  # Skip decorator and method def
+                    continue
+
+                # Check for method definition (must be at method indentation level, not nested)
+                method_indent = class_indent + 4
+                def_match = re.match(r"(\s*)def\s+(\w+)\s*\(", member_line)
                 if def_match:
-                    method_name = def_match.group(1)
-                    if method_name.startswith("__") and method_name.endswith("__"):
-                        if method_name != "__init__":
-                            dunders.append((method_name, i + 1))
-                    elif not method_name.startswith("_"):
-                        methods.append((method_name, i + 1))
+                    actual_indent = len(def_match.group(1))
+                    # Only consider methods at the correct indentation level
+                    if actual_indent == method_indent:
+                        method_name = def_match.group(2)
+                        if method_name.startswith("__") and method_name.endswith("__"):
+                            if method_name != "__init__":
+                                dunders.append((method_name, i + 1))
+                        elif not method_name.startswith("_"):
+                            methods.append((method_name, i + 1))
 
                 i += 1
 
@@ -326,8 +367,25 @@ def check_cargo_toml_deps(content: str, filepath: str) -> list[LintError]:
             in_deps_section = False
             continue
 
-        # Collect dependencies
+        # Collect dependencies (comments start new groups)
         if in_deps_section:
+            # Comment lines act as group separators
+            if line.strip().startswith("#"):
+                if len(deps) > 1:
+                    names = [d[0] for d in deps]
+                    sorted_names = sorted(names)
+                    if names != sorted_names:
+                        for j, (name, line_num) in enumerate(deps):
+                            if name != sorted_names[j]:
+                                errors.append(LintError(
+                                    filepath,
+                                    line_num,
+                                    f"Dependency '{name}' not alphabetized (expected '{sorted_names[j]}')"
+                                ))
+                                break
+                deps = []
+                continue
+
             dep_match = re.match(r"([a-zA-Z_][a-zA-Z0-9_-]*)\s*=", line)
             if dep_match:
                 deps.append((dep_match.group(1), i + 1))
@@ -391,10 +449,11 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    # Filter to relevant file types
+    # Filter to relevant file types and exclude vendor/
     files = [
         f for f in files
-        if f.endswith(".rs") or f.endswith(".py") or f.endswith("Cargo.toml")
+        if (f.endswith(".rs") or f.endswith(".py") or f.endswith("Cargo.toml"))
+        and not f.startswith("vendor/")
     ]
 
     all_errors = []

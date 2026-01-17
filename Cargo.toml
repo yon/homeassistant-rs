@@ -1,20 +1,20 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/ha-core",
-    "crates/ha-event-bus",
-    "crates/ha-state-machine",
-    "crates/ha-service-registry",
+    "crates/ha-api",
+    "crates/ha-automation",
     "crates/ha-config",
     "crates/ha-config-entries",
-    "crates/ha-registries",
-    "crates/ha-template",
-    "crates/ha-automation",
-    "crates/ha-script",
+    "crates/ha-core",
+    "crates/ha-event-bus",
     "crates/ha-python-bridge",
-    "crates/ha-api",
     "crates/ha-recorder",
+    "crates/ha-registries",
+    "crates/ha-script",
     "crates/ha-server",
+    "crates/ha-service-registry",
+    "crates/ha-state-machine",
+    "crates/ha-template",
     "crates/ha-test-comparison",
 ]
 
@@ -57,8 +57,8 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 dashmap = "6.0"
 
 # IDs and time
-ulid = "1.1"
 chrono = { version = "0.4", features = ["serde"] }
+ulid = "1.1"
 
 # Schema validation
 jsonschema = "0.18"
@@ -68,25 +68,25 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Error handling
-thiserror = "1.0"
 anyhow = "1.0"
+thiserror = "1.0"
 
 # Testing
-tokio-test = "0.4"
 reqwest = { version = "0.12", features = ["json"] }
+tokio-test = "0.4"
 
 # Workspace crates
-ha-core = { path = "crates/ha-core" }
-ha-event-bus = { path = "crates/ha-event-bus" }
-ha-state-machine = { path = "crates/ha-state-machine" }
-ha-service-registry = { path = "crates/ha-service-registry" }
+ha-api = { path = "crates/ha-api" }
+ha-automation = { path = "crates/ha-automation" }
 ha-config = { path = "crates/ha-config" }
 ha-config-entries = { path = "crates/ha-config-entries" }
-ha-registries = { path = "crates/ha-registries" }
-ha-template = { path = "crates/ha-template" }
-ha-automation = { path = "crates/ha-automation" }
-ha-script = { path = "crates/ha-script" }
+ha-core = { path = "crates/ha-core" }
+ha-event-bus = { path = "crates/ha-event-bus" }
 ha-python-bridge = { path = "crates/ha-python-bridge" }
-ha-api = { path = "crates/ha-api" }
 ha-recorder = { path = "crates/ha-recorder" }
+ha-registries = { path = "crates/ha-registries" }
+ha-script = { path = "crates/ha-script" }
 ha-server = { path = "crates/ha-server" }
+ha-service-registry = { path = "crates/ha-service-registry" }
+ha-state-machine = { path = "crates/ha-state-machine" }
+ha-template = { path = "crates/ha-template" }

@@ -20,13 +20,13 @@ fallback = ["dep:pyo3", "pyo3/auto-initialize"]
 [dependencies]
 ha-core = { workspace = true }
 ha-event-bus = { workspace = true }
-ha-state-machine = { workspace = true }
 ha-service-registry = { workspace = true }
+ha-state-machine = { workspace = true }
 pyo3 = { workspace = true, optional = true }
-tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]

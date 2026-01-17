@@ -1,14 +1,16 @@
 //! Python wrapper for the HomeAssistant struct
 
-use super::{PyEventBus, PyServiceRegistry, PyStateMachine};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use ha_event_bus::EventBus;
 use ha_service_registry::ServiceRegistry;
 use ha_state_machine::StateMachine;
 use pyo3::prelude::*;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 use tokio::runtime::Handle;
 use tokio::sync::Notify;
+
+use super::{PyEventBus, PyServiceRegistry, PyStateMachine};
 
 /// Tracks pending background tasks for async_block_till_done
 #[derive(Default)]

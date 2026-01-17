@@ -7,11 +7,11 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-ha-core = { workspace = true }
 ha-config = { workspace = true }
+ha-core = { workspace = true }
 ha-event-bus = { workspace = true }
-ha-state-machine = { workspace = true }
 ha-service-registry = { workspace = true }
+ha-state-machine = { workspace = true }
 
 # Web framework
 axum = { workspace = true, features = ["ws"] }
@@ -19,9 +19,9 @@ tower = { workspace = true }
 tower-http = { workspace = true }
 
 # Async
+futures = "0.3"
 tokio = { workspace = true, features = ["sync"] }
 tokio-stream = "0.1"
-futures = "0.3"
 
 # Serialization
 serde = { workspace = true }
