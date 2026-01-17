@@ -4,7 +4,6 @@ use ha_registries::device_registry::{
     DeviceConnection, DeviceEntry, DeviceEntryType, DeviceIdentifier, DeviceRegistry,
 };
 use ha_registries::entity_registry::DisabledBy;
-use ha_registries::storage::Storage;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PySet, PyTuple};
 use std::sync::Arc;
@@ -216,17 +215,14 @@ fn parse_connections(py_set: &Bound<'_, PySet>) -> PyResult<Vec<DeviceConnection
 #[pyclass(name = "DeviceRegistry")]
 pub struct PyDeviceRegistry {
     inner: Arc<DeviceRegistry>,
-    storage: Arc<Storage>,
 }
 
 #[pymethods]
 impl PyDeviceRegistry {
     #[new]
     fn new(storage: &PyStorage) -> Self {
-        let storage_arc = storage.inner().clone();
         Self {
-            inner: Arc::new(DeviceRegistry::new(storage_arc.clone())),
-            storage: storage_arc,
+            inner: Arc::new(DeviceRegistry::new(storage.inner().clone())),
         }
     }
 
@@ -503,7 +499,7 @@ impl PyDeviceRegistry {
 }
 
 impl PyDeviceRegistry {
-    pub fn from_arc(inner: Arc<DeviceRegistry>, storage: Arc<Storage>) -> Self {
-        Self { inner, storage }
+    pub fn from_arc(inner: Arc<DeviceRegistry>) -> Self {
+        Self { inner }
     }
 }

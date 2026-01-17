@@ -1,7 +1,6 @@
 //! Python wrappers for LabelRegistry
 
 use ha_registries::label_registry::{LabelEntry, LabelRegistry};
-use ha_registries::storage::Storage;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::sync::Arc;
@@ -93,17 +92,14 @@ impl PyLabelEntry {
 #[pyclass(name = "LabelRegistry")]
 pub struct PyLabelRegistry {
     inner: Arc<LabelRegistry>,
-    storage: Arc<Storage>,
 }
 
 #[pymethods]
 impl PyLabelRegistry {
     #[new]
     fn new(storage: &PyStorage) -> Self {
-        let storage_arc = storage.inner().clone();
         Self {
-            inner: Arc::new(LabelRegistry::new(storage_arc.clone())),
-            storage: storage_arc,
+            inner: Arc::new(LabelRegistry::new(storage.inner().clone())),
         }
     }
 
@@ -247,7 +243,7 @@ impl PyLabelRegistry {
 }
 
 impl PyLabelRegistry {
-    pub fn from_arc(inner: Arc<LabelRegistry>, storage: Arc<Storage>) -> Self {
-        Self { inner, storage }
+    pub fn from_arc(inner: Arc<LabelRegistry>) -> Self {
+        Self { inner }
     }
 }

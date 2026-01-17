@@ -1,7 +1,6 @@
 //! Python wrappers for FloorRegistry
 
 use ha_registries::floor_registry::{FloorEntry, FloorRegistry};
-use ha_registries::storage::Storage;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::sync::Arc;
@@ -96,17 +95,14 @@ impl PyFloorEntry {
 #[pyclass(name = "FloorRegistry")]
 pub struct PyFloorRegistry {
     inner: Arc<FloorRegistry>,
-    storage: Arc<Storage>,
 }
 
 #[pymethods]
 impl PyFloorRegistry {
     #[new]
     fn new(storage: &PyStorage) -> Self {
-        let storage_arc = storage.inner().clone();
         Self {
-            inner: Arc::new(FloorRegistry::new(storage_arc.clone())),
-            storage: storage_arc,
+            inner: Arc::new(FloorRegistry::new(storage.inner().clone())),
         }
     }
 
@@ -258,7 +254,7 @@ impl PyFloorRegistry {
 }
 
 impl PyFloorRegistry {
-    pub fn from_arc(inner: Arc<FloorRegistry>, storage: Arc<Storage>) -> Self {
-        Self { inner, storage }
+    pub fn from_arc(inner: Arc<FloorRegistry>) -> Self {
+        Self { inner }
     }
 }

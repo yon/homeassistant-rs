@@ -4,7 +4,6 @@ use ha_config_entries::{
     ConfigEntries, ConfigEntry, ConfigEntryDisabledBy, ConfigEntrySource, ConfigEntryState,
     ConfigEntryUpdate,
 };
-use ha_registries::storage::Storage;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::sync::Arc;
@@ -207,17 +206,14 @@ impl PyConfigEntry {
 #[pyclass(name = "ConfigEntries")]
 pub struct PyConfigEntries {
     inner: Arc<ConfigEntries>,
-    storage: Arc<Storage>,
 }
 
 #[pymethods]
 impl PyConfigEntries {
     #[new]
     fn new(storage: &PyStorage) -> Self {
-        let storage_arc = storage.inner().clone();
         Self {
-            inner: Arc::new(ConfigEntries::new(storage_arc.clone())),
-            storage: storage_arc,
+            inner: Arc::new(ConfigEntries::new(storage.inner().clone())),
         }
     }
 
@@ -497,7 +493,7 @@ impl PyConfigEntries {
 }
 
 impl PyConfigEntries {
-    pub fn from_arc(inner: Arc<ConfigEntries>, storage: Arc<Storage>) -> Self {
-        Self { inner, storage }
+    pub fn from_arc(inner: Arc<ConfigEntries>) -> Self {
+        Self { inner }
     }
 }

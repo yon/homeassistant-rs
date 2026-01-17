@@ -1,7 +1,6 @@
 //! Python wrappers for AreaRegistry
 
 use ha_registries::area_registry::{AreaEntry, AreaRegistry};
-use ha_registries::storage::Storage;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::sync::Arc;
@@ -98,17 +97,14 @@ impl PyAreaEntry {
 #[pyclass(name = "AreaRegistry")]
 pub struct PyAreaRegistry {
     inner: Arc<AreaRegistry>,
-    storage: Arc<Storage>,
 }
 
 #[pymethods]
 impl PyAreaRegistry {
     #[new]
     fn new(storage: &PyStorage) -> Self {
-        let storage_arc = storage.inner().clone();
         Self {
-            inner: Arc::new(AreaRegistry::new(storage_arc.clone())),
-            storage: storage_arc,
+            inner: Arc::new(AreaRegistry::new(storage.inner().clone())),
         }
     }
 
@@ -274,7 +270,7 @@ impl PyAreaRegistry {
 }
 
 impl PyAreaRegistry {
-    pub fn from_arc(inner: Arc<AreaRegistry>, storage: Arc<Storage>) -> Self {
-        Self { inner, storage }
+    pub fn from_arc(inner: Arc<AreaRegistry>) -> Self {
+        Self { inner }
     }
 }

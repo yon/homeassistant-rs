@@ -3,7 +3,6 @@
 use ha_registries::entity_registry::{
     DisabledBy, EntityCategory, EntityEntry, EntityRegistry, HiddenBy,
 };
-use ha_registries::storage::Storage;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::sync::Arc;
@@ -248,29 +247,18 @@ fn parse_hidden_by(s: Option<&str>) -> Option<HiddenBy> {
     })
 }
 
-fn parse_entity_category(s: Option<&str>) -> Option<EntityCategory> {
-    s.and_then(|s| match s {
-        "config" => Some(EntityCategory::Config),
-        "diagnostic" => Some(EntityCategory::Diagnostic),
-        _ => None,
-    })
-}
-
 /// Python wrapper for EntityRegistry
 #[pyclass(name = "EntityRegistry")]
 pub struct PyEntityRegistry {
     inner: Arc<EntityRegistry>,
-    storage: Arc<Storage>,
 }
 
 #[pymethods]
 impl PyEntityRegistry {
     #[new]
     fn new(storage: &PyStorage) -> Self {
-        let storage_arc = storage.inner().clone();
         Self {
-            inner: Arc::new(EntityRegistry::new(storage_arc.clone())),
-            storage: storage_arc,
+            inner: Arc::new(EntityRegistry::new(storage.inner().clone())),
         }
     }
 
@@ -491,7 +479,7 @@ impl PyEntityRegistry {
 }
 
 impl PyEntityRegistry {
-    pub fn from_arc(inner: Arc<EntityRegistry>, storage: Arc<Storage>) -> Self {
-        Self { inner, storage }
+    pub fn from_arc(inner: Arc<EntityRegistry>) -> Self {
+        Self { inner }
     }
 }
