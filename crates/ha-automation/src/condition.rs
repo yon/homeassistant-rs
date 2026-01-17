@@ -158,25 +158,25 @@ pub struct SunCondition {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub after: Option<SunPosition>,
 
-    /// Offset after the after position
+    /// Offset after the after position (seconds, can be negative)
     #[serde(
         skip_serializing_if = "Option::is_none",
         default,
-        with = "crate::trigger::option_duration_serde"
+        with = "crate::trigger::option_signed_duration_serde"
     )]
-    pub after_offset: Option<Duration>,
+    pub after_offset: Option<i64>,
 
     /// Must be before sunrise/sunset
     #[serde(skip_serializing_if = "Option::is_none")]
     pub before: Option<SunPosition>,
 
-    /// Offset before the before position
+    /// Offset before the before position (seconds, can be negative)
     #[serde(
         skip_serializing_if = "Option::is_none",
         default,
-        with = "crate::trigger::option_duration_serde"
+        with = "crate::trigger::option_signed_duration_serde"
     )]
-    pub before_offset: Option<Duration>,
+    pub before_offset: Option<i64>,
 }
 
 /// Zone condition - check entity location

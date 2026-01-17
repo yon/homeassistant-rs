@@ -306,12 +306,13 @@ pub struct SunTrigger {
     pub event: SunEvent,
 
     /// Offset from the event (e.g., "-00:30:00" for 30 min before)
+    /// Stored as seconds, can be negative
     #[serde(
         skip_serializing_if = "Option::is_none",
         default,
-        with = "option_duration_serde"
+        with = "option_signed_duration_serde"
     )]
-    pub offset: Option<Duration>,
+    pub offset: Option<i64>,
 }
 
 /// Home Assistant trigger
@@ -487,6 +488,78 @@ pub(crate) mod option_duration_serde {
             }
             _ => Err("invalid duration format".to_string()),
         }
+    }
+}
+
+/// Serde module for signed duration (can be negative, e.g., "-00:30:00")
+/// Used for sun trigger/condition offsets
+pub(crate) mod option_signed_duration_serde {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &Option<i64>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(secs) => {
+                let abs_secs = secs.unsigned_abs();
+                let hours = abs_secs / 3600;
+                let mins = (abs_secs % 3600) / 60;
+                let secs_part = abs_secs % 60;
+                let sign = if *secs < 0 { "-" } else { "" };
+                serializer.serialize_str(&format!(
+                    "{}{:02}:{:02}:{:02}",
+                    sign, hours, mins, secs_part
+                ))
+            }
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let opt: Option<String> = Option::deserialize(deserializer)?;
+        match opt {
+            None => Ok(None),
+            Some(s) => parse_signed_duration(&s)
+                .map(Some)
+                .map_err(serde::de::Error::custom),
+        }
+    }
+
+    fn parse_signed_duration(s: &str) -> Result<i64, String> {
+        // Parse [±]HH:MM:SS or [±]MM:SS or [±]SS format
+        let (negative, s) = if let Some(stripped) = s.strip_prefix('-') {
+            (true, stripped)
+        } else if let Some(stripped) = s.strip_prefix('+') {
+            (false, stripped)
+        } else {
+            (false, s)
+        };
+
+        let parts: Vec<&str> = s.split(':').collect();
+        let total_secs: i64 = match parts.len() {
+            1 => {
+                let secs: i64 = parts[0].parse().map_err(|_| "invalid seconds")?;
+                secs
+            }
+            2 => {
+                let mins: i64 = parts[0].parse().map_err(|_| "invalid minutes")?;
+                let secs: i64 = parts[1].parse().map_err(|_| "invalid seconds")?;
+                mins * 60 + secs
+            }
+            3 => {
+                let hours: i64 = parts[0].parse().map_err(|_| "invalid hours")?;
+                let mins: i64 = parts[1].parse().map_err(|_| "invalid minutes")?;
+                let secs: i64 = parts[2].parse().map_err(|_| "invalid seconds")?;
+                hours * 3600 + mins * 60 + secs
+            }
+            _ => return Err("invalid duration format".to_string()),
+        };
+
+        Ok(if negative { -total_secs } else { total_secs })
     }
 }
 
