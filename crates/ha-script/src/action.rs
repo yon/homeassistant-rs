@@ -4,31 +4,69 @@
 //! task like calling a service, waiting, or evaluating conditions.
 
 use ha_automation::{Condition, Trigger};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
+
+/// Deserialize a field that can be either a single string or an array of strings
+fn string_or_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrVec {
+        String(String),
+        Vec(Vec<String>),
+    }
+
+    match StringOrVec::deserialize(deserializer)? {
+        StringOrVec::String(s) => Ok(vec![s]),
+        StringOrVec::Vec(v) => Ok(v),
+    }
+}
 
 /// Target specification for service calls
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Target {
     /// Target entity IDs
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "string_or_vec"
+    )]
     pub entity_id: Vec<String>,
 
     /// Target device IDs
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "string_or_vec"
+    )]
     pub device_id: Vec<String>,
 
     /// Target area IDs
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "string_or_vec"
+    )]
     pub area_id: Vec<String>,
 
     /// Target floor IDs
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "string_or_vec"
+    )]
     pub floor_id: Vec<String>,
 
     /// Target label IDs
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "string_or_vec"
+    )]
     pub label_id: Vec<String>,
 }
 

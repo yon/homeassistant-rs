@@ -1077,7 +1077,7 @@ async fn main() -> Result<()> {
 
         // Load automations into the engine
         let manager = hass.automation_engine.manager();
-        let manager_guard = manager.blocking_write();
+        let manager_guard = manager.write().await;
         if let Err(e) = manager_guard.load(automation_configs) {
             warn!("Failed to load automations into engine: {}", e);
         }
@@ -1161,7 +1161,7 @@ automation:
   - id: test_automation
     alias: Test Automation
     trigger:
-      - trigger: state
+      - platform: state
         entity_id: sensor.test
     action:
       - action: homeassistant.turn_on
@@ -1186,14 +1186,14 @@ automation:
   - id: auto1
     alias: First
     trigger:
-      - trigger: state
+      - platform: state
         entity_id: sensor.a
     action: []
   - id: auto2
     alias: Second
     enabled: false
     trigger:
-      - trigger: state
+      - platform: state
         entity_id: sensor.b
     action: []
 "#;
