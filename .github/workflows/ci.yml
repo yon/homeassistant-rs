@@ -72,31 +72,6 @@ jobs:
           PYO3_PYTHON: python3
         run: cargo test -p ha-python-bridge --features fallback --no-default-features --lib
 
-  build-wheel:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
-      - name: Install maturin
-        run: pip install maturin
-
-      - name: Build wheel
-        run: maturin build --release
-
-      - name: Upload wheel
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheels
-          path: target/wheels/*.whl
-
   ha-compat-test:
     runs-on: ubuntu-latest
     steps:
