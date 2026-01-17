@@ -8,8 +8,8 @@ license.workspace = true
 [dependencies]
 ha-core = { workspace = true }
 ha-event-bus = { workspace = true }
-ha-state-machine = { workspace = true }
 ha-service-registry = { workspace = true }
+ha-state-machine = { workspace = true }
 ha-template = { workspace = true }
 
 # Serialization

@@ -6,12 +6,12 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+ha-automation = { workspace = true }
 ha-core = { workspace = true }
 ha-event-bus = { workspace = true }
-ha-state-machine = { workspace = true }
 ha-service-registry = { workspace = true }
+ha-state-machine = { workspace = true }
 ha-template = { workspace = true }
-ha-automation = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
