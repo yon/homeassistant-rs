@@ -2090,6 +2090,15 @@ class RustAutomationManager:
 # Pytest hooks for patching
 # =============================================================================
 
+# Tests that require the disable_translations_once fixture because they
+# depend on translations NOT being cached at test start
+TESTS_NEEDING_FRESH_TRANSLATIONS = {
+    "test_eventbus_max_length_exceeded",
+    "test_serviceregistry_service_that_not_exists",
+    "test_call_service_not_found",
+}
+
+
 def pytest_configure(config):
     """Configure pytest with Rust patches."""
     if not USE_RUST_COMPONENTS or not _rust_available:
@@ -2099,6 +2108,19 @@ def pytest_configure(config):
     print("  Running with RUST components patched in")
     print("  StateMachine uses Rust storage via ha_core_rs")
     print("=" * 60 + "\n")
+
+
+def pytest_collection_modifyitems(session, config, items):
+    """Apply disable_translations_once fixture to tests that need fresh translations.
+
+    Some tests depend on translations not being cached when they start. The
+    session-scoped translations_once fixture caches translations, which can cause
+    these tests to fail if other tests ran first and populated the cache.
+    """
+    for item in items:
+        if item.name in TESTS_NEEDING_FRESH_TRANSLATIONS:
+            # Add the disable_translations_once fixture to these tests
+            item.fixturenames.append("disable_translations_once")
 
 
 @pytest.fixture(autouse=True)

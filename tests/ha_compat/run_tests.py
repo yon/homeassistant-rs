@@ -70,7 +70,7 @@ TEST_CATEGORIES = {
         "test_core.py::test_eventbus_thread_event_listener",
         "test_core.py::test_eventbus_callback_event_listener",
         "test_core.py::test_eventbus_coroutine_event_listener",
-        # test_eventbus_max_length_exceeded - skipped: flaky due to translation caching order
+        "test_core.py::test_eventbus_max_length_exceeded",
         "test_core.py::test_eventbus_lazy_object_creation",
         "test_core.py::test_event_filter_sanity_checks",
     ],
@@ -82,7 +82,7 @@ TEST_CATEGORIES = {
         "test_core.py::test_serviceregistry_async_service",
         "test_core.py::test_serviceregistry_async_service_partial",
         "test_core.py::test_serviceregistry_callback_service",
-        # test_serviceregistry_service_that_not_exists - skipped: flaky due to translation caching order
+        "test_core.py::test_serviceregistry_service_that_not_exists",
         "test_core.py::test_service_executed_with_subservices",
         "test_core.py::test_service_call_event_contains_original_data",
     ],
@@ -337,7 +337,7 @@ TEST_CATEGORIES = {
         "components/websocket_api/test_commands.py::test_call_service",
         "components/websocket_api/test_commands.py::test_call_service_blocking",
         "components/websocket_api/test_commands.py::test_call_service_target",
-        # test_call_service_not_found - skipped: translation validation error in CI
+        "components/websocket_api/test_commands.py::test_call_service_not_found",
         "components/websocket_api/test_commands.py::test_subscribe_unsubscribe_events",
         "components/websocket_api/test_commands.py::test_get_states",
         "components/websocket_api/test_commands.py::test_get_services",
