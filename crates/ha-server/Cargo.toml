@@ -11,15 +11,14 @@ name = "homeassistant"
 path = "src/main.rs"
 
 [dependencies]
-ha-core = { workspace = true }
-ha-config = { workspace = true }
-ha-event-bus = { workspace = true }
-ha-state-machine = { workspace = true }
-ha-service-registry = { workspace = true }
+anyhow = { workspace = true }
 ha-api = { path = "../ha-api" }
-
+ha-config = { workspace = true }
+ha-core = { workspace = true }
+ha-event-bus = { workspace = true }
+ha-service-registry = { workspace = true }
+ha-state-machine = { workspace = true }
+serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-anyhow = { workspace = true }
-serde_json = { workspace = true }

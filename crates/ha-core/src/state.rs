@@ -1,9 +1,11 @@
 //! State type representing an entity's current state
 
-use crate::{Context, EntityId};
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+
+use crate::{Context, EntityId};
 
 /// Represents the state of an entity at a point in time
 ///
@@ -112,6 +114,7 @@ impl PartialEq for State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use serde_json::json;
 
     fn make_entity_id() -> EntityId {

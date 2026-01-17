@@ -13,6 +13,7 @@ Usage:
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -130,13 +131,18 @@ def run_tests(categories: list[str] | None = None, verbose: bool = False,
     ]
 
     # Add conftest path for Rust patching
+    # We copy our conftest to HA's test directory so pytest auto-discovers it
+    rust_conftest_path = None
     if use_rust:
-        conftest = Path(__file__).parent / "conftest.py"
-        pytest_args.extend(["-p", f"tests.ha_compat.conftest"])
+        import shutil
+        our_conftest = Path(__file__).parent / "conftest.py"
+        # Use a unique name so it doesn't conflict with HA's conftest.py
+        rust_conftest_path = ha_core / "conftest_rust.py"
+        shutil.copy(our_conftest, rust_conftest_path)
 
-    # Add test patterns
+    # Add test patterns (relative to ha_core since we run from there)
     for pattern in patterns:
-        pytest_args.append(str(ha_core / "tests" / pattern))
+        pytest_args.append(f"tests/{pattern}")
 
     print(f"Running {len(patterns)} tests...")
     if use_rust:
@@ -145,9 +151,21 @@ def run_tests(categories: list[str] | None = None, verbose: bool = False,
         print("Mode: Pure Python (baseline)")
     print("")
 
-    # Run pytest
-    result = subprocess.run(pytest_args, cwd=repo_root)
-    return result.returncode
+    # Run pytest with PYTHONPATH set to include repo root for our conftest import
+    env = os.environ.copy()
+    pythonpath_parts = [str(repo_root)]
+    if "PYTHONPATH" in env:
+        pythonpath_parts.append(env["PYTHONPATH"])
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
+
+    # Run from HA core directory so HA's tests can find their modules
+    try:
+        result = subprocess.run(pytest_args, cwd=ha_core, env=env)
+        return result.returncode
+    finally:
+        # Clean up the temporary conftest
+        if rust_conftest_path and rust_conftest_path.exists():
+            rust_conftest_path.unlink()
 
 def main():
     parser = argparse.ArgumentParser(description="Run HA compatibility tests")

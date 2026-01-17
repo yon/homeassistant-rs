@@ -16,8 +16,8 @@ serde_json = { workspace = true }
 dashmap = { workspace = true }
 
 # IDs and time
-ulid = { workspace = true }
 chrono = { workspace = true }
+ulid = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
@@ -29,5 +29,5 @@ tokio = { workspace = true, features = ["fs", "sync"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
-tokio-test = { workspace = true }
 tempfile = "3.10"
+tokio-test = { workspace = true }

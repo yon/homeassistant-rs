@@ -134,10 +134,10 @@ impl UnitSystemConfig {
     /// Convert to the full UnitSystem struct
     pub fn to_unit_system(&self) -> UnitSystem {
         match self {
+            UnitSystemConfig::Custom(custom) => custom.clone(),
             UnitSystemConfig::Metric => UnitSystem::metric(),
             UnitSystemConfig::Named(name) if name == "imperial" => UnitSystem::imperial(),
             UnitSystemConfig::Named(_) => UnitSystem::metric(),
-            UnitSystemConfig::Custom(custom) => custom.clone(),
         }
     }
 }

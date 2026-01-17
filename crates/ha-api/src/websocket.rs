@@ -3,6 +3,10 @@
 //! Implements the Home Assistant WebSocket API for real-time communication.
 //! Protocol: https://developers.home-assistant.io/docs/api/websocket
 
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use axum::{
     extract::{
         ws::{Message, WebSocket},
@@ -13,9 +17,6 @@ use axum::{
 use futures::{SinkExt, StreamExt};
 use ha_core::Context;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 
@@ -101,8 +102,8 @@ pub enum EntityIds {
 impl EntityIds {
     pub fn to_vec(&self) -> Vec<String> {
         match self {
-            EntityIds::Single(s) => vec![s.clone()],
             EntityIds::Multiple(v) => v.clone(),
+            EntityIds::Single(s) => vec![s.clone()],
         }
     }
 }
@@ -451,35 +452,6 @@ async fn handle_message(
             // Already authenticated, ignore
             Ok(())
         }
-        IncomingMessage::Ping { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            let pong = OutgoingMessage::Pong(PongMessage {
-                id,
-                msg_type: "pong",
-            });
-            tx.send(pong).await.map_err(|e| e.to_string())?;
-            Ok(())
-        }
-        IncomingMessage::GetStates { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handle_get_states(conn, id, tx).await
-        }
-        IncomingMessage::GetConfig { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handle_get_config(conn, id, tx).await
-        }
-        IncomingMessage::GetServices { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handle_get_services(conn, id, tx).await
-        }
-        IncomingMessage::SubscribeEvents { id, event_type } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handle_subscribe_events(conn, id, event_type, tx).await
-        }
-        IncomingMessage::UnsubscribeEvents { id, subscription } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handle_unsubscribe_events(conn, id, subscription, tx).await
-        }
         IncomingMessage::CallService {
             id,
             domain,
@@ -509,6 +481,31 @@ async fn handle_message(
             conn.validate_id(id).map_err(|e| e.to_string())?;
             handle_fire_event(conn, id, event_type, event_data, tx).await
         }
+        IncomingMessage::GetConfig { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_get_config(conn, id, tx).await
+        }
+        IncomingMessage::GetServices { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_get_services(conn, id, tx).await
+        }
+        IncomingMessage::GetStates { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_get_states(conn, id, tx).await
+        }
+        IncomingMessage::Ping { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            let pong = OutgoingMessage::Pong(PongMessage {
+                id,
+                msg_type: "pong",
+            });
+            tx.send(pong).await.map_err(|e| e.to_string())?;
+            Ok(())
+        }
+        IncomingMessage::SubscribeEvents { id, event_type } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_subscribe_events(conn, id, event_type, tx).await
+        }
         IncomingMessage::SupportedFeatures { id, features: _ } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
             // Acknowledge supported features (we don't use coalescing yet)
@@ -521,6 +518,10 @@ async fn handle_message(
             });
             tx.send(result).await.map_err(|e| e.to_string())?;
             Ok(())
+        }
+        IncomingMessage::UnsubscribeEvents { id, subscription } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_unsubscribe_events(conn, id, subscription, tx).await
         }
     }
 }

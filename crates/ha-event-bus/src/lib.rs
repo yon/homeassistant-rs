@@ -4,10 +4,11 @@
 //! for Home Assistant. Components can subscribe to events and fire events
 //! to communicate asynchronously.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use dashmap::DashMap;
 use ha_core::{Context, Event, EventData, EventType};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::{debug, trace};
 
@@ -180,10 +181,12 @@ pub type SharedEventBus = Arc<EventBus>;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::collections::HashMap;
+
     use ha_core::events::StateChangedData;
     use ha_core::{EntityId, State};
     use serde_json::json;
-    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_subscribe_and_fire() {

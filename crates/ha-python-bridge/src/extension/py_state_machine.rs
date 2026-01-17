@@ -1,12 +1,14 @@
 //! Python wrapper for StateMachine
 
-use super::py_types::{py_dict_to_hashmap, PyContext, PyState};
+use std::sync::Arc;
+
 use ha_core::EntityId;
 use ha_event_bus::EventBus;
 use ha_state_machine::StateMachine;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use std::sync::Arc;
+
+use super::py_types::{py_dict_to_hashmap, PyContext, PyState};
 
 /// Python wrapper for StateMachine
 #[pyclass(name = "StateMachine")]

@@ -7,18 +7,18 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+base64 = "0.22"
+chrono = { workspace = true }
 ha-core = { workspace = true }
 ha-event-bus = { workspace = true }
 ha-state-machine = { workspace = true }
 minijinja = { workspace = true }
-chrono = { workspace = true }
+regex = "1.10"
 serde = { workspace = true }
 serde_json = { workspace = true }
+slug = "0.1"
 thiserror = { workspace = true }
 tracing = { workspace = true }
-regex = "1.10"
-slug = "0.1"
-base64 = "0.22"
 urlencoding = "2.1"
 
 [dev-dependencies]

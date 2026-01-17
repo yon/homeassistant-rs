@@ -35,12 +35,12 @@ pub enum DiffCategory {
 impl std::fmt::Display for DiffCategory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DiffCategory::StatusCode => write!(f, "STATUS"),
-            DiffCategory::Header => write!(f, "HEADER"),
             DiffCategory::BodyStructure => write!(f, "STRUCTURE"),
             DiffCategory::BodyValue => write!(f, "VALUE"),
-            DiffCategory::Missing => write!(f, "MISSING"),
             DiffCategory::Extra => write!(f, "EXTRA"),
+            DiffCategory::Header => write!(f, "HEADER"),
+            DiffCategory::Missing => write!(f, "MISSING"),
+            DiffCategory::StatusCode => write!(f, "STATUS"),
         }
     }
 }

@@ -2,16 +2,18 @@
 //!
 //! Manages the lifecycle of configuration entries.
 
-use crate::entry::{ConfigEntry, ConfigEntryState, ConfigEntryUpdate};
+use std::collections::HashSet;
+use std::sync::Arc;
+
 use chrono::Utc;
 use dashmap::DashMap;
 use ha_registries::{Storable, Storage, StorageFile, StorageResult};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
-use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
+
+use crate::entry::{ConfigEntry, ConfigEntryState, ConfigEntryUpdate};
 
 /// Storage key for config entries
 pub const STORAGE_KEY: &str = "core.config_entries";
@@ -407,6 +409,7 @@ impl ConfigEntries {
 mod tests {
     use super::*;
     use crate::entry::ConfigEntrySource;
+
     use tempfile::TempDir;
 
     fn create_test_manager() -> (TempDir, ConfigEntries) {

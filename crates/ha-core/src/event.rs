@@ -1,8 +1,9 @@
 //! Event types for the Home Assistant event bus
 
-use crate::Context;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+use crate::Context;
 
 /// Trait for typed event data
 ///
@@ -117,6 +118,7 @@ pub enum EventOrigin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use serde_json::json;
 
     #[derive(Debug, Clone)]
