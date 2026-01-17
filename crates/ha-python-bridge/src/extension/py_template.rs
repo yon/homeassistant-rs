@@ -126,11 +126,7 @@ impl PyTemplateEngine {
     }
 
     /// Render a template with context variables
-    fn render_with_context(
-        &self,
-        template: &str,
-        context: &Bound<'_, PyDict>,
-    ) -> PyResult<String> {
+    fn render_with_context(&self, template: &str, context: &Bound<'_, PyDict>) -> PyResult<String> {
         let json_context = py_to_json(context.as_any())?;
         self.inner
             .render_with_context(template, json_context)

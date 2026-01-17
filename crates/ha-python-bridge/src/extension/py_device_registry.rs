@@ -280,7 +280,9 @@ impl PyDeviceRegistry {
         if let Some(conns) = connections {
             let parsed = parse_connections(conns)?;
             for conn in &parsed {
-                if let Some(entry) = self.inner.get_by_connection(conn.connection_type(), conn.id())
+                if let Some(entry) = self
+                    .inner
+                    .get_by_connection(conn.connection_type(), conn.id())
                 {
                     return Ok(Some(PyDeviceEntry::from_inner(entry)));
                 }
@@ -447,14 +449,12 @@ impl PyDeviceRegistry {
             }
         });
 
-        entry
-            .map(PyDeviceEntry::from_inner)
-            .ok_or_else(|| {
-                PyErr::new::<pyo3::exceptions::PyKeyError, _>(format!(
-                    "Device not found: {}",
-                    device_id
-                ))
-            })
+        entry.map(PyDeviceEntry::from_inner).ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyKeyError, _>(format!(
+                "Device not found: {}",
+                device_id
+            ))
+        })
     }
 
     /// Remove a device

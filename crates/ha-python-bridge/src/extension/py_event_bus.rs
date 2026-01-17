@@ -1,7 +1,7 @@
 //! Python wrapper for EventBus
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use ha_core::Event;
 use ha_event_bus::EventBus;

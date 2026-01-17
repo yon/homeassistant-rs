@@ -580,7 +580,6 @@ impl DeviceRegistry {
     pub fn iter(&self) -> impl Iterator<Item = DeviceEntry> + '_ {
         self.by_id.iter().map(|r| r.value().clone())
     }
-
 }
 
 // Unit tests removed - covered by HA native tests via `make ha-compat-test`

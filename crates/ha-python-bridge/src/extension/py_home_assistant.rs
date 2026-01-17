@@ -1,7 +1,7 @@
 //! Python wrapper for the HomeAssistant struct
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use ha_event_bus::EventBus;
 use ha_service_registry::ServiceRegistry;

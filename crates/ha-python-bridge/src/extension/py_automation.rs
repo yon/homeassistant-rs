@@ -158,9 +158,9 @@ impl PyAutomationManager {
             parsed_configs.push(config);
         }
 
-        self.inner.load(parsed_configs).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-        })
+        self.inner
+            .load(parsed_configs)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
 
     /// Reload automations
@@ -182,9 +182,9 @@ impl PyAutomationManager {
             parsed_configs.push(config);
         }
 
-        self.inner.reload(parsed_configs).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-        })
+        self.inner
+            .reload(parsed_configs)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
 
     /// Get an automation by ID
@@ -194,28 +194,32 @@ impl PyAutomationManager {
 
     /// Get all automations
     fn async_all(&self) -> Vec<PyAutomation> {
-        self.inner.all().into_iter().map(PyAutomation::from_inner).collect()
+        self.inner
+            .all()
+            .into_iter()
+            .map(PyAutomation::from_inner)
+            .collect()
     }
 
     /// Enable an automation
     fn async_enable(&self, automation_id: &str) -> PyResult<()> {
-        self.inner.enable(automation_id).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-        })
+        self.inner
+            .enable(automation_id)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
 
     /// Disable an automation
     fn async_disable(&self, automation_id: &str) -> PyResult<()> {
-        self.inner.disable(automation_id).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-        })
+        self.inner
+            .disable(automation_id)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
 
     /// Toggle an automation
     fn async_toggle(&self, automation_id: &str) -> PyResult<bool> {
-        self.inner.toggle(automation_id).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-        })
+        self.inner
+            .toggle(automation_id)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
 
     /// Remove an automation
@@ -223,9 +227,7 @@ impl PyAutomationManager {
         self.inner
             .remove(automation_id)
             .map(PyAutomation::from_inner)
-            .map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-            })
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
 
     /// Mark automation as triggered

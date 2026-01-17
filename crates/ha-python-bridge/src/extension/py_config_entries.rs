@@ -305,20 +305,14 @@ impl PyConfigEntries {
         if let Some(d) = data {
             let json_data = py_to_json(d.as_any())?;
             if let Some(obj) = json_data.as_object() {
-                entry.data = obj
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect();
+                entry.data = obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
             }
         }
 
         if let Some(o) = options {
             let json_opts = py_to_json(o.as_any())?;
             if let Some(obj) = json_opts.as_object() {
-                entry.options = obj
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect();
+                entry.options = obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
             }
         }
 
@@ -372,22 +366,14 @@ impl PyConfigEntries {
         if let Some(d) = data {
             let json_data = py_to_json(d.as_any())?;
             if let Some(obj) = json_data.as_object() {
-                update.data = Some(
-                    obj.iter()
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect(),
-                );
+                update.data = Some(obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
             }
         }
 
         if let Some(o) = options {
             let json_opts = py_to_json(o.as_any())?;
             if let Some(obj) = json_opts.as_object() {
-                update.options = Some(
-                    obj.iter()
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect(),
-                );
+                update.options = Some(obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
             }
         }
 

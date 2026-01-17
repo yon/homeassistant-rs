@@ -4,8 +4,8 @@
 //! for Home Assistant. Components can subscribe to events and fire events
 //! to communicate asynchronously.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use dashmap::DashMap;
 use tokio::sync::broadcast;

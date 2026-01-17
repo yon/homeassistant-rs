@@ -63,7 +63,10 @@ impl PyLabelEntry {
     }
 
     fn __repr__(&self) -> String {
-        format!("LabelEntry(id='{}', name='{}')", self.inner.id, self.inner.name)
+        format!(
+            "LabelEntry(id='{}', name='{}')",
+            self.inner.id, self.inner.name
+        )
     }
 
     fn __eq__(&self, other: &Self) -> bool {

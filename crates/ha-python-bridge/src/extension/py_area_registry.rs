@@ -68,7 +68,10 @@ impl PyAreaEntry {
     }
 
     fn __repr__(&self) -> String {
-        format!("AreaEntry(id='{}', name='{}')", self.inner.id, self.inner.name)
+        format!(
+            "AreaEntry(id='{}', name='{}')",
+            self.inner.id, self.inner.name
+        )
     }
 
     fn __eq__(&self, other: &Self) -> bool {
@@ -169,7 +172,12 @@ impl PyAreaRegistry {
         let entry = self.inner.create(name);
 
         // Update with optional fields if provided
-        if aliases.is_some() || floor_id.is_some() || icon.is_some() || picture.is_some() || labels.is_some() {
+        if aliases.is_some()
+            || floor_id.is_some()
+            || icon.is_some()
+            || picture.is_some()
+            || labels.is_some()
+        {
             if let Some(updated) = self.inner.update(&entry.id, |e| {
                 if let Some(ref a) = aliases {
                     e.aliases = a.clone();

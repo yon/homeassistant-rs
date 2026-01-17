@@ -4,8 +4,8 @@
 //! Protocol: https://developers.home-assistant.io/docs/api/websocket
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use axum::{
     extract::{

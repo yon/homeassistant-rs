@@ -296,12 +296,7 @@ impl PyEntityRegistry {
     }
 
     /// Get entity ID by unique_id lookup
-    fn async_get_entity_id(
-        &self,
-        domain: &str,
-        platform: &str,
-        unique_id: &str,
-    ) -> Option<String> {
+    fn async_get_entity_id(&self, domain: &str, platform: &str, unique_id: &str) -> Option<String> {
         self.inner
             .get_by_unique_id(unique_id)
             .filter(|e| e.domain() == domain && e.platform == platform)

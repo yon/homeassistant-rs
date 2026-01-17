@@ -76,7 +76,9 @@ fn test_ha_compat_not_condition() {
     let result: Result<Condition, _> = serde_json::from_value(config);
     // If this fails, we need to adjust our Not condition to accept conditions array
     if result.is_err() {
-        eprintln!("Note: HA NOT condition uses 'conditions' array, our type uses single 'condition'");
+        eprintln!(
+            "Note: HA NOT condition uses 'conditions' array, our type uses single 'condition'"
+        );
     }
 }
 
