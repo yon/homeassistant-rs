@@ -84,52 +84,5 @@ impl Registries {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    #[tokio::test]
-    async fn test_registries_bundle() {
-        let temp_dir = TempDir::new().unwrap();
-        let registries = Registries::new(temp_dir.path());
-
-        // Create some data
-        registries.areas.create("Living Room");
-        registries.floors.create("Ground Floor", 0);
-        registries.labels.create("Critical");
-
-        let entity = registries.entities.get_or_create(
-            "hue",
-            "light.living_room",
-            Some("unique1"),
-            None,
-            None,
-        );
-
-        let _device = registries.devices.get_or_create(
-            &[device_registry::DeviceIdentifier::new("hue", "bridge1")],
-            &[],
-            None,
-            "Hue Bridge",
-        );
-
-        // Update entity with device
-        registries.entities.update(&entity.entity_id, |e| {
-            e.device_id = Some("device1".to_string());
-        });
-
-        // Save all
-        registries.save_all().await.unwrap();
-
-        // Load into new registries
-        let registries2 = Registries::new(temp_dir.path());
-        registries2.load_all().await.unwrap();
-
-        assert_eq!(registries2.entities.len(), 1);
-        assert_eq!(registries2.devices.len(), 1);
-        assert_eq!(registries2.areas.len(), 1);
-        assert_eq!(registries2.floors.len(), 1);
-        assert_eq!(registries2.labels.len(), 1);
-    }
-}
+// Unit tests removed - covered by HA native tests via `make ha-compat-test`
+// See tests/ha_compat/ for comprehensive Registries testing through Python bindings

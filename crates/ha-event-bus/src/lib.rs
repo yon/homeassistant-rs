@@ -8,9 +8,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use dashmap::DashMap;
-use ha_core::{Context, Event, EventData, EventType};
 use tokio::sync::broadcast;
 use tracing::{debug, trace};
+
+use ha_core::{Context, Event, EventData, EventType};
 
 /// Default channel capacity for event subscriptions
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
@@ -178,110 +179,5 @@ impl<T: EventData + serde::de::DeserializeOwned> TypedEventReceiver<T> {
 /// Thread-safe wrapper for EventBus
 pub type SharedEventBus = Arc<EventBus>;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use std::collections::HashMap;
-
-    use ha_core::events::StateChangedData;
-    use ha_core::{EntityId, State};
-    use serde_json::json;
-
-    #[tokio::test]
-    async fn test_subscribe_and_fire() {
-        let bus = EventBus::new();
-        let mut rx = bus.subscribe("test_event");
-
-        let ctx = Context::new();
-        let event = Event::new("test_event", json!({"key": "value"}), ctx);
-        bus.fire(event.clone());
-
-        let received = rx.recv().await.unwrap();
-        assert_eq!(received.event_type.as_str(), "test_event");
-        assert_eq!(received.data["key"], "value");
-    }
-
-    #[tokio::test]
-    async fn test_match_all_subscription() {
-        let bus = EventBus::new();
-        let mut rx = bus.subscribe_all();
-
-        let ctx = Context::new();
-        bus.fire(Event::new("event_a", json!({}), ctx.clone()));
-        bus.fire(Event::new("event_b", json!({}), ctx));
-
-        let event1 = rx.recv().await.unwrap();
-        let event2 = rx.recv().await.unwrap();
-
-        assert_eq!(event1.event_type.as_str(), "event_a");
-        assert_eq!(event2.event_type.as_str(), "event_b");
-    }
-
-    #[tokio::test]
-    async fn test_typed_subscription() {
-        let bus = EventBus::new();
-        let mut rx = bus.subscribe_typed::<StateChangedData>();
-
-        let entity_id = EntityId::new("light", "test").unwrap();
-        let new_state = State::new(entity_id.clone(), "on", HashMap::new(), Context::new());
-
-        let data = StateChangedData {
-            entity_id,
-            old_state: None,
-            new_state: Some(new_state),
-        };
-
-        bus.fire_typed(data.clone(), Context::new());
-
-        let received = rx.recv().await.unwrap();
-        assert_eq!(received.data.entity_id.to_string(), "light.test");
-        assert!(received.data.new_state.is_some());
-    }
-
-    #[tokio::test]
-    async fn test_multiple_subscribers() {
-        let bus = EventBus::new();
-        let mut rx1 = bus.subscribe("test_event");
-        let mut rx2 = bus.subscribe("test_event");
-
-        let ctx = Context::new();
-        bus.fire(Event::new("test_event", json!({"n": 1}), ctx));
-
-        let e1 = rx1.recv().await.unwrap();
-        let e2 = rx2.recv().await.unwrap();
-
-        assert_eq!(e1.data["n"], 1);
-        assert_eq!(e2.data["n"], 1);
-    }
-
-    #[tokio::test]
-    async fn test_no_cross_event_pollution() {
-        let bus = EventBus::new();
-        let mut rx_a = bus.subscribe("event_a");
-        let mut rx_b = bus.subscribe("event_b");
-
-        let ctx = Context::new();
-        bus.fire(Event::new("event_a", json!({"type": "a"}), ctx));
-
-        // rx_a should receive the event
-        let received = rx_a.recv().await.unwrap();
-        assert_eq!(received.data["type"], "a");
-
-        // rx_b should not receive anything (would timeout in a real test)
-        // We can verify by checking if try_recv returns empty
-        assert!(rx_b.try_recv().is_err());
-    }
-
-    #[test]
-    fn test_listener_id_uniqueness() {
-        let bus = EventBus::new();
-        let id1 = bus.next_listener_id();
-        let id2 = bus.next_listener_id();
-        let id3 = bus.next_listener_id();
-
-        assert_ne!(id1, id2);
-        assert_ne!(id2, id3);
-        assert_ne!(id1, id3);
-    }
-}
+// Unit tests removed - covered by HA native tests via `make ha-compat-test`
+// See tests/ha_compat/ for comprehensive EventBus testing through Python bindings

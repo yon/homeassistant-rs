@@ -36,25 +36,58 @@ python tests/ha_compat/run_tests.py --category condition -v
 
 ## Test Categories
 
+**Total: 249 tests across 21 categories (all passing)**
+
 ### Core Types (tests/test_core.py)
 
-| Category | Our Component | Status |
-|----------|---------------|--------|
-| `state` | `ha-core::State` | Ready |
-| `statemachine` | `ha-state-machine` | Ready |
-| `eventbus` | `ha-event-bus` | Ready |
-| `service` | `ha-service-registry` | Ready |
-| `event` | `ha-core::Event` | Ready |
-| `context` | `ha-core::Context` | Ready |
+| Category | Tests | Our Component |
+|----------|-------|---------------|
+| `state` | 18 | `ha-core::State` |
+| `statemachine` | 11 | `ha-state-machine` |
+| `eventbus` | 15 | `ha-event-bus` |
+| `service` | 10 | `ha-service-registry` |
+| `event` | 7 | `ha-core::Event` |
+| `context` | 2 | `ha-core::Context` |
 
-### Helper Modules (tests/helpers/)
+### Condition Tests (tests/helpers/test_condition.py)
 
-| Category | Our Component | Status |
-|----------|---------------|--------|
-| `condition` | `ha-automation::Condition` | In Progress |
-| `trigger` | `ha-automation::Trigger` | In Progress |
-| `script` | `ha-script::Action` | In Progress |
-| `automation` | `ha-automation::Automation` | In Progress |
+| Category | Tests | Our Component |
+|----------|-------|---------------|
+| `condition` | 22 | `ha-automation::Condition` |
+
+### Registry Tests (tests/helpers/)
+
+| Category | Tests | Our Component |
+|----------|-------|---------------|
+| `storage` | 9 | `ha-registries::Storage` |
+| `area_registry` | 17 | `ha-registries::AreaRegistry` |
+| `floor_registry` | 14 | `ha-registries::FloorRegistry` |
+| `label_registry` | 13 | `ha-registries::LabelRegistry` |
+| `entity_registry` | 11 | `ha-registries::EntityRegistry` |
+| `device_registry` | 10 | `ha-registries::DeviceRegistry` |
+
+### Template Tests (tests/helpers/template/)
+
+| Category | Tests | Our Component |
+|----------|-------|---------------|
+| `template` | 24 | `ha-template` |
+
+### Helper Tests (tests/helpers/)
+
+| Category | Tests | Description |
+|----------|-------|-------------|
+| `helper_state` | 8 | State reproduction helpers |
+| `helper_event` | 8 | Event tracking helpers |
+| `helper_service` | 8 | Service call helpers |
+
+### API Tests (tests/components/)
+
+| Category | Tests | Our Component |
+|----------|-------|---------------|
+| `api` | 20 | `ha-api::RestApi` |
+| `websocket_commands` | 15 | `ha-api::WebSocketApi` |
+| `websocket_messages` | 4 | `ha-api::WebSocketMessages` |
+| `websocket_http` | 3 | `ha-api::WebSocketHttp` |
 
 ## How It Works
 

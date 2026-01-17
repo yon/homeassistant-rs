@@ -67,7 +67,7 @@ echo ""
 echo "Installing additional test dependencies..."
 "$VENV/bin/pip" install -q pytest pytest-asyncio pytest-timeout freezegun \
     pytest-socket pytest-xdist respx requests-mock syrupy \
-    pytest-unordered 2>&1 | tail -3
+    pytest-unordered pytest-freezer 2>&1 | tail -3
 
 # Step 5: Build and install our Rust wheel
 echo ""

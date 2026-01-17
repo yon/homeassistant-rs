@@ -66,57 +66,5 @@ impl Default for Context {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_new_context() {
-        let ctx = Context::new();
-        assert!(!ctx.id.is_empty());
-        assert!(ctx.user_id.is_none());
-        assert!(ctx.parent_id.is_none());
-    }
-
-    #[test]
-    fn test_context_with_user() {
-        let ctx = Context::with_user("user123");
-        assert_eq!(ctx.user_id, Some("user123".to_string()));
-        assert!(ctx.parent_id.is_none());
-    }
-
-    #[test]
-    fn test_child_context() {
-        let parent = Context::with_user("user123");
-        let child = parent.child();
-
-        assert_ne!(child.id, parent.id);
-        assert_eq!(child.user_id, parent.user_id);
-        assert_eq!(child.parent_id, Some(parent.id.clone()));
-    }
-
-    #[test]
-    fn test_child_with_different_user() {
-        let parent = Context::with_user("user123");
-        let child = parent.child_with_user("user456");
-
-        assert_eq!(child.user_id, Some("user456".to_string()));
-        assert_eq!(child.parent_id, Some(parent.id.clone()));
-    }
-
-    #[test]
-    fn test_unique_ids() {
-        let ctx1 = Context::new();
-        let ctx2 = Context::new();
-        assert_ne!(ctx1.id, ctx2.id);
-    }
-
-    #[test]
-    fn test_serde_roundtrip() {
-        let ctx = Context::with_user("test_user");
-        let json = serde_json::to_string(&ctx).unwrap();
-        let parsed: Context = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.id, ctx.id);
-        assert_eq!(parsed.user_id, ctx.user_id);
-    }
-}
+// Unit tests removed - covered by HA native tests via `make ha-compat-test`
+// See tests/ha_compat/ for comprehensive Context testing through Python bindings

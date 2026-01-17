@@ -45,6 +45,33 @@ fn ha_core_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<extension::PyStateMachine>()?;
     m.add_class::<extension::PyServiceRegistry>()?;
 
+    // Storage
+    m.add_class::<extension::PyStorage>()?;
+
+    // Registries
+    m.add_class::<extension::PyEntityEntry>()?;
+    m.add_class::<extension::PyEntityRegistry>()?;
+    m.add_class::<extension::PyDeviceEntry>()?;
+    m.add_class::<extension::PyDeviceRegistry>()?;
+    m.add_class::<extension::PyAreaEntry>()?;
+    m.add_class::<extension::PyAreaRegistry>()?;
+    m.add_class::<extension::PyFloorEntry>()?;
+    m.add_class::<extension::PyFloorRegistry>()?;
+    m.add_class::<extension::PyLabelEntry>()?;
+    m.add_class::<extension::PyLabelRegistry>()?;
+
+    // Template
+    m.add_class::<extension::PyTemplate>()?;
+    m.add_class::<extension::PyTemplateEngine>()?;
+
+    // Config Entries
+    m.add_class::<extension::PyConfigEntry>()?;
+    m.add_class::<extension::PyConfigEntries>()?;
+
+    // Automation
+    m.add_class::<extension::PyAutomation>()?;
+    m.add_class::<extension::PyAutomationManager>()?;
+
     // HomeAssistant wrapper
     m.add_class::<extension::PyHomeAssistant>()?;
 
