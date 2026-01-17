@@ -2093,9 +2093,10 @@ class RustAutomationManager:
 # Tests that require the disable_translations_once fixture because they
 # depend on translations NOT being cached at test start
 TESTS_NEEDING_FRESH_TRANSLATIONS = {
-    "test_eventbus_max_length_exceeded",
-    "test_serviceregistry_service_that_not_exists",
     "test_call_service_not_found",
+    "test_eventbus_max_length_exceeded",
+    "test_parallel_error",
+    "test_serviceregistry_service_that_not_exists",
 }
 
 
