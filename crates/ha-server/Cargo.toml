@@ -10,13 +10,21 @@ license.workspace = true
 name = "homeassistant"
 path = "src/main.rs"
 
+[features]
+default = []
+# Enable Python fallback for running Python integrations
+python = ["dep:ha-core-rs", "dep:pyo3-build-config"]
+
 [dependencies]
 anyhow = { workspace = true }
 ha-api = { path = "../ha-api" }
 ha-automation = { workspace = true }
 ha-config = { workspace = true }
+ha-config-entries = { workspace = true }
 ha-core = { workspace = true }
+ha-core-rs = { path = "../ha-core-rs", default-features = false, features = ["fallback"], optional = true }
 ha-event-bus = { workspace = true }
+ha-registries = { workspace = true }
 ha-script = { workspace = true }
 ha-service-registry = { workspace = true }
 ha-state-machine = { workspace = true }
@@ -26,6 +34,9 @@ serde_yaml = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+[build-dependencies]
+pyo3-build-config = { version = "0.22", optional = true }
 
 [dev-dependencies]
 tempfile = "3.10"

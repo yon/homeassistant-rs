@@ -22,6 +22,48 @@ from pathlib import Path
 # Organized by component we've implemented in Rust
 TEST_CATEGORIES = {
     # ==========================================================================
+    # Config Entries (tests/test_config_entries.py) - ha-config-entries crate
+    # ==========================================================================
+    "config_entries": [
+        # Basic entry management
+        "test_config_entries.py::test_entries_gets_entries",
+        "test_config_entries.py::test_domains_gets_domains_uniques",
+        "test_config_entries.py::test_entries_excludes_ignore_and_disabled",
+        # Setup and lifecycle
+        "test_config_entries.py::test_call_setup_entry",
+        "test_config_entries.py::test_add_entry_calls_setup_entry",
+        "test_config_entries.py::test_entry_setup_succeed",
+        "test_config_entries.py::test_entry_setup_invalid_state",
+        # Unload
+        "test_config_entries.py::test_entry_unload",
+        "test_config_entries.py::test_entry_unload_invalid_state",
+        # Reload
+        "test_config_entries.py::test_entry_reload_succeed",
+        "test_config_entries.py::test_entry_reload_not_loaded",
+        # Remove
+        "test_config_entries.py::test_remove_entry",
+        "test_config_entries.py::test_remove_entry_if_not_loaded",
+        # Disable/Enable
+        "test_config_entries.py::test_entry_disable_succeed",
+        # Update
+        "test_config_entries.py::test_updating_entry_data",
+        "test_config_entries.py::test_updating_entry_with_and_without_changes",
+        # Unique ID
+        "test_config_entries.py::test_unique_id_persisted",
+        "test_config_entries.py::test_unique_id_existing_entry",
+        # State transitions and errors
+        "test_config_entries.py::test_setup_raise_not_ready",
+        "test_config_entries.py::test_setup_raise_entry_error",
+        "test_config_entries.py::test_setup_raise_auth_failed",
+        "test_config_entries.py::test_entry_state_change_calls_listener",
+        # Storage/persistence
+        "test_config_entries.py::test_saving_and_loading",
+        "test_config_entries.py::test_loading_default_config",
+        # Migration
+        "test_config_entries.py::test_call_async_migrate_entry",
+    ],
+
+    # ==========================================================================
     # Core Types (tests/test_core.py) - ha-core crate
     # ==========================================================================
     "state": [
@@ -465,12 +507,13 @@ def list_categories():
     print("")
     print(f"Total: {total} tests across {len(TEST_CATEGORIES)} categories")
 
-def run_tests(categories: list[str] | None = None, verbose: bool = False) -> int:
+def run_tests(categories: list[str] | None = None, verbose: bool = False, use_mock: bool = False) -> int:
     """Run the compatibility tests against Rust implementations.
 
     Args:
         categories: List of test categories to run, or None for all
         verbose: Enable verbose output
+        use_mock: Use mock homeassistant package from python/ instead of real HA
 
     Returns:
         Exit code (0 for success)
@@ -478,10 +521,15 @@ def run_tests(categories: list[str] | None = None, verbose: bool = False) -> int
     repo_root = get_repo_root()
     ha_core = get_ha_core_dir()
     venv = repo_root / ".venv"
+    mock_package = repo_root / "python"
 
     if not ha_core.exists():
         print(f"Error: HA core not found at {ha_core}")
         print("Run: make ha-compat-setup")
+        return 1
+
+    if use_mock and not mock_package.exists():
+        print(f"Error: Mock package not found at {mock_package}")
         return 1
 
     # Build test patterns
@@ -509,22 +557,52 @@ def run_tests(categories: list[str] | None = None, verbose: bool = False) -> int
         "-x",  # Stop on first failure
     ]
 
-    # Add test patterns (relative to ha_core since we run from there)
-    for pattern in patterns:
-        pytest_args.append(f"tests/{pattern}")
+    # When using mock, use our own config to avoid pytest adding vendor/ha-core to sys.path
+    if use_mock:
+        pytest_args.extend([
+            f"--rootdir={repo_root}",  # Use repo root as rootdir
+            f"-c={mock_package}/pytest.ini",  # Use our pytest config, not HA's pyproject.toml
+            "-p", "no:cacheprovider",  # Disable cache to avoid path issues
+            "-p", "pytest_mock_ha",  # Load our mock injection plugin
+        ])
 
-    print(f"Running {len(patterns)} tests against Rust...")
+    # Add test patterns - use absolute paths when using mock to avoid cwd issues
+    if use_mock:
+        for pattern in patterns:
+            pytest_args.append(str(ha_core / "tests" / pattern))
+    else:
+        for pattern in patterns:
+            pytest_args.append(f"tests/{pattern}")
+
+    mode_desc = "mock homeassistant package" if use_mock else "Rust extension"
+    print(f"Running {len(patterns)} tests against {mode_desc}...")
     print("")
 
-    # Run pytest with PYTHONPATH set to include repo root
+    # Run pytest with PYTHONPATH set
     env = os.environ.copy()
-    pythonpath_parts = [str(repo_root)]
+    pythonpath_parts = []
+
+    # If using mock, set env var so root conftest.py activates mock mode
+    if use_mock:
+        env["HOMEASSISTANT_MOCK"] = "1"
+        pythonpath_parts.append(str(mock_package))
+        print(f"Using mock package: {mock_package}")
+
+    pythonpath_parts.append(str(repo_root))
     if "PYTHONPATH" in env:
         pythonpath_parts.append(env["PYTHONPATH"])
     env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
 
-    # Run from HA core directory so HA's tests can find their modules
-    result = subprocess.run(pytest_args, cwd=ha_core, env=env)
+    # For mock mode, use Python's -P flag and importlib mode
+    if use_mock:
+        pytest_args = [
+            sys.executable, "-P", "-m", "pytest",
+            "--import-mode=importlib",  # Don't add test directories to sys.path
+        ] + pytest_args[1:]  # Skip the original pytest path
+
+    # Run from HA core directory for non-mock mode, repo root for mock mode
+    cwd = repo_root if use_mock else ha_core
+    result = subprocess.run(pytest_args, cwd=cwd, env=env)
     return result.returncode
 
 def main():
@@ -534,6 +612,8 @@ def main():
                         help="Test category to run (can specify multiple)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     parser.add_argument("--all", "-a", action="store_true", help="Run all categories")
+    parser.add_argument("--mock", "-m", action="store_true",
+                        help="Use mock homeassistant package from python/ instead of real HA")
 
     args = parser.parse_args()
 
@@ -545,7 +625,7 @@ def main():
     if args.all:
         categories = None
 
-    return run_tests(categories=categories, verbose=args.verbose)
+    return run_tests(categories=categories, verbose=args.verbose, use_mock=args.mock)
 
 if __name__ == "__main__":
     sys.exit(main())

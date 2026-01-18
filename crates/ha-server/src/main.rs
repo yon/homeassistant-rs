@@ -8,8 +8,12 @@ use anyhow::Result;
 use ha_api::AppState;
 use ha_automation::AutomationConfig;
 use ha_config::CoreConfig;
+use ha_config_entries::ConfigEntries;
+#[cfg(feature = "python")]
+use ha_config_entries::ConfigEntryState;
 use ha_core::{Context, EntityId, ServiceCall, SupportsResponse};
 use ha_event_bus::EventBus;
+use ha_registries::Storage;
 use ha_service_registry::{ServiceDescription, ServiceRegistry};
 use ha_state_machine::StateMachine;
 use ha_template::TemplateEngine;
@@ -17,8 +21,12 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::{debug, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
+
+#[cfg(feature = "python")]
+use ha_core_rs::fallback::FallbackBridge;
 
 /// The central Home Assistant instance
 pub struct HomeAssistant {
@@ -26,17 +34,25 @@ pub struct HomeAssistant {
     pub automation_engine: automation_engine::AutomationEngine,
     /// Event bus for pub/sub communication
     pub bus: Arc<EventBus>,
+    /// Config entries manager
+    pub config_entries: Arc<RwLock<ConfigEntries>>,
     /// Service registry for service calls
     pub services: Arc<ServiceRegistry>,
     /// State machine for entity states
     pub states: Arc<StateMachine>,
     /// Template engine for rendering templates
     pub template_engine: Arc<TemplateEngine>,
+    /// Python fallback bridge for running Python integrations
+    #[cfg(feature = "python")]
+    pub python_bridge: Option<FallbackBridge>,
 }
 
 impl HomeAssistant {
     /// Create a new Home Assistant instance
-    pub fn new() -> Self {
+    ///
+    /// # Arguments
+    /// * `config_dir` - Path to the Home Assistant config directory
+    pub fn new(config_dir: &Path) -> Self {
         let bus = Arc::new(EventBus::new());
         let states = Arc::new(StateMachine::new(bus.clone()));
         let services = Arc::new(ServiceRegistry::new());
@@ -49,12 +65,42 @@ impl HomeAssistant {
             template_engine.clone(),
         );
 
+        // Create config entries manager with storage
+        let storage = Arc::new(Storage::new(config_dir));
+        let config_entries = Arc::new(RwLock::new(ConfigEntries::new(storage)));
+
+        // Initialize Python bridge if feature is enabled
+        // Use HA_PYTHON_PATH env var to point to a pip-installed Home Assistant
+        #[cfg(feature = "python")]
+        let python_bridge = match {
+            let ha_python_path = std::env::var("HA_PYTHON_PATH").map(PathBuf::from).ok();
+            FallbackBridge::new(ha_python_path.as_deref())
+        } {
+            Ok(bridge) => {
+                match bridge.python_version() {
+                    Ok(version) => info!("Python bridge initialized: Python {}", version),
+                    Err(_) => info!("Python bridge initialized"),
+                }
+                Some(bridge)
+            }
+            Err(e) => {
+                warn!(
+                    "Python bridge not available: {}. Running in Rust-only mode.",
+                    e
+                );
+                None
+            }
+        };
+
         Self {
             automation_engine,
             bus,
+            config_entries,
             services,
             states,
             template_engine,
+            #[cfg(feature = "python")]
+            python_bridge,
         }
     }
 
@@ -862,11 +908,7 @@ impl HomeAssistant {
     }
 }
 
-impl Default for HomeAssistant {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// Note: HomeAssistant no longer implements Default since new() requires config_dir
 
 /// Load components list from JSON file or use defaults
 fn load_components(config_dir: &std::path::Path) -> Vec<String> {
@@ -989,6 +1031,106 @@ fn load_automations(config_dir: &Path) -> Vec<AutomationConfig> {
     }
 }
 
+/// Load and setup config entries
+///
+/// Loads config entries from storage and sets up each one.
+/// If Python bridge is available, calls the integration's async_setup_entry.
+#[cfg(feature = "python")]
+async fn setup_config_entries(hass: &HomeAssistant) {
+    // Load config entries from storage
+    {
+        let manager = hass.config_entries.write().await;
+        if let Err(e) = manager.load().await {
+            warn!("Failed to load config entries: {}", e);
+            return;
+        }
+    }
+
+    // Get entries to setup
+    let entries: Vec<_> = {
+        let manager = hass.config_entries.read().await;
+        manager.iter().collect()
+    };
+
+    if entries.is_empty() {
+        debug!("No config entries to setup");
+        return;
+    }
+
+    info!("Setting up {} config entries", entries.len());
+
+    // Setup each entry using the Python bridge
+    if let Some(ref bridge) = hass.python_bridge {
+        for entry in entries {
+            let domain = entry.domain.clone();
+            let entry_id = entry.entry_id.clone();
+
+            // Skip already loaded entries
+            if entry.state == ConfigEntryState::Loaded {
+                debug!("Config entry {} already loaded", entry_id);
+                continue;
+            }
+
+            // Set state to SetupInProgress
+            {
+                let manager = hass.config_entries.read().await;
+                manager.set_state(&entry_id, ConfigEntryState::SetupInProgress, None);
+            }
+
+            // Call setup_config_entry via the bridge (handles all Python work internally)
+            let result = bridge.setup_config_entry(
+                &entry,
+                hass.bus.clone(),
+                hass.states.clone(),
+                hass.services.clone(),
+            );
+
+            // Update state based on result
+            let manager = hass.config_entries.read().await;
+            match result {
+                Ok(true) => {
+                    info!("Setup config entry: {} ({})", domain, entry_id);
+                    manager.set_state(&entry_id, ConfigEntryState::Loaded, None);
+                }
+                Ok(false) => {
+                    debug!("Integration {} doesn't support config entries", domain);
+                    manager.set_state(&entry_id, ConfigEntryState::NotLoaded, None);
+                }
+                Err(e) => {
+                    warn!("Failed to setup {}: {}", domain, e);
+                    manager.set_state(&entry_id, ConfigEntryState::SetupError, Some(e.to_string()));
+                }
+            }
+        }
+    } else {
+        debug!("Python bridge not available, skipping config entry setup");
+    }
+}
+
+#[cfg(not(feature = "python"))]
+async fn setup_config_entries(hass: &HomeAssistant) {
+    // Load config entries from storage (but don't setup since no Python)
+    {
+        let manager = hass.config_entries.write().await;
+        if let Err(e) = manager.load().await {
+            warn!("Failed to load config entries: {}", e);
+            return;
+        }
+    }
+
+    let count = {
+        let manager = hass.config_entries.read().await;
+        manager.len()
+    };
+
+    if count > 0 {
+        info!(
+            "Loaded {} config entries (Python bridge not available for setup)",
+            count
+        );
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
@@ -1026,7 +1168,7 @@ async fn main() -> Result<()> {
         CoreConfig::default()
     };
 
-    let hass = HomeAssistant::new();
+    let hass = HomeAssistant::new(&config_dir);
 
     // Register core services
     hass.register_core_services();
@@ -1085,6 +1227,9 @@ async fn main() -> Result<()> {
 
     // Start the automation engine
     hass.automation_engine.start().await;
+
+    // Load and setup config entries
+    setup_config_entries(&hass).await;
 
     info!("Home Assistant initialized");
 
@@ -1221,13 +1366,15 @@ script: []
 
     #[test]
     fn test_home_assistant_new() {
-        let hass = HomeAssistant::new();
+        let temp_dir = TempDir::new().unwrap();
+        let hass = HomeAssistant::new(temp_dir.path());
         assert!(!hass.automation_engine.is_running());
     }
 
     #[tokio::test]
     async fn test_automation_engine_start_stop() {
-        let hass = HomeAssistant::new();
+        let temp_dir = TempDir::new().unwrap();
+        let hass = HomeAssistant::new(temp_dir.path());
         assert!(!hass.automation_engine.is_running());
 
         hass.automation_engine.start().await;
@@ -1241,7 +1388,8 @@ script: []
 
     #[tokio::test]
     async fn test_automation_manager_load() {
-        let hass = HomeAssistant::new();
+        let temp_dir = TempDir::new().unwrap();
+        let hass = HomeAssistant::new(temp_dir.path());
 
         let configs = vec![AutomationConfig {
             id: Some("test_auto".to_string()),
@@ -1269,7 +1417,8 @@ script: []
 
     #[tokio::test]
     async fn test_automation_enable_disable() {
-        let hass = HomeAssistant::new();
+        let temp_dir = TempDir::new().unwrap();
+        let hass = HomeAssistant::new(temp_dir.path());
 
         let configs = vec![AutomationConfig {
             id: Some("test_auto".to_string()),
@@ -1331,7 +1480,8 @@ script: []
         use ha_core::Event;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        let hass = HomeAssistant::new();
+        let temp_dir = TempDir::new().unwrap();
+        let hass = HomeAssistant::new(temp_dir.path());
 
         // Track service calls
         let call_count = Arc::new(AtomicUsize::new(0));
@@ -1421,7 +1571,8 @@ script: []
         use ha_automation::trigger::{EntityIdSpec, StateMatch, StateTrigger, Trigger};
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        let hass = HomeAssistant::new();
+        let temp_dir = TempDir::new().unwrap();
+        let hass = HomeAssistant::new(temp_dir.path());
 
         // Track service calls
         let call_count = Arc::new(AtomicUsize::new(0));
@@ -1527,7 +1678,8 @@ script: []
         use ha_core::Event;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        let hass = HomeAssistant::new();
+        let temp_dir = TempDir::new().unwrap();
+        let hass = HomeAssistant::new(temp_dir.path());
 
         let call_count = Arc::new(AtomicUsize::new(0));
         let call_count_clone = call_count.clone();
@@ -1599,7 +1751,8 @@ script: []
         use ha_core::Event;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        let hass = HomeAssistant::new();
+        let temp_dir = TempDir::new().unwrap();
+        let hass = HomeAssistant::new(temp_dir.path());
 
         let call_count = Arc::new(AtomicUsize::new(0));
         let call_count_clone = call_count.clone();
