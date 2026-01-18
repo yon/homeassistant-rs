@@ -33,10 +33,21 @@ impl PythonRuntime {
     pub fn initialize(ha_path: Option<&Path>) -> FallbackResult<()> {
         // pyo3 with auto-initialize handles Python initialization
         Python::with_gil(|py| {
+            let sys = py.import_bound("sys")?;
+            let sys_path = sys.getattr("path")?;
+
+            // Add PYTHONPATH entries to sys.path (embedded Python doesn't auto-load these)
+            if let Ok(pythonpath) = std::env::var("PYTHONPATH") {
+                for path in pythonpath.split(':') {
+                    if !path.is_empty() {
+                        sys_path.call_method1("insert", (0, path))?;
+                        debug!("Added PYTHONPATH entry to sys.path: {}", path);
+                    }
+                }
+            }
+
             // Add Home Assistant path to sys.path if provided
             if let Some(path) = ha_path {
-                let sys = py.import_bound("sys")?;
-                let sys_path = sys.getattr("path")?;
                 sys_path.call_method1("insert", (0, path.to_string_lossy().as_ref()))?;
                 info!("Added Home Assistant path to sys.path: {:?}", path);
             }
@@ -142,5 +153,47 @@ mod tests {
             Ok(platform.to_string())
         });
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_sys_path_can_be_modified() {
+        // This test verifies that we can add entries to sys.path via Python,
+        // which is the mechanism used by initialize() to add PYTHONPATH entries
+
+        let test_path = "/test/unique/path/98765";
+
+        let result = with_gil(|py| {
+            let sys = py.import_bound("sys")?;
+            let sys_path = sys.getattr("path")?;
+
+            // Add the path
+            sys_path.call_method1("insert", (0, test_path))?;
+
+            // Verify it was added
+            let path_str = sys_path.to_string();
+            Ok(path_str.contains(test_path))
+        });
+
+        assert!(result.unwrap(), "Should be able to add entries to sys.path");
+    }
+
+    #[test]
+    fn test_initialize_with_ha_path() {
+        // Test that initialize() adds the ha_path to sys.path
+        let test_path = std::path::Path::new("/test/ha/path/54321");
+
+        // Call initialize with a specific path
+        let result = PythonRuntime::initialize(Some(test_path));
+        assert!(result.is_ok());
+
+        // Verify the path is in sys.path
+        let found = with_gil(|py| {
+            let sys = py.import_bound("sys")?;
+            let sys_path = sys.getattr("path")?;
+            let path_str = sys_path.to_string();
+            Ok(path_str.contains("/test/ha/path/54321"))
+        });
+
+        assert!(found.unwrap(), "ha_path should be added to sys.path");
     }
 }

@@ -5,7 +5,7 @@
 mod automation_engine;
 
 use anyhow::Result;
-use ha_api::AppState;
+use ha_api::{frontend::FrontendConfig, AppState};
 use ha_automation::AutomationConfig;
 use ha_config::CoreConfig;
 use ha_config_entries::ConfigEntries;
@@ -1233,6 +1233,21 @@ async fn main() -> Result<()> {
 
     info!("Home Assistant initialized");
 
+    // Configure frontend if HA_FRONTEND_PATH is set
+    let frontend_config = std::env::var("HA_FRONTEND_PATH").ok().and_then(|path| {
+        let frontend_path = PathBuf::from(&path);
+        if frontend_path.exists() {
+            info!("Frontend enabled: {:?}", frontend_path);
+            Some(FrontendConfig {
+                frontend_path,
+                theme_color: "#18BCF2".to_string(),
+            })
+        } else {
+            warn!("Frontend path does not exist: {:?}", path);
+            None
+        }
+    });
+
     // Create API state
     let api_state = AppState {
         event_bus: hass.bus.clone(),
@@ -1242,6 +1257,7 @@ async fn main() -> Result<()> {
         components: Arc::new(components),
         services_cache,
         events_cache,
+        frontend_config,
     };
 
     // Start API server

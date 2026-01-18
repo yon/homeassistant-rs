@@ -57,7 +57,7 @@ use ha_state_machine::StateMachine;
 use pyo3::prelude::*;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::info;
 
 /// Main entry point for fallback mode
 ///
