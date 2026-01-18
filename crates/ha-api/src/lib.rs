@@ -4,6 +4,7 @@
 //! Based on: https://developers.home-assistant.io/docs/api/rest
 //!           https://developers.home-assistant.io/docs/api/websocket
 
+pub mod frontend;
 mod websocket;
 
 use axum::{
@@ -37,6 +38,8 @@ pub struct AppState {
     pub services_cache: Option<Arc<serde_json::Value>>,
     /// Cached events response (loaded from JSON for comparison testing)
     pub events_cache: Option<Arc<serde_json::Value>>,
+    /// Frontend configuration (if serving frontend)
+    pub frontend_config: Option<frontend::FrontendConfig>,
 }
 
 /// API status response
@@ -164,7 +167,7 @@ pub fn create_router(state: AppState) -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    Router::new()
+    let api_router = Router::new()
         // WebSocket endpoint
         .route("/api/websocket", get(websocket::ws_handler))
         // Status endpoint
@@ -185,7 +188,16 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/health", get(health_check))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
-        .with_state(state)
+        .with_state(state.clone());
+
+    // If frontend is configured, merge frontend router
+    if let Some(frontend_config) = state.frontend_config {
+        let frontend_router = frontend::create_frontend_router(frontend_config);
+        // Frontend routes take lower priority than API routes
+        frontend_router.merge(api_router)
+    } else {
+        api_router
+    }
 }
 
 /// Start the API server
@@ -487,6 +499,7 @@ mod tests {
             components: Arc::new(vec![]),
             services_cache: None,
             events_cache: None,
+            frontend_config: None,
         }
     }
 

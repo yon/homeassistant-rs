@@ -33,10 +33,21 @@ impl PythonRuntime {
     pub fn initialize(ha_path: Option<&Path>) -> FallbackResult<()> {
         // pyo3 with auto-initialize handles Python initialization
         Python::with_gil(|py| {
+            let sys = py.import_bound("sys")?;
+            let sys_path = sys.getattr("path")?;
+
+            // Add PYTHONPATH entries to sys.path (embedded Python doesn't auto-load these)
+            if let Ok(pythonpath) = std::env::var("PYTHONPATH") {
+                for path in pythonpath.split(':') {
+                    if !path.is_empty() {
+                        sys_path.call_method1("insert", (0, path))?;
+                        debug!("Added PYTHONPATH entry to sys.path: {}", path);
+                    }
+                }
+            }
+
             // Add Home Assistant path to sys.path if provided
             if let Some(path) = ha_path {
-                let sys = py.import_bound("sys")?;
-                let sys_path = sys.getattr("path")?;
                 sys_path.call_method1("insert", (0, path.to_string_lossy().as_ref()))?;
                 info!("Added Home Assistant path to sys.path: {:?}", path);
             }

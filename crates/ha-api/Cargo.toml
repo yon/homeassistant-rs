@@ -16,7 +16,7 @@ ha-state-machine = { workspace = true }
 # Web framework
 axum = { workspace = true, features = ["ws"] }
 tower = { workspace = true }
-tower-http = { workspace = true }
+tower-http = { workspace = true, features = ["fs", "set-header"] }
 
 # Async
 futures = "0.3"
