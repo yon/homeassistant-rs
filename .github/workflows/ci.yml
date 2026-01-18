@@ -166,7 +166,11 @@ jobs:
         run: |
           docker compose -f tests/comparison/docker-compose.yml up -d
           echo "Waiting for HA to be ready..."
-          timeout 180 bash -c 'until curl -sf http://localhost:18123/api/ > /dev/null 2>&1; do sleep 5; done'
+          # Generate JWT token for API access (Docker bridge IPs aren't in trusted_networks)
+          pip install PyJWT > /dev/null
+          HA_TOKEN=$(python3 -c "import jwt; from datetime import datetime, timedelta, timezone; print(jwt.encode({'iss': 'test-long-lived-token-id-456', 'iat': datetime.now(timezone.utc), 'exp': datetime.now(timezone.utc) + timedelta(days=365)}, 'test-jwt-key-long-lived', algorithm='HS256'))")
+          echo "HA_TOKEN=$HA_TOKEN" >> $GITHUB_ENV
+          timeout 180 bash -c "until curl -sf -H 'Authorization: Bearer $HA_TOKEN' http://localhost:18123/api/ > /dev/null 2>&1; do sleep 5; done"
           echo "HA is ready"
 
       - name: Build Rust HA server
@@ -183,7 +187,7 @@ jobs:
         env:
           PYTHON_HA_URL: http://localhost:${{ env.PYTHON_HA_PORT }}
           RUST_HA_URL: http://localhost:${{ env.RUST_HA_PORT }}
-          PYTHON_HA_TOKEN: test_api_token_for_comparison_testing_do_not_use_in_production
+          PYTHON_HA_TOKEN: ${{ env.HA_TOKEN }}
           HA_VERSION: ${{ env.HA_VERSION }}
         run: cargo test -p ha-test-comparison -- --ignored --nocapture
 
@@ -238,7 +242,11 @@ jobs:
         run: |
           HA_IMAGE=ghcr.io/home-assistant/home-assistant:${{ matrix.ha_version }} \
             docker compose -f tests/comparison/docker-compose.yml up -d
-          timeout 180 bash -c 'until curl -sf http://localhost:18123/api/ > /dev/null 2>&1; do sleep 5; done'
+          # Generate JWT token for API access (Docker bridge IPs aren't in trusted_networks)
+          pip install PyJWT > /dev/null
+          HA_TOKEN=$(python3 -c "import jwt; from datetime import datetime, timedelta, timezone; print(jwt.encode({'iss': 'test-long-lived-token-id-456', 'iat': datetime.now(timezone.utc), 'exp': datetime.now(timezone.utc) + timedelta(days=365)}, 'test-jwt-key-long-lived', algorithm='HS256'))")
+          echo "HA_TOKEN=$HA_TOKEN" >> $GITHUB_ENV
+          timeout 180 bash -c "until curl -sf -H 'Authorization: Bearer $HA_TOKEN' http://localhost:18123/api/ > /dev/null 2>&1; do sleep 5; done"
 
       - name: Build and start Rust HA
         run: |
@@ -250,7 +258,7 @@ jobs:
         env:
           PYTHON_HA_URL: http://localhost:${{ env.PYTHON_HA_PORT }}
           RUST_HA_URL: http://localhost:${{ env.RUST_HA_PORT }}
-          PYTHON_HA_TOKEN: test_api_token_for_comparison_testing_do_not_use_in_production
+          PYTHON_HA_TOKEN: ${{ env.HA_TOKEN }}
           HA_VERSION: ${{ matrix.ha_version }}
         run: cargo test -p ha-test-comparison -- --ignored --nocapture
 
