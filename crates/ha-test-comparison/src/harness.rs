@@ -277,6 +277,7 @@ impl TestSuites {
     /// Run all API endpoint comparison tests
     pub async fn run_all(harness: &mut TestHarness) {
         Self::run_basic_endpoints(harness).await;
+        Self::run_auth_endpoints(harness).await;
         Self::run_state_endpoints(harness).await;
         Self::run_service_endpoints(harness).await;
         Self::run_event_endpoints(harness).await;
@@ -299,6 +300,29 @@ impl TestSuites {
                         .ignore_field("whitelist_external_dirs")
                         .ignore_field("allowlist_external_dirs"),
                 ),
+            )
+            .await
+            .print_summary();
+    }
+
+    /// Test authentication endpoints (stateless)
+    pub async fn run_auth_endpoints(harness: &mut TestHarness) {
+        println!("\n--- Auth Endpoints ---");
+
+        // GET /auth/providers
+        // Response format: {"providers": [...], "preselect_remember_me": bool}
+        harness
+            .compare_get("/auth/providers", None)
+            .await
+            .print_summary();
+
+        // GET /.well-known/oauth-authorization-server
+        // Response format: {"authorization_endpoint": "...", "token_endpoint": "...", ...}
+        // Ignore issuer field as it depends on the server's configured URL
+        harness
+            .compare_get(
+                "/.well-known/oauth-authorization-server",
+                Some(CompareOptions::new().ignore_field("issuer")),
             )
             .await
             .print_summary();
