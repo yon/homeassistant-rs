@@ -232,6 +232,11 @@ fn process_template(content: &str, config: &FrontendConfig) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use std::fs;
+    use tempfile::TempDir;
+    use tower::ServiceExt;
 
     #[test]
     fn test_process_template_theme_color() {
@@ -256,5 +261,172 @@ mod tests {
         let result = process_template(content, &config);
 
         assert_eq!(result, "<script></script>");
+    }
+
+    /// Create a mock frontend directory with test files
+    fn create_mock_frontend() -> TempDir {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path();
+
+        // Create index.html with template variable
+        fs::write(
+            path.join("index.html"),
+            r##"<!DOCTYPE html><html><head><meta name="theme-color" content="{{ theme_color }}"></head><body>Test</body></html>"##,
+        )
+        .unwrap();
+
+        // Create frontend_latest directory with a JS file
+        fs::create_dir_all(path.join("frontend_latest")).unwrap();
+        fs::write(
+            path.join("frontend_latest/app.js"),
+            "console.log('frontend');",
+        )
+        .unwrap();
+
+        // Create static directory with an icon
+        fs::create_dir_all(path.join("static/icons")).unwrap();
+        fs::write(path.join("static/icons/favicon.ico"), "fake-icon-data").unwrap();
+
+        // Create service_worker.js
+        fs::write(path.join("service_worker.js"), "// service worker").unwrap();
+
+        temp_dir
+    }
+
+    #[tokio::test]
+    async fn test_frontend_serves_index_html() {
+        let temp_dir = create_mock_frontend();
+        let config = FrontendConfig {
+            frontend_path: temp_dir.path().to_path_buf(),
+            theme_color: "#18BCF2".to_string(),
+        };
+
+        let app = create_frontend_router(config);
+
+        let response = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        // Verify template variable was replaced
+        assert!(body_str.contains(r##"content="#18BCF2""##));
+        assert!(!body_str.contains("{{ theme_color }}"));
+    }
+
+    #[tokio::test]
+    async fn test_frontend_serves_static_js() {
+        let temp_dir = create_mock_frontend();
+        let config = FrontendConfig {
+            frontend_path: temp_dir.path().to_path_buf(),
+            theme_color: "#18BCF2".to_string(),
+        };
+
+        let app = create_frontend_router(config);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/frontend_latest/app.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"console.log('frontend');");
+    }
+
+    #[tokio::test]
+    async fn test_frontend_serves_static_icons() {
+        let temp_dir = create_mock_frontend();
+        let config = FrontendConfig {
+            frontend_path: temp_dir.path().to_path_buf(),
+            theme_color: "#18BCF2".to_string(),
+        };
+
+        let app = create_frontend_router(config);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/static/icons/favicon.ico")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_frontend_serves_service_worker() {
+        let temp_dir = create_mock_frontend();
+        let config = FrontendConfig {
+            frontend_path: temp_dir.path().to_path_buf(),
+            theme_color: "#18BCF2".to_string(),
+        };
+
+        let app = create_frontend_router(config);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/service_worker.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"// service worker");
+    }
+
+    #[tokio::test]
+    async fn test_frontend_lovelace_routes_serve_index() {
+        let temp_dir = create_mock_frontend();
+        let config = FrontendConfig {
+            frontend_path: temp_dir.path().to_path_buf(),
+            theme_color: "#18BCF2".to_string(),
+        };
+
+        let app = create_frontend_router(config);
+
+        // Test /lovelace serves index.html
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/lovelace")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body_str.contains("<!DOCTYPE html>"));
     }
 }

@@ -35,3 +35,6 @@ tracing = { workspace = true }
 
 # Utilities
 dashmap = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
