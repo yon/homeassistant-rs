@@ -15,8 +15,8 @@ echo "Checking alphabetization..."
 echo "Running clippy..."
 cargo clippy --workspace --all-targets -- -D warnings
 
-# Unit tests (excluding ha-python-bridge which needs Python)
+# Unit tests (excluding ha-core-rs which needs Python)
 echo "Running tests..."
-cargo test --workspace --exclude ha-python-bridge
+cargo test --workspace --exclude ha-core-rs
 
 echo "All pre-commit checks passed!"

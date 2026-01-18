@@ -86,6 +86,10 @@ install-dev: $(VENV_STAMP) ## Install Python extension in development mode
 run: ## Run the Home Assistant server (Mode 2: standalone)
 	$(CARGO) run --bin homeassistant
 
+.PHONY: run-python
+run-python: $(VENV_STAMP) ## Run the Home Assistant server with Python integration support
+	HA_CONFIG_DIR=tests/comparison/config PYO3_PYTHON=$(CURDIR)/$(PYTHON) $(CARGO) run --bin homeassistant --features python
+
 .PHONY: run-release
 run-release: ## Run the Home Assistant server in release mode
 	$(CARGO) run --bin homeassistant --release
@@ -135,6 +139,10 @@ ha-compat-setup: $(VENV_STAMP) ## Setup HA compatibility test environment
 ha-compat-test: install-dev ## Run HA test suite with Rust extension
 	$(PYTHON) tests/ha_compat/run_tests.py --all -v
 
+.PHONY: ha-mock-test
+ha-mock-test: $(VENV_STAMP) ## Run HA test suite with mock homeassistant package
+	$(PYTHON) tests/ha_compat/run_tests.py --mock -v -c state
+
 .PHONY: ha-start
 ha-start: ## Start HA test instance in Docker
 	$(MAKE) -f tests/Makefile ha-start
@@ -155,15 +163,15 @@ test-compare: ## Run API comparison tests against Python HA
 
 .PHONY: test
 test: ## Run all Rust tests (excludes Python bridge, use python-test for that)
-	$(CARGO) test --workspace --exclude ha-python-bridge
+	$(CARGO) test --workspace --exclude ha-core-rs
+
+.PHONY: test-all
+test-all: test test-compat ## Run all tests including compat tests
 
 .PHONY: test-compat
 test-compat: ## Run HA compatibility tests (Rust-only, fast)
 	$(CARGO) test -p ha-automation --test compat_test
 	$(CARGO) test -p ha-script --test compat_test
-
-.PHONY: test-all
-test-all: test test-compat ## Run all tests including compat tests
 
 .PHONY: test-coverage
 test-coverage: ## Run tests with coverage (requires cargo-tarpaulin)
@@ -174,8 +182,8 @@ test-doc: ## Run documentation tests
 	$(CARGO) test --workspace --doc
 
 .PHONY: test-fallback
-test-fallback: ## Run Python fallback mode tests
-	PYO3_PYTHON=$(PYTHON_BIN) $(CARGO) test -p ha-python-bridge --features fallback --no-default-features --lib
+test-fallback: $(VENV_STAMP) ## Run Python fallback mode tests (ha-core-rs with embedded Python)
+	PYO3_PYTHON=$(CURDIR)/$(PYTHON) $(CARGO) test -p ha-core-rs --features fallback --no-default-features --lib
 
 .PHONY: test-verbose
 test-verbose: ## Run all tests with verbose output

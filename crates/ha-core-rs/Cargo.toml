@@ -1,6 +1,6 @@
 [package]
-name = "ha-python-bridge"
-description = "PyO3 bidirectional bridge for Home Assistant - supports both extension and embedded modes"
+name = "ha-core-rs"
+description = "Home Assistant core in Rust - PyO3 bridge for extension and embedded modes"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,7 +8,8 @@ license.workspace = true
 
 [lib]
 name = "ha_core_rs"
-crate-type = ["cdylib", "rlib"]
+# Use only rlib by default. For Python extension (cdylib), use `maturin build`.
+crate-type = ["rlib"]
 
 [features]
 default = ["extension"]

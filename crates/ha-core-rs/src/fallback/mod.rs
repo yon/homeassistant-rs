@@ -20,7 +20,7 @@
 //! ## Example
 //!
 //! ```ignore
-//! use ha_python_bridge::fallback::{PythonRuntime, IntegrationLoader, AsyncBridge};
+//! use ha_core_rs::fallback::{PythonRuntime, IntegrationLoader, AsyncBridge};
 //!
 //! // Initialize Python runtime
 //! PythonRuntime::initialize(Some(Path::new("/path/to/homeassistant")))?;
@@ -35,21 +35,29 @@
 //! ```
 
 mod async_bridge;
+mod config_entry;
 mod errors;
+mod hass_wrapper;
 mod integration;
 mod runtime;
 mod service_bridge;
 
 pub use async_bridge::{run_python_async, rust_future_to_python, AsyncBridge, PyFuture};
+pub use config_entry::{config_entry_to_python, create_config_entry_instance};
 pub use errors::{FallbackError, FallbackResult};
+pub use hass_wrapper::create_hass_wrapper;
 pub use integration::{ComponentRegistry, IntegrationLoader, IntegrationManifest};
 pub use runtime::{with_gil, PythonRuntime};
 pub use service_bridge::ServiceBridge;
 
+use ha_config_entries::ConfigEntry;
+use ha_event_bus::EventBus;
+use ha_service_registry::ServiceRegistry;
+use ha_state_machine::StateMachine;
 use pyo3::prelude::*;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{debug, info, warn};
 
 /// Main entry point for fallback mode
 ///
@@ -119,6 +127,58 @@ impl FallbackBridge {
         F: FnOnce(Python<'_>) -> PyResult<T>,
     {
         self.runtime.exec(f)
+    }
+
+    /// Setup a config entry by calling the Python integration's async_setup_entry
+    ///
+    /// This method:
+    /// 1. Creates a Python hass wrapper with the provided Rust components
+    /// 2. Converts the config entry to a Python object
+    /// 3. Calls the integration's async_setup_entry function
+    /// 4. Returns Ok(true) if setup succeeded, Ok(false) if integration doesn't support config entries
+    pub fn setup_config_entry(
+        &self,
+        entry: &ConfigEntry,
+        bus: Arc<EventBus>,
+        states: Arc<StateMachine>,
+        services: Arc<ServiceRegistry>,
+    ) -> FallbackResult<bool> {
+        let domain = &entry.domain;
+
+        Python::with_gil(|py| {
+            // Create Python hass wrapper
+            let py_hass = create_hass_wrapper(py, bus, states, services)?;
+
+            // Convert config entry to Python
+            let py_entry = config_entry_to_python(py, entry)?;
+
+            // Call setup_entry via the integration loader
+            self.integrations
+                .setup_entry(domain, &py_hass, &py_entry, &self.async_bridge)
+        })
+    }
+
+    /// Unload a config entry by calling the Python integration's async_unload_entry
+    pub fn unload_config_entry(
+        &self,
+        entry: &ConfigEntry,
+        bus: Arc<EventBus>,
+        states: Arc<StateMachine>,
+        services: Arc<ServiceRegistry>,
+    ) -> FallbackResult<bool> {
+        let domain = &entry.domain;
+
+        Python::with_gil(|py| {
+            // Create Python hass wrapper
+            let py_hass = create_hass_wrapper(py, bus, states, services)?;
+
+            // Convert config entry to Python
+            let py_entry = config_entry_to_python(py, entry)?;
+
+            // Call unload_entry via the integration loader
+            self.integrations
+                .unload_entry(domain, &py_hass, &py_entry, &self.async_bridge)
+        })
     }
 }
 

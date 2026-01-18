@@ -41,7 +41,7 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Run tests
-        run: cargo test --workspace --exclude ha-python-bridge
+        run: cargo test --workspace --exclude ha-core-rs
 
   test-fallback:
     runs-on: ubuntu-latest
@@ -70,7 +70,7 @@ jobs:
       - name: Run fallback mode tests
         env:
           PYO3_PYTHON: python3
-        run: cargo test -p ha-python-bridge --features fallback --no-default-features --lib
+        run: cargo test -p ha-core-rs --features fallback --no-default-features --lib
 
   ha-compat-test:
     runs-on: ubuntu-latest

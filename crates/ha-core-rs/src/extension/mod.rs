@@ -23,7 +23,8 @@ mod py_trigger;
 mod py_types;
 
 pub use py_area_registry::{PyAreaEntry, PyAreaRegistry};
-pub use py_automation::{PyAutomation, PyAutomationManager};
+// Note: PyAutomation and PyAutomationManager are not yet exposed in lib.rs
+// pub use py_automation::{PyAutomation, PyAutomationManager};
 pub use py_condition::{PyConditionEvaluator, PyEvalContext};
 pub use py_config_entries::{PyConfigEntries, PyConfigEntry};
 pub use py_device_registry::{PyDeviceEntry, PyDeviceRegistry};

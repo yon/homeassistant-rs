@@ -176,6 +176,86 @@ impl IntegrationLoader {
             Ok(value.unbind())
         })
     }
+
+    /// Setup a config entry for an integration
+    ///
+    /// Calls the Python integration's `async_setup_entry(hass, entry)` function.
+    /// Returns `Ok(true)` if setup succeeded, `Ok(false)` if the integration
+    /// doesn't support config entries.
+    pub fn setup_entry(
+        &self,
+        domain: &str,
+        hass: &PyObject,
+        entry: &PyObject,
+        async_bridge: &super::AsyncBridge,
+    ) -> FallbackResult<bool> {
+        // Load integration if not already loaded
+        self.load(domain)?;
+
+        Python::with_gil(|py| {
+            let module = self
+                .get(domain)
+                .ok_or_else(|| FallbackError::IntegrationNotFound(domain.to_string()))?;
+
+            let module = module.bind(py);
+
+            // Check if integration has async_setup_entry
+            if !module.hasattr("async_setup_entry")? {
+                debug!("Integration {} doesn't have async_setup_entry", domain);
+                return Ok(false);
+            }
+
+            // Call async_setup_entry(hass, entry)
+            let coro = module.call_method1("async_setup_entry", (hass, entry))?;
+
+            // Run the coroutine to completion
+            let result: bool = async_bridge.run_coroutine(coro.unbind())?;
+
+            info!("Setup entry for integration {}: {}", domain, result);
+            Ok(result)
+        })
+    }
+
+    /// Unload a config entry for an integration
+    ///
+    /// Calls the Python integration's `async_unload_entry(hass, entry)` function.
+    /// Returns `Ok(true)` if unload succeeded, `Ok(false)` if the integration
+    /// doesn't support unloading.
+    pub fn unload_entry(
+        &self,
+        domain: &str,
+        hass: &PyObject,
+        entry: &PyObject,
+        async_bridge: &super::AsyncBridge,
+    ) -> FallbackResult<bool> {
+        // Check if integration is loaded
+        if !self.is_loaded(domain) {
+            return Err(FallbackError::IntegrationNotFound(domain.to_string()));
+        }
+
+        Python::with_gil(|py| {
+            let module = self
+                .get(domain)
+                .ok_or_else(|| FallbackError::IntegrationNotFound(domain.to_string()))?;
+
+            let module = module.bind(py);
+
+            // Check if integration has async_unload_entry
+            if !module.hasattr("async_unload_entry")? {
+                debug!("Integration {} doesn't have async_unload_entry", domain);
+                return Ok(false);
+            }
+
+            // Call async_unload_entry(hass, entry)
+            let coro = module.call_method1("async_unload_entry", (hass, entry))?;
+
+            // Run the coroutine to completion
+            let result: bool = async_bridge.run_coroutine(coro.unbind())?;
+
+            info!("Unload entry for integration {}: {}", domain, result);
+            Ok(result)
+        })
+    }
 }
 
 impl Default for IntegrationLoader {

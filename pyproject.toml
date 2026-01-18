@@ -27,8 +27,8 @@ keywords = ["home-assistant", "rust", "automation", "iot"]
 Repository = "https://github.com/yon/homeassistant-rs"
 
 [tool.maturin]
-manifest-path = "crates/ha-python-bridge/Cargo.toml"
-module-name = "ha_core_rs"
+manifest-path = "crates/ha-core-rs/Cargo.toml"
+module-name = "homeassistant"
 features = ["extension"]
 strip = true
 # Use version from pyproject.toml, not Cargo.toml (which uses Rust-style versioning)

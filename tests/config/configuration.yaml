@@ -1,0 +1,7 @@
+homeassistant:
+  name: "Test Home"
+  latitude: 32.87336
+  longitude: -117.22743
+  elevation: 0
+  unit_system: metric
+  time_zone: "America/Los_Angeles"
