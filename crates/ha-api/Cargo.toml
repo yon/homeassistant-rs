@@ -26,6 +26,7 @@ tokio-stream = "0.1"
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_urlencoded = "0.7"
 
 # Time
 chrono = { workspace = true }
