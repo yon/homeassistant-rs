@@ -5,7 +5,7 @@
 mod automation_engine;
 
 use anyhow::Result;
-use ha_api::{frontend::FrontendConfig, AppState};
+use ha_api::{auth::AuthState, frontend::FrontendConfig, AppState};
 use ha_automation::AutomationConfig;
 use ha_config::CoreConfig;
 use ha_config_entries::ConfigEntries;
@@ -1248,7 +1248,7 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Create API state
+    // Create API state with auth (mark as onboarded for dev mode)
     let api_state = AppState {
         event_bus: hass.bus.clone(),
         state_machine: hass.states.clone(),
@@ -1258,6 +1258,7 @@ async fn main() -> Result<()> {
         services_cache,
         events_cache,
         frontend_config,
+        auth_state: AuthState::new_onboarded(),
     };
 
     // Start API server

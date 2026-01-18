@@ -4,6 +4,7 @@
 //! Based on: https://developers.home-assistant.io/docs/api/rest
 //!           https://developers.home-assistant.io/docs/api/websocket
 
+pub mod auth;
 pub mod frontend;
 mod websocket;
 
@@ -40,6 +41,8 @@ pub struct AppState {
     pub events_cache: Option<Arc<serde_json::Value>>,
     /// Frontend configuration (if serving frontend)
     pub frontend_config: Option<frontend::FrontendConfig>,
+    /// Authentication state
+    pub auth_state: auth::AuthState,
 }
 
 /// API status response
@@ -167,6 +170,18 @@ pub fn create_router(state: AppState) -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
+    // Auth routes (separate state for auth endpoints)
+    let auth_router = Router::new()
+        .route("/auth/providers", get(auth::get_providers))
+        .route("/auth/login_flow", post(auth::create_login_flow))
+        .route("/auth/login_flow/:flow_id", post(auth::submit_login_flow))
+        .route("/auth/token", post(auth::get_token))
+        .route(
+            "/.well-known/oauth-authorization-server",
+            get(auth::oauth_metadata),
+        )
+        .with_state(state.auth_state.clone());
+
     let api_router = Router::new()
         // WebSocket endpoint
         .route("/api/websocket", get(websocket::ws_handler))
@@ -188,7 +203,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/health", get(health_check))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
-        .with_state(state.clone());
+        .with_state(state.clone())
+        // Merge auth routes
+        .merge(auth_router);
 
     // If frontend is configured, merge frontend router
     if let Some(frontend_config) = state.frontend_config {
@@ -500,6 +517,7 @@ mod tests {
             services_cache: None,
             events_cache: None,
             frontend_config: None,
+            auth_state: auth::AuthState::new_onboarded(),
         }
     }
 
@@ -622,5 +640,91 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_auth_providers() {
+        let state = create_test_state();
+        let app = create_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/auth/providers")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert!(json.get("providers").is_some());
+        let providers = json["providers"].as_array().unwrap();
+        assert!(!providers.is_empty());
+        assert_eq!(providers[0]["type"], "homeassistant");
+    }
+
+    #[tokio::test]
+    async fn test_auth_login_flow() {
+        let state = create_test_state();
+        let app = create_router(state);
+
+        // Start login flow
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/auth/login_flow")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"client_id":"http://localhost:8123/","handler":["homeassistant",null],"redirect_uri":"/"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["type"], "form");
+        assert!(json.get("flow_id").is_some());
+        assert!(json.get("data_schema").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_oauth_metadata() {
+        let state = create_test_state();
+        let app = create_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/.well-known/oauth-authorization-server")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["token_endpoint"], "/auth/token");
+        assert_eq!(json["authorization_endpoint"], "/auth/authorize");
     }
 }
