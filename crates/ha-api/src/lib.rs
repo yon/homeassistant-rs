@@ -144,6 +144,13 @@ pub struct ServiceCallRequest {
     pub service_data: HashMap<String, serde_json::Value>,
 }
 
+/// Onboarding step status
+#[derive(Serialize)]
+pub struct OnboardingStepResponse {
+    pub step: String,
+    pub done: bool,
+}
+
 /// Event fire request
 #[derive(Deserialize)]
 pub struct FireEventRequest {
@@ -201,6 +208,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/events/:event_type", post(fire_event))
         // Health check
         .route("/api/health", get(health_check))
+        // Onboarding status (always returns "done" for all steps)
+        .route("/api/onboarding", get(get_onboarding))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
         .with_state(state.clone())
@@ -237,6 +246,29 @@ async fn api_status() -> Json<ApiStatus> {
 /// GET /api/health - Health check endpoint
 async fn health_check() -> &'static str {
     "OK"
+}
+
+/// GET /api/onboarding - Returns onboarding status
+/// Always returns all steps as done (we don't support onboarding flow)
+async fn get_onboarding() -> Json<Vec<OnboardingStepResponse>> {
+    Json(vec![
+        OnboardingStepResponse {
+            step: "user".to_string(),
+            done: true,
+        },
+        OnboardingStepResponse {
+            step: "core_config".to_string(),
+            done: true,
+        },
+        OnboardingStepResponse {
+            step: "analytics".to_string(),
+            done: true,
+        },
+        OnboardingStepResponse {
+            step: "integration".to_string(),
+            done: true,
+        },
+    ])
 }
 
 /// GET /api/config - Returns configuration
