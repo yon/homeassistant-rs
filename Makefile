@@ -203,5 +203,5 @@ update: ## Update dependencies
 $(VENV_STAMP):
 	$(PYTHON_BIN) -m venv $(VENV)
 	$(VENV_BIN)/pip install --upgrade pip
-	$(VENV_BIN)/pip install maturin
+	$(VENV_BIN)/pip install maturin pytest pytest-asyncio
 	touch $(VENV_STAMP)
