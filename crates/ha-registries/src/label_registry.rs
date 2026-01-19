@@ -21,7 +21,8 @@ pub const STORAGE_MINOR_VERSION: u32 = 2;
 /// A registered label entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LabelEntry {
-    /// Internal UUID (also used as label_id)
+    /// Internal UUID (stored as "label_id" in HA storage)
+    #[serde(alias = "label_id")]
     pub id: String,
 
     /// Label name (e.g., "Critical", "Outdoor")

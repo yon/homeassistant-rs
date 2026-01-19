@@ -23,4 +23,5 @@ urlencoding = "2.1"
 
 [dev-dependencies]
 ha-event-bus = { workspace = true }
+tempfile = { workspace = true }
 tokio = { workspace = true }

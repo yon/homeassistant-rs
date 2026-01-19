@@ -21,7 +21,8 @@ pub const STORAGE_MINOR_VERSION: u32 = 2;
 /// A registered floor entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FloorEntry {
-    /// Internal UUID
+    /// Internal UUID (stored as "floor_id" in HA storage)
+    #[serde(alias = "floor_id")]
     pub id: String,
 
     /// Floor name (e.g., "Ground Floor", "First Floor")

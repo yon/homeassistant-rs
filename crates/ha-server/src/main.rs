@@ -59,7 +59,19 @@ impl HomeAssistant {
         let bus = Arc::new(EventBus::new());
         let states = Arc::new(StateMachine::new(bus.clone()));
         let services = Arc::new(ServiceRegistry::new());
-        let template_engine = Arc::new(TemplateEngine::new(states.clone()));
+
+        // Create template engine and load custom templates before wrapping in Arc
+        let mut template_engine = TemplateEngine::new(states.clone());
+        match template_engine.load_custom_templates(config_dir) {
+            Ok(count) if count > 0 => {
+                info!("Loaded {} custom templates", count);
+            }
+            Ok(_) => {}
+            Err(e) => {
+                warn!("Failed to load custom templates: {}", e);
+            }
+        }
+        let template_engine = Arc::new(template_engine);
 
         let automation_engine = automation_engine::AutomationEngine::new(
             bus.clone(),

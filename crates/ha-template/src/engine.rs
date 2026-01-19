@@ -247,6 +247,89 @@ impl TemplateEngine {
     pub fn states(&self) -> &StatesObject {
         &self.states
     }
+
+    /// Load custom Jinja templates from config_dir/custom_templates/
+    ///
+    /// Custom templates can define macros that are then imported in other templates:
+    /// ```jinja
+    /// {% from 'locks.jinja' import classify_locks %}
+    /// {{ classify_locks() }}
+    /// ```
+    ///
+    /// Idempotent: safe to call multiple times (overwrites existing templates).
+    pub fn load_custom_templates(&mut self, config_dir: &std::path::Path) -> TemplateResult<usize> {
+        use crate::error::TemplateError;
+
+        let custom_dir = config_dir.join("custom_templates");
+        if !custom_dir.exists() {
+            debug!(
+                "No custom_templates directory found at {}",
+                custom_dir.display()
+            );
+            return Ok(0);
+        }
+
+        let mut count = 0;
+        for entry in std::fs::read_dir(&custom_dir).map_err(|e| TemplateError::IoError {
+            path: custom_dir.clone(),
+            source: e,
+        })? {
+            let entry = entry.map_err(|e| TemplateError::IoError {
+                path: custom_dir.clone(),
+                source: e,
+            })?;
+            let path = entry.path();
+
+            // Only load .jinja files
+            if path.extension().is_some_and(|e| e == "jinja") {
+                let name = path
+                    .file_name()
+                    .ok_or_else(|| TemplateError::InvalidPath { path: path.clone() })?
+                    .to_string_lossy()
+                    .to_string();
+
+                let content =
+                    std::fs::read_to_string(&path).map_err(|e| TemplateError::IoError {
+                        path: path.clone(),
+                        source: e,
+                    })?;
+
+                // Pre-process content to fix Python-style escape sequences
+                // minijinja is stricter than Python Jinja2 about escapes like \.
+                let content = normalize_escape_sequences(&content);
+
+                self.env
+                    .add_template_owned(name.clone(), content)
+                    .map_err(|e| TemplateError::ParseError {
+                        name: name.clone(),
+                        message: e.to_string(),
+                    })?;
+
+                debug!("Loaded custom template: {}", name);
+                count += 1;
+            }
+        }
+
+        if count > 0 {
+            tracing::info!(
+                "Loaded {} custom templates from {}",
+                count,
+                custom_dir.display()
+            );
+        }
+
+        Ok(count)
+    }
+
+    /// Reload custom templates (for homeassistant.reload_custom_templates service)
+    ///
+    /// This is equivalent to calling load_custom_templates again.
+    pub fn reload_custom_templates(
+        &mut self,
+        config_dir: &std::path::Path,
+    ) -> TemplateResult<usize> {
+        self.load_custom_templates(config_dir)
+    }
 }
 
 /// Create a standalone template engine for testing
@@ -256,6 +339,70 @@ pub fn create_test_engine() -> TemplateEngine {
     let event_bus = Arc::new(EventBus::new());
     let state_machine = Arc::new(StateMachine::new(event_bus));
     TemplateEngine::new(state_machine)
+}
+
+/// Normalize escape sequences in template content for minijinja compatibility.
+///
+/// Python Jinja2 is lenient about escape sequences in strings - unknown escapes
+/// like `\.` are preserved as-is. minijinja is stricter and errors on them.
+///
+/// This function doubles backslashes that aren't part of recognized escape sequences,
+/// but only within string literals (single or double quoted).
+///
+/// Recognized escapes (that should NOT be doubled): \n, \r, \t, \\, \', \", \0, \xHH
+fn normalize_escape_sequences(content: &str) -> String {
+    let mut result = String::with_capacity(content.len() + content.len() / 10);
+    let chars: Vec<char> = content.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        let c = chars[i];
+
+        // Check for string literal start
+        if c == '\'' || c == '"' {
+            let quote = c;
+            result.push(c);
+            i += 1;
+
+            // Process inside string until closing quote
+            while i < chars.len() {
+                let sc = chars[i];
+
+                if sc == quote {
+                    // End of string
+                    result.push(sc);
+                    i += 1;
+                    break;
+                } else if sc == '\\' && i + 1 < chars.len() {
+                    let next = chars[i + 1];
+                    // Check if it's a recognized escape sequence
+                    if matches!(
+                        next,
+                        'n' | 'r' | 't' | '\\' | '\'' | '"' | '0' | 'x' | 'u' | 'U'
+                    ) {
+                        // Recognized escape - keep as-is
+                        result.push(sc);
+                        result.push(next);
+                        i += 2;
+                    } else {
+                        // Unknown escape like \. - double the backslash
+                        result.push('\\');
+                        result.push('\\');
+                        result.push(next);
+                        i += 2;
+                    }
+                } else {
+                    result.push(sc);
+                    i += 1;
+                }
+            }
+        } else {
+            result.push(c);
+            i += 1;
+        }
+    }
+
+    result
 }
 
 #[cfg(test)]
@@ -538,5 +685,155 @@ Light is off
         assert!(TemplateEngine::is_template("{% if true %}{% endif %}"));
         assert!(TemplateEngine::is_template("{# comment #}"));
         assert!(!TemplateEngine::is_template("plain text"));
+    }
+
+    // ==================== Custom Template Loading Tests ====================
+
+    #[test]
+    fn test_load_custom_templates() {
+        use std::io::Write;
+        use tempfile::TempDir;
+
+        let mut engine = make_test_engine();
+
+        // Create temp directory with custom_templates subdirectory
+        let temp_dir = TempDir::new().unwrap();
+        let custom_dir = temp_dir.path().join("custom_templates");
+        std::fs::create_dir(&custom_dir).unwrap();
+
+        // Create a test macro template
+        let mut file = std::fs::File::create(custom_dir.join("test_macro.jinja")).unwrap();
+        write!(
+            file,
+            r#"{{% macro greet(name) %}}Hello, {{{{ name }}}}!{{% endmacro %}}"#
+        )
+        .unwrap();
+
+        // Load custom templates
+        let count = engine.load_custom_templates(temp_dir.path()).unwrap();
+        assert_eq!(count, 1);
+
+        // Use the macro in a template
+        let result = engine
+            .render("{% from 'test_macro.jinja' import greet %}{{ greet('World') }}")
+            .unwrap();
+        assert_eq!(result, "Hello, World!");
+    }
+
+    #[test]
+    fn test_load_custom_templates_no_dir() {
+        use tempfile::TempDir;
+
+        let mut engine = make_test_engine();
+        let temp_dir = TempDir::new().unwrap();
+
+        // No custom_templates directory - should return 0, not error
+        let count = engine.load_custom_templates(temp_dir.path()).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_load_custom_templates_ignores_non_jinja() {
+        use std::io::Write;
+        use tempfile::TempDir;
+
+        let mut engine = make_test_engine();
+
+        let temp_dir = TempDir::new().unwrap();
+        let custom_dir = temp_dir.path().join("custom_templates");
+        std::fs::create_dir(&custom_dir).unwrap();
+
+        // Create a .jinja file and a .txt file
+        std::fs::File::create(custom_dir.join("valid.jinja"))
+            .unwrap()
+            .write_all(b"{% macro test() %}ok{% endmacro %}")
+            .unwrap();
+        std::fs::File::create(custom_dir.join("ignored.txt"))
+            .unwrap()
+            .write_all(b"ignored")
+            .unwrap();
+
+        let count = engine.load_custom_templates(temp_dir.path()).unwrap();
+        assert_eq!(count, 1); // Only the .jinja file
+    }
+
+    #[test]
+    fn test_reload_custom_templates() {
+        use std::io::Write;
+        use tempfile::TempDir;
+
+        let mut engine = make_test_engine();
+
+        let temp_dir = TempDir::new().unwrap();
+        let custom_dir = temp_dir.path().join("custom_templates");
+        std::fs::create_dir(&custom_dir).unwrap();
+
+        // Create initial template
+        std::fs::File::create(custom_dir.join("version.jinja"))
+            .unwrap()
+            .write_all(b"{% macro version() %}v1{% endmacro %}")
+            .unwrap();
+
+        engine.load_custom_templates(temp_dir.path()).unwrap();
+
+        let result = engine
+            .render("{% from 'version.jinja' import version %}{{ version() }}")
+            .unwrap();
+        assert_eq!(result, "v1");
+
+        // Update template
+        std::fs::File::create(custom_dir.join("version.jinja"))
+            .unwrap()
+            .write_all(b"{% macro version() %}v2{% endmacro %}")
+            .unwrap();
+
+        // Reload
+        engine.reload_custom_templates(temp_dir.path()).unwrap();
+
+        let result = engine
+            .render("{% from 'version.jinja' import version %}{{ version() }}")
+            .unwrap();
+        assert_eq!(result, "v2");
+    }
+
+    // ==================== Escape Sequence Normalization Tests ====================
+
+    #[test]
+    fn test_normalize_escape_sequences_basic() {
+        // Known escapes should be preserved
+        assert_eq!(normalize_escape_sequences(r"'\n'"), r"'\n'");
+        assert_eq!(normalize_escape_sequences(r"'\t'"), r"'\t'");
+        assert_eq!(normalize_escape_sequences(r"'\\'"), r"'\\'");
+        assert_eq!(normalize_escape_sequences(r"'\''"), r"'\''");
+    }
+
+    #[test]
+    fn test_normalize_escape_sequences_regex() {
+        // Unknown escapes like \. should be doubled
+        assert_eq!(normalize_escape_sequences(r"'\.'"), r"'\\.'");
+        assert_eq!(normalize_escape_sequences(r"'^light\.'"), r"'^light\\.'");
+    }
+
+    #[test]
+    fn test_normalize_escape_sequences_double_quoted() {
+        // Works with double quotes too
+        assert_eq!(normalize_escape_sequences(r#""\d+""#), r#""\\d+""#);
+    }
+
+    #[test]
+    fn test_normalize_escape_sequences_outside_string() {
+        // Content outside strings is unchanged
+        assert_eq!(
+            normalize_escape_sequences(r"{% if x %}'\.'{% endif %}"),
+            r"{% if x %}'\\.'{% endif %}"
+        );
+    }
+
+    #[test]
+    fn test_normalize_escape_sequences_complex() {
+        // Test the actual pattern from lights.jinja
+        let input = r"| rejectattr('entity_id', 'search', '^light\.homekit_')";
+        let expected = r"| rejectattr('entity_id', 'search', '^light\\.homekit_')";
+        assert_eq!(normalize_escape_sequences(input), expected);
     }
 }
