@@ -13,7 +13,7 @@ use ha_config_entries::ConfigEntries;
 use ha_config_entries::ConfigEntryState;
 use ha_core::{Context, EntityId, ServiceCall, SupportsResponse};
 use ha_event_bus::EventBus;
-use ha_registries::Storage;
+use ha_registries::{Registries, Storage};
 use ha_service_registry::{ServiceDescription, ServiceRegistry};
 use ha_state_machine::StateMachine;
 use ha_template::TemplateEngine;
@@ -1231,6 +1231,12 @@ async fn main() -> Result<()> {
     // Load and setup config entries
     setup_config_entries(&hass).await;
 
+    // Create and load registries
+    let registries = Arc::new(Registries::new(&config_dir));
+    if let Err(e) = registries.load_all().await {
+        warn!("Failed to load registries: {}", e);
+    }
+
     info!("Home Assistant initialized");
 
     // Configure frontend if HA_FRONTEND_PATH is set
@@ -1255,6 +1261,7 @@ async fn main() -> Result<()> {
         service_registry: hass.services.clone(),
         config: Arc::new(config),
         components: Arc::new(components),
+        registries,
         services_cache,
         events_cache,
         frontend_config,

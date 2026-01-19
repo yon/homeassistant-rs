@@ -18,6 +18,7 @@ use axum::{
 use ha_config::CoreConfig;
 use ha_core::{Context, EntityId, Event};
 use ha_event_bus::EventBus;
+use ha_registries::Registries;
 use ha_service_registry::ServiceRegistry;
 use ha_state_machine::StateMachine;
 use serde::{Deserialize, Serialize};
@@ -35,6 +36,8 @@ pub struct AppState {
     pub service_registry: Arc<ServiceRegistry>,
     pub config: Arc<CoreConfig>,
     pub components: Arc<Vec<String>>,
+    /// Registries (entity, device, area, floor, label)
+    pub registries: Arc<Registries>,
     /// Cached services response (loaded from JSON for comparison testing)
     pub services_cache: Option<Arc<serde_json::Value>>,
     /// Cached events response (loaded from JSON for comparison testing)
@@ -540,12 +543,16 @@ mod tests {
         let event_bus = Arc::new(EventBus::new());
         let state_machine = Arc::new(StateMachine::new(event_bus.clone()));
         let service_registry = Arc::new(ServiceRegistry::new());
+        // Use a temp directory for test registries
+        let temp_dir = std::env::temp_dir().join("ha-api-test");
+        let registries = Arc::new(Registries::new(&temp_dir));
         AppState {
             event_bus,
             state_machine,
             service_registry,
             config: Arc::new(CoreConfig::default()),
             components: Arc::new(vec![]),
+            registries,
             services_cache: None,
             events_cache: None,
             frontend_config: None,

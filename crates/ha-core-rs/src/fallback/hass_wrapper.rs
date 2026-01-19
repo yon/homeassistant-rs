@@ -186,22 +186,243 @@ fn create_config_entries_wrapper(py: Python<'_>) -> PyResult<PyObject> {
     let simple_namespace = types.getattr("SimpleNamespace")?;
     let wrapper = simple_namespace.call0()?;
 
-    // Create the config entries methods
+    // Create the config entries methods with actual platform loading
     let code = r#"
 import logging
 import asyncio
+import importlib
+from datetime import datetime, timezone
 
 _LOGGER = logging.getLogger(__name__)
 
 # Store for loaded platforms per entry
 _loaded_platforms = {}
 
+# Store reference to hass (set by integration.py when calling setup)
+_hass = None
+
+def set_hass(hass):
+    """Store the hass reference for platform setup."""
+    global _hass
+    _hass = hass
+
+def _generate_entity_id(domain, platform, suggested_id, existing_ids):
+    """Generate a unique entity ID."""
+    base_id = f"{domain}.{suggested_id}" if suggested_id else f"{domain}.{platform}_entity"
+    entity_id = base_id
+    counter = 1
+    while entity_id in existing_ids:
+        entity_id = f"{base_id}_{counter}"
+        counter += 1
+    return entity_id
+
+def _create_add_entities_callback(hass, entry, platform_name):
+    """Create the async_add_entities callback for a platform.
+
+    This callback is called by the platform's async_setup_entry to add entities.
+    We extract entity state and attributes and set them in the state machine.
+    """
+    existing_ids = set()
+
+    def add_entities(entities, update_before_add=False, config_subentry_id=None):
+        """Add entities to Home Assistant."""
+        for entity in entities:
+            try:
+                # Get domain from the entity class or default to platform
+                domain = getattr(entity, 'platform', None)
+                if domain is None:
+                    # Try to infer from class name (e.g., LightEntity -> light)
+                    class_name = entity.__class__.__name__
+                    if 'Light' in class_name:
+                        domain = 'light'
+                    elif 'Sensor' in class_name:
+                        domain = 'sensor'
+                    elif 'Switch' in class_name:
+                        domain = 'switch'
+                    elif 'Binary' in class_name:
+                        domain = 'binary_sensor'
+                    elif 'Climate' in class_name:
+                        domain = 'climate'
+                    elif 'Cover' in class_name:
+                        domain = 'cover'
+                    elif 'Fan' in class_name:
+                        domain = 'fan'
+                    elif 'Lock' in class_name:
+                        domain = 'lock'
+                    elif 'Media' in class_name:
+                        domain = 'media_player'
+                    elif 'Vacuum' in class_name:
+                        domain = 'vacuum'
+                    elif 'Camera' in class_name:
+                        domain = 'camera'
+                    elif 'Alarm' in class_name:
+                        domain = 'alarm_control_panel'
+                    elif 'Weather' in class_name:
+                        domain = 'weather'
+                    elif 'Number' in class_name:
+                        domain = 'number'
+                    elif 'Select' in class_name:
+                        domain = 'select'
+                    elif 'Button' in class_name:
+                        domain = 'button'
+                    else:
+                        domain = platform_name
+
+                # Get entity unique_id and generate entity_id
+                unique_id = getattr(entity, '_attr_unique_id', None) or getattr(entity, 'unique_id', None)
+                suggested_id = unique_id or getattr(entity, '_attr_name', None) or getattr(entity, 'name', 'entity')
+                # Clean the suggested_id
+                if suggested_id:
+                    suggested_id = str(suggested_id).lower().replace(' ', '_').replace('-', '_')
+
+                entity_id = _generate_entity_id(domain, platform_name, suggested_id, existing_ids)
+                existing_ids.add(entity_id)
+
+                # Store the entity_id on the entity for future reference
+                entity.entity_id = entity_id
+
+                # Get entity state
+                state = None
+                # Try different state attributes based on entity type
+                if hasattr(entity, '_attr_is_on'):
+                    state = 'on' if entity._attr_is_on else 'off'
+                elif hasattr(entity, 'is_on'):
+                    try:
+                        is_on = entity.is_on
+                        if callable(is_on):
+                            is_on = is_on()
+                        state = 'on' if is_on else 'off'
+                    except:
+                        pass
+                elif hasattr(entity, '_state'):
+                    state = entity._state
+                    if isinstance(state, bool):
+                        state = 'on' if state else 'off'
+                elif hasattr(entity, '_attr_native_value'):
+                    state = str(entity._attr_native_value) if entity._attr_native_value is not None else 'unknown'
+                elif hasattr(entity, 'native_value'):
+                    try:
+                        val = entity.native_value
+                        if callable(val):
+                            val = val()
+                        state = str(val) if val is not None else 'unknown'
+                    except:
+                        state = 'unknown'
+
+                # Default state based on domain
+                if state is None:
+                    if domain in ('light', 'switch', 'fan'):
+                        state = 'off'
+                    elif domain == 'binary_sensor':
+                        state = 'off'
+                    else:
+                        state = 'unknown'
+
+                # Convert bool to on/off string
+                if isinstance(state, bool):
+                    state = 'on' if state else 'off'
+                state = str(state)
+
+                # Build attributes dict
+                attributes = {}
+
+                # Get friendly name
+                name = getattr(entity, '_attr_name', None) or getattr(entity, 'name', None)
+                if name:
+                    attributes['friendly_name'] = str(name)
+                elif hasattr(entity, '_attr_device_info'):
+                    device_info = entity._attr_device_info
+                    if device_info and hasattr(device_info, 'get'):
+                        attributes['friendly_name'] = device_info.get('name', suggested_id)
+                    elif hasattr(device_info, 'name'):
+                        attributes['friendly_name'] = device_info.name
+
+                # Get device class
+                device_class = getattr(entity, '_attr_device_class', None) or getattr(entity, 'device_class', None)
+                if device_class:
+                    # Handle enums
+                    if hasattr(device_class, 'value'):
+                        device_class = device_class.value
+                    attributes['device_class'] = str(device_class)
+
+                # Get unit of measurement
+                unit = getattr(entity, '_attr_native_unit_of_measurement', None) or \
+                       getattr(entity, '_attr_unit_of_measurement', None) or \
+                       getattr(entity, 'native_unit_of_measurement', None) or \
+                       getattr(entity, 'unit_of_measurement', None)
+                if unit:
+                    attributes['unit_of_measurement'] = str(unit)
+
+                # Get icon
+                icon = getattr(entity, '_attr_icon', None) or getattr(entity, 'icon', None)
+                if icon:
+                    attributes['icon'] = str(icon)
+
+                # Light-specific attributes
+                if domain == 'light':
+                    brightness = getattr(entity, '_brightness', None) or getattr(entity, '_attr_brightness', None)
+                    if brightness is not None:
+                        attributes['brightness'] = brightness
+
+                    color_mode = getattr(entity, '_color_mode', None) or getattr(entity, '_attr_color_mode', None)
+                    if color_mode:
+                        if hasattr(color_mode, 'value'):
+                            color_mode = color_mode.value
+                        attributes['color_mode'] = str(color_mode)
+
+                    color_modes = getattr(entity, '_color_modes', None) or getattr(entity, '_attr_supported_color_modes', None)
+                    if color_modes:
+                        attributes['supported_color_modes'] = [str(m.value) if hasattr(m, 'value') else str(m) for m in color_modes]
+
+                    hs_color = getattr(entity, '_hs_color', None) or getattr(entity, '_attr_hs_color', None)
+                    if hs_color:
+                        attributes['hs_color'] = list(hs_color)
+
+                    ct = getattr(entity, '_ct', None) or getattr(entity, '_attr_color_temp_kelvin', None)
+                    if ct:
+                        attributes['color_temp_kelvin'] = ct
+
+                    effect = getattr(entity, '_effect', None) or getattr(entity, '_attr_effect', None)
+                    if effect:
+                        attributes['effect'] = str(effect)
+
+                    effect_list = getattr(entity, '_effect_list', None) or getattr(entity, '_attr_effect_list', None)
+                    if effect_list:
+                        attributes['effect_list'] = list(effect_list)
+
+                # Get supported features
+                features = getattr(entity, '_attr_supported_features', None) or getattr(entity, 'supported_features', None)
+                if features:
+                    if hasattr(features, 'value'):
+                        features = features.value
+                    attributes['supported_features'] = int(features)
+
+                # Set the state in hass.states
+                _LOGGER.info(f"Adding entity: {entity_id} = {state} (attrs: {list(attributes.keys())})")
+
+                if hasattr(hass, 'states') and hasattr(hass.states, 'async_set'):
+                    # Use async_set (need to schedule it since we're in sync context)
+                    async def _set_state():
+                        await hass.states.async_set(entity_id, state, attributes)
+                    asyncio.create_task(_set_state())
+                elif hasattr(hass, 'states') and hasattr(hass.states, 'set'):
+                    # Use sync set
+                    hass.states.set(entity_id, state, attributes)
+                else:
+                    _LOGGER.warning(f"Cannot set state for {entity_id}: hass.states not available")
+
+            except Exception as e:
+                _LOGGER.error(f"Error adding entity: {e}", exc_info=True)
+
+    return add_entities
+
 async def async_forward_entry_setups(entry, platforms):
     """Forward the setup of an entry to platforms.
 
-    This is called by integrations to set up their platforms.
-    For now, we log the platforms and simulate successful setup.
+    This loads the platform modules and calls their async_setup_entry functions.
     """
+    global _hass
+
     entry_id = entry.get("entry_id") if isinstance(entry, dict) else getattr(entry, "entry_id", "unknown")
     domain = entry.get("domain") if isinstance(entry, dict) else getattr(entry, "domain", "unknown")
 
@@ -212,12 +433,39 @@ async def async_forward_entry_setups(entry, platforms):
         _loaded_platforms[entry_id] = set()
 
     for platform in platforms:
+        # Normalize platform name (might be Platform enum or string)
         platform_name = str(platform).split(".")[-1] if "." in str(platform) else str(platform)
-        _loaded_platforms[entry_id].add(platform_name)
-        _LOGGER.debug(f"  Platform {platform_name} setup complete")
+        platform_name = platform_name.lower()
 
-    # Simulate async work
-    await asyncio.sleep(0)
+        try:
+            # Import the platform module
+            module_path = f"homeassistant.components.{domain}.{platform_name}"
+            _LOGGER.debug(f"Importing platform module: {module_path}")
+
+            platform_module = importlib.import_module(module_path)
+
+            # Check if it has async_setup_entry
+            if hasattr(platform_module, 'async_setup_entry'):
+                _LOGGER.debug(f"Calling async_setup_entry for {domain}.{platform_name}")
+
+                # Create the add_entities callback
+                if _hass is not None:
+                    add_entities = _create_add_entities_callback(_hass, entry, platform_name)
+
+                    # Call the platform's async_setup_entry
+                    await platform_module.async_setup_entry(_hass, entry, add_entities)
+                    _LOGGER.info(f"Platform {platform_name} setup complete for {domain}")
+                else:
+                    _LOGGER.warning(f"Cannot set up platform {platform_name}: hass not available")
+            else:
+                _LOGGER.debug(f"Platform {module_path} has no async_setup_entry")
+
+            _loaded_platforms[entry_id].add(platform_name)
+
+        except ImportError as e:
+            _LOGGER.warning(f"Could not import platform {domain}.{platform_name}: {e}")
+        except Exception as e:
+            _LOGGER.error(f"Error setting up platform {domain}.{platform_name}: {e}", exc_info=True)
 
 async def async_unload_platforms(entry, platforms):
     """Forward the unloading of an entry to platforms."""
@@ -258,6 +506,10 @@ async def async_forward_entry_unload(entry, platform):
 
     let async_forward_entry_unload = globals.get_item("async_forward_entry_unload")?.unwrap();
     wrapper.setattr("async_forward_entry_unload", async_forward_entry_unload)?;
+
+    // Store the set_hass function so integration.py can call it
+    let set_hass = globals.get_item("set_hass")?.unwrap();
+    wrapper.setattr("set_hass", set_hass)?;
 
     // Create the flow sub-object
     let flow = create_config_flow_wrapper(py)?;

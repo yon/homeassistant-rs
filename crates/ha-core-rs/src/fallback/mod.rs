@@ -133,9 +133,10 @@ impl FallbackBridge {
     ///
     /// This method:
     /// 1. Creates a Python hass wrapper with the provided Rust components
-    /// 2. Converts the config entry to a Python object
-    /// 3. Calls the integration's async_setup_entry function
-    /// 4. Returns Ok(true) if setup succeeded, Ok(false) if integration doesn't support config entries
+    /// 2. Sets the hass reference for platform setup
+    /// 3. Converts the config entry to a Python object
+    /// 4. Calls the integration's async_setup_entry function
+    /// 5. Returns Ok(true) if setup succeeded, Ok(false) if integration doesn't support config entries
     pub fn setup_config_entry(
         &self,
         entry: &ConfigEntry,
@@ -148,6 +149,13 @@ impl FallbackBridge {
         Python::with_gil(|py| {
             // Create Python hass wrapper
             let py_hass = create_hass_wrapper(py, bus, states, services)?;
+
+            // Set the hass reference in config_entries for platform setup
+            // This allows async_forward_entry_setups to access hass.states
+            let config_entries = py_hass.bind(py).getattr("config_entries")?;
+            if let Ok(set_hass) = config_entries.getattr("set_hass") {
+                set_hass.call1((&py_hass,))?;
+            }
 
             // Convert config entry to Python
             let py_entry = config_entry_to_python(py, entry)?;

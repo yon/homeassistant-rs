@@ -88,7 +88,11 @@ run: ## Run the Home Assistant server (Mode 2: standalone)
 
 .PHONY: run-python
 run-python: $(VENV_STAMP) ## Run the Home Assistant server with Python integration support
-	HA_CONFIG_DIR=tests/comparison/config PYO3_PYTHON=$(CURDIR)/$(PYTHON) $(CARGO) run --bin homeassistant --features python
+	PYTHONPATH=$(CURDIR)/vendor/ha-core:$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])") \
+	HA_CONFIG_DIR=tests/comparison/config \
+	HA_FRONTEND_PATH=$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])")/hass_frontend \
+	PYO3_PYTHON=$(CURDIR)/$(PYTHON) \
+	$(CARGO) run --bin homeassistant --features python
 
 .PHONY: run-release
 run-release: ## Run the Home Assistant server in release mode

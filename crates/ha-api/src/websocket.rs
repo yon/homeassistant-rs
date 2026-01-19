@@ -35,26 +35,14 @@ pub enum IncomingMessage {
         #[serde(default)]
         api_password: Option<String>,
     },
-    Ping {
+    #[serde(rename = "auth/current_user")]
+    AuthCurrentUser {
         id: u64,
     },
-    SubscribeEvents {
+    #[serde(rename = "automation/config")]
+    AutomationConfig {
         id: u64,
-        #[serde(default)]
-        event_type: Option<String>,
-    },
-    UnsubscribeEvents {
-        id: u64,
-        subscription: u64,
-    },
-    GetStates {
-        id: u64,
-    },
-    GetConfig {
-        id: u64,
-    },
-    GetServices {
-        id: u64,
+        entity_id: String,
     },
     CallService {
         id: u64,
@@ -67,26 +55,173 @@ pub enum IncomingMessage {
         #[serde(default)]
         return_response: bool,
     },
+    #[serde(rename = "config/entity_registry/get")]
+    EntityRegistryGet {
+        id: u64,
+        entity_id: String,
+    },
+    #[serde(rename = "config/entity_registry/list")]
+    EntityRegistryList {
+        id: u64,
+    },
+    #[serde(rename = "config/entity_registry/remove")]
+    EntityRegistryRemove {
+        id: u64,
+        entity_id: String,
+    },
+    #[serde(rename = "config/entity_registry/update")]
+    EntityRegistryUpdate {
+        id: u64,
+        entity_id: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        icon: Option<String>,
+        #[serde(default)]
+        area_id: Option<String>,
+        #[serde(default)]
+        disabled_by: Option<String>,
+        #[serde(default)]
+        hidden_by: Option<String>,
+        #[serde(default)]
+        new_entity_id: Option<String>,
+        #[serde(default)]
+        aliases: Option<Vec<String>>,
+        #[serde(default)]
+        labels: Option<Vec<String>>,
+    },
+    #[serde(rename = "config/entity_registry/list_for_display")]
+    EntityRegistryListForDisplay {
+        id: u64,
+    },
+    #[serde(rename = "config/device_registry/list")]
+    DeviceRegistryList {
+        id: u64,
+    },
+    #[serde(rename = "config/area_registry/list")]
+    AreaRegistryList {
+        id: u64,
+    },
+    #[serde(rename = "config/floor_registry/list")]
+    FloorRegistryList {
+        id: u64,
+    },
+    #[serde(rename = "config/label_registry/list")]
+    LabelRegistryList {
+        id: u64,
+    },
     FireEvent {
         id: u64,
         event_type: String,
         #[serde(default)]
         event_data: Option<serde_json::Value>,
     },
-    SupportedFeatures {
+    #[serde(rename = "frontend/get_themes")]
+    FrontendGetThemes {
         id: u64,
-        #[allow(dead_code)] // Deserialized but not currently used
-        features: HashMap<String, serde_json::Value>,
     },
-    #[serde(rename = "automation/config")]
-    AutomationConfig {
+    #[serde(rename = "frontend/get_translations")]
+    FrontendGetTranslations {
         id: u64,
-        entity_id: String,
+        #[serde(default)]
+        language: Option<String>,
+        #[serde(default)]
+        category: Option<String>,
+        #[serde(default)]
+        integration: Option<Vec<String>>,
+        #[serde(default)]
+        config_flow: Option<bool>,
     },
-    #[serde(rename = "script/config")]
-    ScriptConfig {
+    #[serde(rename = "frontend/subscribe_user_data")]
+    FrontendSubscribeUserData {
         id: u64,
-        entity_id: String,
+        #[serde(default)]
+        key: Option<String>,
+    },
+    #[serde(rename = "frontend/subscribe_system_data")]
+    FrontendSubscribeSystemData {
+        id: u64,
+        #[serde(default)]
+        key: Option<String>,
+    },
+    GetConfig {
+        id: u64,
+    },
+    GetPanels {
+        id: u64,
+    },
+    GetServices {
+        id: u64,
+    },
+    GetStates {
+        id: u64,
+    },
+    #[serde(rename = "lovelace/config")]
+    LovelaceConfig {
+        id: u64,
+        #[serde(default)]
+        url_path: Option<String>,
+    },
+    #[serde(rename = "lovelace/resources")]
+    LovelaceResources {
+        id: u64,
+    },
+    Ping {
+        id: u64,
+    },
+    #[serde(rename = "recorder/info")]
+    RecorderInfo {
+        id: u64,
+    },
+    #[serde(rename = "repairs/list_issues")]
+    RepairsListIssues {
+        id: u64,
+    },
+    #[serde(rename = "persistent_notification/subscribe")]
+    PersistentNotificationSubscribe {
+        id: u64,
+    },
+    #[serde(rename = "labs/subscribe")]
+    LabsSubscribe {
+        id: u64,
+    },
+    #[serde(rename = "config_entries/get")]
+    ConfigEntriesGet {
+        id: u64,
+        entry_id: String,
+    },
+    #[serde(rename = "config_entries/subscribe")]
+    ConfigEntriesSubscribe {
+        id: u64,
+    },
+    #[serde(rename = "config_entries/flow/subscribe")]
+    ConfigEntriesFlowSubscribe {
+        id: u64,
+    },
+    #[serde(rename = "logger/log_info")]
+    LoggerLogInfo {
+        id: u64,
+    },
+    #[serde(rename = "manifest/list")]
+    ManifestList {
+        id: u64,
+    },
+    #[serde(rename = "entity/source")]
+    EntitySource {
+        id: u64,
+        #[serde(default)]
+        entity_id: Option<Vec<String>>,
+    },
+    #[serde(rename = "config/category_registry/list")]
+    CategoryRegistryList {
+        id: u64,
+        #[serde(default)]
+        scope: Option<String>,
+    },
+    #[serde(rename = "blueprint/list")]
+    BlueprintList {
+        id: u64,
+        domain: String,
     },
     RenderTemplate {
         id: u64,
@@ -100,10 +235,29 @@ pub enum IncomingMessage {
         #[allow(dead_code)] // Reserved for future use
         report_errors: Option<bool>,
     },
+    #[serde(rename = "script/config")]
+    ScriptConfig {
+        id: u64,
+        entity_id: String,
+    },
     SubscribeEntities {
         id: u64,
         #[serde(default)]
         entity_ids: Option<Vec<String>>,
+    },
+    SubscribeEvents {
+        id: u64,
+        #[serde(default)]
+        event_type: Option<String>,
+    },
+    SupportedFeatures {
+        id: u64,
+        #[allow(dead_code)] // Deserialized but not currently used
+        features: HashMap<String, serde_json::Value>,
+    },
+    UnsubscribeEvents {
+        id: u64,
+        subscription: u64,
     },
 }
 
@@ -475,13 +629,25 @@ async fn handle_message(
         serde_json::from_str(text).map_err(|e| format!("Invalid message format: {}", e))?;
 
     match msg {
+        IncomingMessage::AreaRegistryList { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_area_registry_list(conn, id, tx).await
+        }
         IncomingMessage::Auth { .. } => {
             // Already authenticated, ignore
             Ok(())
         }
+        IncomingMessage::AuthCurrentUser { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_auth_current_user(conn, id, tx).await
+        }
         IncomingMessage::AutomationConfig { id, entity_id } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
             handle_automation_config(conn, id, &entity_id, tx).await
+        }
+        IncomingMessage::BlueprintList { id, domain } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_blueprint_list(conn, id, &domain, tx).await
         }
         IncomingMessage::CallService {
             id,
@@ -504,6 +670,75 @@ async fn handle_message(
             )
             .await
         }
+        IncomingMessage::CategoryRegistryList { id, scope } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_category_registry_list(conn, id, scope, tx).await
+        }
+        IncomingMessage::ConfigEntriesFlowSubscribe { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_config_entries_flow_subscribe(conn, id, tx).await
+        }
+        IncomingMessage::ConfigEntriesGet { id, entry_id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_config_entries_get(conn, id, &entry_id, tx).await
+        }
+        IncomingMessage::ConfigEntriesSubscribe { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_config_entries_subscribe(conn, id, tx).await
+        }
+        IncomingMessage::DeviceRegistryList { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_device_registry_list(conn, id, tx).await
+        }
+        IncomingMessage::EntityRegistryGet { id, entity_id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_entity_registry_get(conn, id, &entity_id, tx).await
+        }
+        IncomingMessage::EntityRegistryList { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_entity_registry_list(conn, id, tx).await
+        }
+        IncomingMessage::EntityRegistryListForDisplay { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_entity_registry_list_for_display(conn, id, tx).await
+        }
+        IncomingMessage::EntityRegistryRemove { id, entity_id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_entity_registry_remove(conn, id, &entity_id, tx).await
+        }
+        IncomingMessage::EntityRegistryUpdate {
+            id,
+            entity_id,
+            name,
+            icon,
+            area_id,
+            disabled_by,
+            hidden_by,
+            new_entity_id,
+            aliases,
+            labels,
+        } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_entity_registry_update(
+                conn,
+                id,
+                &entity_id,
+                name,
+                icon,
+                area_id,
+                disabled_by,
+                hidden_by,
+                new_entity_id,
+                aliases,
+                labels,
+                tx,
+            )
+            .await
+        }
+        IncomingMessage::EntitySource { id, entity_id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_entity_source(conn, id, entity_id, tx).await
+        }
         IncomingMessage::FireEvent {
             id,
             event_type,
@@ -512,9 +747,48 @@ async fn handle_message(
             conn.validate_id(id).map_err(|e| e.to_string())?;
             handle_fire_event(conn, id, event_type, event_data, tx).await
         }
+        IncomingMessage::FloorRegistryList { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_floor_registry_list(conn, id, tx).await
+        }
+        IncomingMessage::FrontendGetThemes { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_frontend_get_themes(conn, id, tx).await
+        }
+        IncomingMessage::FrontendGetTranslations {
+            id,
+            language,
+            category,
+            integration,
+            config_flow,
+        } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_frontend_get_translations(
+                conn,
+                id,
+                language,
+                category,
+                integration,
+                config_flow,
+                tx,
+            )
+            .await
+        }
+        IncomingMessage::FrontendSubscribeSystemData { id, key } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_frontend_subscribe_system_data(conn, id, key, tx).await
+        }
+        IncomingMessage::FrontendSubscribeUserData { id, key } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_frontend_subscribe_user_data(conn, id, key, tx).await
+        }
         IncomingMessage::GetConfig { id } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
             handle_get_config(conn, id, tx).await
+        }
+        IncomingMessage::GetPanels { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_get_panels(conn, id, tx).await
         }
         IncomingMessage::GetServices { id } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
@@ -523,6 +797,34 @@ async fn handle_message(
         IncomingMessage::GetStates { id } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
             handle_get_states(conn, id, tx).await
+        }
+        IncomingMessage::LabelRegistryList { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_label_registry_list(conn, id, tx).await
+        }
+        IncomingMessage::LabsSubscribe { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_labs_subscribe(conn, id, tx).await
+        }
+        IncomingMessage::LoggerLogInfo { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_logger_log_info(conn, id, tx).await
+        }
+        IncomingMessage::LovelaceConfig { id, url_path } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_lovelace_config(conn, id, url_path, tx).await
+        }
+        IncomingMessage::LovelaceResources { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_lovelace_resources(conn, id, tx).await
+        }
+        IncomingMessage::ManifestList { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_manifest_list(conn, id, tx).await
+        }
+        IncomingMessage::PersistentNotificationSubscribe { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_persistent_notification_subscribe(conn, id, tx).await
         }
         IncomingMessage::Ping { id } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
@@ -533,6 +835,10 @@ async fn handle_message(
             tx.send(pong).await.map_err(|e| e.to_string())?;
             Ok(())
         }
+        IncomingMessage::RecorderInfo { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_recorder_info(conn, id, tx).await
+        }
         IncomingMessage::RenderTemplate {
             id,
             template,
@@ -542,6 +848,10 @@ async fn handle_message(
         } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
             handle_render_template(conn, id, &template, variables, tx).await
+        }
+        IncomingMessage::RepairsListIssues { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_repairs_list_issues(conn, id, tx).await
         }
         IncomingMessage::ScriptConfig { id, entity_id } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
@@ -888,6 +1198,238 @@ async fn handle_call_service(
     }
 }
 
+/// Handle config/entity_registry/get command
+async fn handle_entity_registry_get(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    entity_id: &str,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    match conn.state.registries.entities.get(entity_id) {
+        Some(entry) => {
+            let result = OutgoingMessage::Result(ResultMessage {
+                id,
+                msg_type: "result",
+                success: true,
+                result: Some(entity_entry_to_json(&entry)),
+                error: None,
+            });
+            tx.send(result).await.map_err(|e| e.to_string())
+        }
+        None => {
+            let result = OutgoingMessage::Result(ResultMessage {
+                id,
+                msg_type: "result",
+                success: false,
+                result: None,
+                error: Some(ErrorInfo {
+                    code: "not_found".to_string(),
+                    message: format!("Entity not found: {}", entity_id),
+                }),
+            });
+            tx.send(result).await.map_err(|e| e.to_string())
+        }
+    }
+}
+
+/// Handle config/entity_registry/list command
+async fn handle_entity_registry_list(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    let entries: Vec<serde_json::Value> = conn
+        .state
+        .registries
+        .entities
+        .iter()
+        .map(|entry| entity_entry_to_json(&entry))
+        .collect();
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::Value::Array(entries)),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle config/entity_registry/remove command
+async fn handle_entity_registry_remove(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    entity_id: &str,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    match conn.state.registries.entities.remove(entity_id) {
+        Some(_) => {
+            // Save changes to storage
+            if let Err(e) = conn.state.registries.entities.save().await {
+                warn!("Failed to save entity registry after removal: {}", e);
+            }
+
+            let result = OutgoingMessage::Result(ResultMessage {
+                id,
+                msg_type: "result",
+                success: true,
+                result: Some(serde_json::Value::Null),
+                error: None,
+            });
+            tx.send(result).await.map_err(|e| e.to_string())
+        }
+        None => {
+            let result = OutgoingMessage::Result(ResultMessage {
+                id,
+                msg_type: "result",
+                success: false,
+                result: None,
+                error: Some(ErrorInfo {
+                    code: "not_found".to_string(),
+                    message: format!("Entity not found: {}", entity_id),
+                }),
+            });
+            tx.send(result).await.map_err(|e| e.to_string())
+        }
+    }
+}
+
+/// Handle config/entity_registry/update command
+#[allow(clippy::too_many_arguments)]
+async fn handle_entity_registry_update(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    entity_id: &str,
+    name: Option<String>,
+    icon: Option<String>,
+    area_id: Option<String>,
+    disabled_by: Option<String>,
+    hidden_by: Option<String>,
+    new_entity_id: Option<String>,
+    aliases: Option<Vec<String>>,
+    labels: Option<Vec<String>>,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Check if entity exists
+    if conn.state.registries.entities.get(entity_id).is_none() {
+        let result = OutgoingMessage::Result(ResultMessage {
+            id,
+            msg_type: "result",
+            success: false,
+            result: None,
+            error: Some(ErrorInfo {
+                code: "not_found".to_string(),
+                message: format!("Entity not found: {}", entity_id),
+            }),
+        });
+        return tx.send(result).await.map_err(|e| e.to_string());
+    }
+
+    // Update the entity entry
+    let updated_entry = conn.state.registries.entities.update(entity_id, |entry| {
+        if let Some(n) = name {
+            entry.name = Some(n);
+        }
+        if let Some(i) = icon {
+            entry.icon = Some(i);
+        }
+        if let Some(a) = area_id {
+            entry.area_id = if a.is_empty() { None } else { Some(a) };
+        }
+        if let Some(d) = disabled_by {
+            entry.disabled_by = match d.as_str() {
+                "user" => Some(ha_registries::DisabledBy::User),
+                "integration" => Some(ha_registries::DisabledBy::Integration),
+                "config_entry" => Some(ha_registries::DisabledBy::ConfigEntry),
+                "device" => Some(ha_registries::DisabledBy::Device),
+                "" => None,
+                _ => entry.disabled_by,
+            };
+        }
+        if let Some(h) = hidden_by {
+            entry.hidden_by = match h.as_str() {
+                "user" => Some(ha_registries::HiddenBy::User),
+                "integration" => Some(ha_registries::HiddenBy::Integration),
+                "" => None,
+                _ => entry.hidden_by,
+            };
+        }
+        if let Some(a) = aliases {
+            entry.aliases = a;
+        }
+        if let Some(l) = labels {
+            entry.labels = l;
+        }
+    });
+
+    // Handle entity_id rename if requested
+    if let Some(new_id) = new_entity_id {
+        if new_id != entity_id {
+            // TODO: Implement entity_id rename - requires updating the entity_id field
+            // and re-indexing. For now, this is not supported.
+            warn!(
+                "Entity ID rename not yet implemented: {} -> {}",
+                entity_id, new_id
+            );
+        }
+    }
+
+    // Save changes to storage
+    if let Err(e) = conn.state.registries.entities.save().await {
+        warn!("Failed to save entity registry after update: {}", e);
+    }
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::json!({
+            "entity_entry": entity_entry_to_json(&updated_entry)
+        })),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Convert an EntityEntry to the JSON format expected by the frontend
+fn entity_entry_to_json(entry: &ha_registries::EntityEntry) -> serde_json::Value {
+    serde_json::json!({
+        "entity_id": entry.entity_id,
+        "id": entry.id,
+        "unique_id": entry.unique_id,
+        "platform": entry.platform,
+        "device_id": entry.device_id,
+        "config_entry_id": entry.config_entry_id,
+        "name": entry.name,
+        "original_name": entry.original_name,
+        "icon": entry.icon,
+        "original_icon": entry.original_icon,
+        "area_id": entry.area_id,
+        "disabled_by": entry.disabled_by.map(|d| match d {
+            ha_registries::DisabledBy::User => "user",
+            ha_registries::DisabledBy::Integration => "integration",
+            ha_registries::DisabledBy::ConfigEntry => "config_entry",
+            ha_registries::DisabledBy::Device => "device",
+        }),
+        "hidden_by": entry.hidden_by.map(|h| match h {
+            ha_registries::HiddenBy::Integration => "integration",
+            ha_registries::HiddenBy::User => "user",
+        }),
+        "entity_category": entry.entity_category.map(|c| match c {
+            ha_registries::EntityCategory::Config => "config",
+            ha_registries::EntityCategory::Diagnostic => "diagnostic",
+        }),
+        "has_entity_name": entry.has_entity_name,
+        "aliases": entry.aliases,
+        "labels": entry.labels,
+        "capabilities": entry.capabilities,
+        "device_class": entry.device_class,
+        "original_device_class": entry.original_device_class,
+        "translation_key": entry.translation_key,
+    })
+}
+
 /// Handle fire_event command
 async fn handle_fire_event(
     conn: &Arc<ActiveConnection>,
@@ -1219,6 +1761,769 @@ async fn handle_subscribe_entities(
         msg_type: "result",
         success: true,
         result: Some(serde_json::Value::Null),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle auth/current_user command - returns current user info
+async fn handle_auth_current_user(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Return a default user for now
+    let user = serde_json::json!({
+        "id": conn.user_id.clone().unwrap_or_else(|| "default-user-id".to_string()),
+        "name": "Owner",
+        "is_owner": true,
+        "is_admin": true,
+        "credentials": [],
+        "mfa_modules": [],
+    });
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(user),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle config/entity_registry/list_for_display command
+async fn handle_entity_registry_list_for_display(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Return a simplified entity list for display purposes
+    let entries: Vec<serde_json::Value> = conn
+        .state
+        .registries
+        .entities
+        .iter()
+        .map(|entry| {
+            serde_json::json!({
+                "ei": entry.entity_id,
+                "di": entry.device_id,
+                "pl": entry.platform,
+                "tk": entry.translation_key,
+                "en": entry.name,
+                "ic": entry.icon,
+                "ai": entry.area_id,
+                "ec": entry.entity_category.map(|c| match c {
+                    ha_registries::EntityCategory::Config => 1,
+                    ha_registries::EntityCategory::Diagnostic => 2,
+                }),
+                "hb": entry.hidden_by.map(|h| match h {
+                    ha_registries::HiddenBy::Integration => "integration",
+                    ha_registries::HiddenBy::User => "user",
+                }),
+                "lb": entry.labels,
+            })
+        })
+        .collect();
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::json!({
+            "entity_categories": { "config": 1, "diagnostic": 2 },
+            "entities": entries,
+        })),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle config/device_registry/list command
+async fn handle_device_registry_list(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    let devices: Vec<serde_json::Value> = conn
+        .state
+        .registries
+        .devices
+        .iter()
+        .map(|device| {
+            serde_json::json!({
+                "id": device.id,
+                "config_entries": device.config_entries,
+                "identifiers": device.identifiers,
+                "connections": device.connections,
+                "manufacturer": device.manufacturer,
+                "model": device.model,
+                "model_id": device.model_id,
+                "name": device.name,
+                "name_by_user": device.name_by_user,
+                "sw_version": device.sw_version,
+                "hw_version": device.hw_version,
+                "serial_number": device.serial_number,
+                "via_device_id": device.via_device_id,
+                "area_id": device.area_id,
+                "entry_type": device.entry_type.as_ref().map(|e| match e {
+                    ha_registries::DeviceEntryType::Service => "service",
+                }),
+                "disabled_by": device.disabled_by.as_ref().map(|d| match d {
+                    ha_registries::DisabledBy::User => "user",
+                    ha_registries::DisabledBy::Integration => "integration",
+                    ha_registries::DisabledBy::ConfigEntry => "config_entry",
+                    ha_registries::DisabledBy::Device => "device",
+                }),
+                "configuration_url": device.configuration_url,
+                "labels": device.labels,
+            })
+        })
+        .collect();
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::Value::Array(devices)),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle config/area_registry/list command
+async fn handle_area_registry_list(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    let areas: Vec<serde_json::Value> = conn
+        .state
+        .registries
+        .areas
+        .iter()
+        .map(|area| {
+            serde_json::json!({
+                "area_id": area.id,
+                "name": area.name,
+                "aliases": area.aliases,
+                "floor_id": area.floor_id,
+                "icon": area.icon,
+                "labels": area.labels,
+                "picture": area.picture,
+            })
+        })
+        .collect();
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::Value::Array(areas)),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle config/floor_registry/list command
+async fn handle_floor_registry_list(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    let floors: Vec<serde_json::Value> = conn
+        .state
+        .registries
+        .floors
+        .iter()
+        .map(|floor| {
+            serde_json::json!({
+                "floor_id": floor.id,
+                "name": floor.name,
+                "aliases": floor.aliases,
+                "icon": floor.icon,
+                "level": floor.level,
+            })
+        })
+        .collect();
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::Value::Array(floors)),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle config/label_registry/list command
+async fn handle_label_registry_list(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    let labels: Vec<serde_json::Value> = conn
+        .state
+        .registries
+        .labels
+        .iter()
+        .map(|label| {
+            serde_json::json!({
+                "label_id": label.id,
+                "name": label.name,
+                "color": label.color,
+                "description": label.description,
+                "icon": label.icon,
+            })
+        })
+        .collect();
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::Value::Array(labels)),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle frontend/get_themes command
+async fn handle_frontend_get_themes(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Return default themes structure
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::json!({
+            "themes": {},
+            "default_theme": "default",
+            "default_dark_theme": null,
+        })),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle frontend/get_translations command
+#[allow(clippy::too_many_arguments)]
+async fn handle_frontend_get_translations(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    _language: Option<String>,
+    _category: Option<String>,
+    _integration: Option<Vec<String>>,
+    _config_flow: Option<bool>,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Return empty translations for now
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::json!({
+            "resources": {}
+        })),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle frontend/subscribe_user_data command
+async fn handle_frontend_subscribe_user_data(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    key: Option<String>,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Send initial user data event
+    let event = OutgoingMessage::Event(EventMessage {
+        id,
+        msg_type: "event",
+        event: serde_json::json!({
+            "key": key.unwrap_or_default(),
+            "data": {}
+        }),
+    });
+    tx.send(event).await.map_err(|e| e.to_string())?;
+
+    // Send success response
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::Value::Null),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle frontend/subscribe_system_data command
+async fn handle_frontend_subscribe_system_data(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    key: Option<String>,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Send initial system data event
+    let event = OutgoingMessage::Event(EventMessage {
+        id,
+        msg_type: "event",
+        event: serde_json::json!({
+            "key": key.unwrap_or_default(),
+            "data": {}
+        }),
+    });
+    tx.send(event).await.map_err(|e| e.to_string())?;
+
+    // Send success response
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::Value::Null),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle get_panels command
+async fn handle_get_panels(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Return default panels structure
+    let panels = serde_json::json!({
+        "lovelace": {
+            "component_name": "lovelace",
+            "icon": "mdi:view-dashboard",
+            "title": null,
+            "config": {"mode": "storage"},
+            "url_path": "lovelace",
+            "require_admin": false,
+            "config_panel_domain": null,
+        },
+        "developer-tools": {
+            "component_name": "developer_tools",
+            "icon": "mdi:hammer",
+            "title": null,
+            "config": null,
+            "url_path": "developer-tools",
+            "require_admin": true,
+            "config_panel_domain": null,
+        },
+        "config": {
+            "component_name": "config",
+            "icon": "mdi:cog",
+            "title": null,
+            "config": null,
+            "url_path": "config",
+            "require_admin": true,
+            "config_panel_domain": null,
+        },
+        "history": {
+            "component_name": "history",
+            "icon": "mdi:chart-box",
+            "title": null,
+            "config": null,
+            "url_path": "history",
+            "require_admin": false,
+            "config_panel_domain": null,
+        },
+        "logbook": {
+            "component_name": "logbook",
+            "icon": "mdi:format-list-bulleted-type",
+            "title": null,
+            "config": null,
+            "url_path": "logbook",
+            "require_admin": false,
+            "config_panel_domain": null,
+        },
+        "map": {
+            "component_name": "map",
+            "icon": "mdi:tooltip-account",
+            "title": null,
+            "config": null,
+            "url_path": "map",
+            "require_admin": false,
+            "config_panel_domain": null,
+        },
+        "energy": {
+            "component_name": "energy",
+            "icon": "mdi:lightning-bolt",
+            "title": null,
+            "config": null,
+            "url_path": "energy",
+            "require_admin": false,
+            "config_panel_domain": null,
+        },
+        "media-browser": {
+            "component_name": "media_browser",
+            "icon": "mdi:play-box-multiple",
+            "title": null,
+            "config": null,
+            "url_path": "media-browser",
+            "require_admin": false,
+            "config_panel_domain": null,
+        },
+        "todo": {
+            "component_name": "todo",
+            "icon": "mdi:clipboard-list",
+            "title": null,
+            "config": null,
+            "url_path": "todo",
+            "require_admin": false,
+            "config_panel_domain": null,
+        },
+    });
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(panels),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle lovelace/config command
+async fn handle_lovelace_config(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    _url_path: Option<String>,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Return a basic auto-generated lovelace config
+    let config = serde_json::json!({
+        "title": "Home",
+        "views": [
+            {
+                "path": "default_view",
+                "title": "Home",
+                "cards": [],
+            }
+        ],
+    });
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(config),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle lovelace/resources command
+async fn handle_lovelace_resources(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Return empty resources list
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::Value::Array(vec![])),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle recorder/info command
+async fn handle_recorder_info(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Return minimal recorder info (indicates recorder is not running)
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::json!({
+            "backlog": 0,
+            "max_backlog": 40000,
+            "migration_in_progress": false,
+            "recording": false,
+            "thread_running": false,
+        })),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle repairs/list_issues command
+async fn handle_repairs_list_issues(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Return empty issues list
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::json!({
+            "issues": []
+        })),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle persistent_notification/subscribe command
+async fn handle_persistent_notification_subscribe(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Send initial empty notifications event
+    let event = OutgoingMessage::Event(EventMessage {
+        id,
+        msg_type: "event",
+        event: serde_json::json!({
+            "notifications": {}
+        }),
+    });
+    tx.send(event).await.map_err(|e| e.to_string())?;
+
+    // Send success response
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::Value::Null),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle labs/subscribe command
+async fn handle_labs_subscribe(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Send initial labs state event (empty)
+    let event = OutgoingMessage::Event(EventMessage {
+        id,
+        msg_type: "event",
+        event: serde_json::json!({}),
+    });
+    tx.send(event).await.map_err(|e| e.to_string())?;
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::Value::Null),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle config_entries/get command
+async fn handle_config_entries_get(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    entry_id: &str,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // TODO: Access config_entries manager when available in AppState
+    // For now, return a stub entry to prevent frontend errors
+    let entry_json = serde_json::json!({
+        "entry_id": entry_id,
+        "domain": "unknown",
+        "title": "Unknown",
+        "source": "user",
+        "state": "loaded",
+        "supports_options": false,
+        "supports_remove_device": false,
+        "supports_unload": true,
+        "supports_reconfigure": false,
+        "pref_disable_new_entities": false,
+        "pref_disable_polling": false,
+        "disabled_by": null,
+        "reason": null,
+    });
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(entry_json),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle config_entries/subscribe command
+async fn handle_config_entries_subscribe(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Send initial empty state
+    let event = OutgoingMessage::Event(EventMessage {
+        id,
+        msg_type: "event",
+        event: serde_json::json!([]),
+    });
+    tx.send(event).await.map_err(|e| e.to_string())?;
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::Value::Null),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle config_entries/flow/subscribe command
+async fn handle_config_entries_flow_subscribe(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Send initial empty flows state
+    let event = OutgoingMessage::Event(EventMessage {
+        id,
+        msg_type: "event",
+        event: serde_json::json!([]),
+    });
+    tx.send(event).await.map_err(|e| e.to_string())?;
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::Value::Null),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle logger/log_info command
+async fn handle_logger_log_info(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Return empty logger info
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::json!({})),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle manifest/list command
+async fn handle_manifest_list(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Return empty manifest list
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::Value::Array(vec![])),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle entity/source command
+async fn handle_entity_source(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    entity_ids: Option<Vec<String>>,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    let mut sources = serde_json::Map::new();
+
+    // Get all states
+    let states = conn.state.state_machine.all();
+
+    for state in states.iter() {
+        let entity_id = state.entity_id.to_string();
+
+        // Filter if entity_ids provided
+        if let Some(ref ids) = entity_ids {
+            if !ids.contains(&entity_id) {
+                continue;
+            }
+        }
+
+        // Extract domain from entity_id
+        let domain = entity_id.split('.').next().unwrap_or("unknown").to_string();
+
+        sources.insert(
+            entity_id,
+            serde_json::json!({
+                "domain": domain,
+                "custom_component": false,
+            }),
+        );
+    }
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::Value::Object(sources)),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle config/category_registry/list command
+async fn handle_category_registry_list(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    _scope: Option<String>,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Return empty categories list
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::Value::Array(vec![])),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle blueprint/list command
+async fn handle_blueprint_list(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    _domain: &str,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Return empty blueprints
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::json!({})),
         error: None,
     });
     tx.send(result).await.map_err(|e| e.to_string())
