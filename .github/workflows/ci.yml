@@ -88,6 +88,11 @@ jobs:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Install HA core (needed for shim tests)
+        run: |
+          make setup-venv
+          .venv/bin/pip install -e vendor/ha-core
+
       - name: Run Python tests
         run: make test-python
 
