@@ -83,13 +83,23 @@ install-dev: $(VENV_STAMP) ## Install Python extension in development mode
 	$(MATURIN) develop
 
 .PHONY: run
-run: $(VENV_STAMP) ## Run the Home Assistant server with Python integration support
+run: $(VENV_STAMP) ## Run the Home Assistant server (strict mode - no native fallback)
+	PYTHONPATH=$(CURDIR)/python:$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])") \
+	HA_FRONTEND_PATH=$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])")/hass_frontend \
+	PYO3_PYTHON=$(CURDIR)/$(PYTHON) \
+	$(CARGO) run --bin homeassistant --features python
+
+.PHONY: run-fallback
+run-fallback: $(VENV_STAMP) ## Run with native HA fallback enabled (development only)
+	HA_ALLOW_NATIVE_FALLBACK=1 \
+	PYTHONPATH=$(CURDIR)/python:$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])") \
 	HA_FRONTEND_PATH=$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])")/hass_frontend \
 	PYO3_PYTHON=$(CURDIR)/$(PYTHON) \
 	$(CARGO) run --bin homeassistant --features python
 
 .PHONY: run-release
-run-release: $(VENV_STAMP) ## Run the Home Assistant server in release mode
+run-release: $(VENV_STAMP) ## Run the Home Assistant server in release mode (strict)
+	PYTHONPATH=$(CURDIR)/python:$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])") \
 	HA_FRONTEND_PATH=$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])")/hass_frontend \
 	PYO3_PYTHON=$(CURDIR)/$(PYTHON) \
 	$(CARGO) run --bin homeassistant --features python --release
@@ -120,10 +130,6 @@ help: ## Display this help message
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
 ##@ Python
-
-.PHONY: python-test
-python-test: install-dev ## Run Python tests against Rust extension
-	$(VENV_BIN)/pytest tests/python/ -v
 
 .PHONY: setup-venv
 setup-venv: $(VENV_STAMP) ## Create Python virtual environment with tools
@@ -158,35 +164,28 @@ test-compare: ## Run API comparison tests against Python HA
 ##@ Testing
 
 .PHONY: test
-test: ## Run all Rust tests (excludes Python bridge, use python-test for that)
+test: test-rust test-python test-integration ## Run ALL tests (Rust + Python + integration)
+
+.PHONY: test-coverage
+test-coverage: ## Run Rust tests with coverage (requires cargo-tarpaulin)
+	$(CARGO) tarpaulin --workspace --out Html --output-dir target/coverage
+
+.PHONY: test-integration
+test-integration: build $(VENV_STAMP) ## Run WebSocket API integration tests
+	$(VENV_BIN)/pytest tests/integration/ -v
+
+.PHONY: test-python
+test-python: install-dev ## Run all Python tests (shim + PyO3 extension)
+	$(VENV_BIN)/pytest python/tests/ crates/ha-core-rs/tests/python/ -v
+
+.PHONY: test-rust
+test-rust: ## Run all Rust tests
 	$(CARGO) test --workspace --exclude ha-core-rs
-
-.PHONY: test-all
-test-all: test test-compat test-integration ## Run all tests including compat and integration tests
-
-.PHONY: test-compat
-test-compat: ## Run HA compatibility tests (Rust-only, fast)
 	$(CARGO) test -p ha-automation --test compat_test
 	$(CARGO) test -p ha-script --test compat_test
 
-.PHONY: test-coverage
-test-coverage: ## Run tests with coverage (requires cargo-tarpaulin)
-	$(CARGO) tarpaulin --workspace --out Html --output-dir target/coverage
-
-.PHONY: test-doc
-test-doc: ## Run documentation tests
-	$(CARGO) test --workspace --doc
-
-.PHONY: test-fallback
-test-fallback: $(VENV_STAMP) ## Run Python fallback mode tests (ha-core-rs with embedded Python)
-	PYO3_PYTHON=$(CURDIR)/$(PYTHON) $(CARGO) test -p ha-core-rs --features fallback --no-default-features --lib
-
-.PHONY: test-integration
-test-integration: build $(VENV_STAMP) ## Run WebSocket API integration tests (starts Rust server)
-	$(VENV_BIN)/pytest tests/integration/ -v
-
 .PHONY: test-verbose
-test-verbose: ## Run all tests with verbose output
+test-verbose: ## Run Rust tests with verbose output
 	$(CARGO) test --workspace -- --nocapture
 
 ##@ Utilities

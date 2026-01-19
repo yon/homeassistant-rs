@@ -499,6 +499,26 @@ TEST_CATEGORIES = {
         "components/config/test_config_entries.py::test_update_entry",
         "components/config/test_config_entries.py::test_disable_entry",
     ],
+
+    # ==========================================================================
+    # Python Shim Layer Tests (python/homeassistant/)
+    # These tests run native HA tests with our shim taking precedence
+    # ==========================================================================
+    "shim_entity": [
+        # Entity base class tests - validates our Entity shim
+        "helpers/test_entity.py::test_generate_entity_id_requires_hass_or_ids",
+        "helpers/test_entity.py::test_generate_entity_id_given_keys",
+        "helpers/test_entity.py::test_generate_entity_id_given_hass",
+        "helpers/test_entity.py::test_device_class",
+        "helpers/test_entity.py::test_capability_attrs",
+        "helpers/test_entity.py::test_entity_category_property",
+    ],
+    "shim_exceptions": [
+        # Exception tests - validates our exceptions module
+        "test_exceptions.py::test_conditionerror_format",
+        "test_exceptions.py::test_template_message",
+        "test_exceptions.py::test_home_assistant_error",
+    ],
 }
 
 def get_repo_root() -> Path:
@@ -533,11 +553,16 @@ def run_tests(categories: list[str] | None = None, verbose: bool = False) -> int
     repo_root = get_repo_root()
     ha_core = get_ha_core_dir()
     venv = repo_root / ".venv"
+    shim_path = repo_root / "python"
 
     if not ha_core.exists():
         print(f"Error: HA core not found at {ha_core}")
         print("Run: make ha-compat-setup")
         return 1
+
+    # Detect if any shim categories are requested (need shim path in PYTHONPATH)
+    shim_categories = [c for c in (categories or []) if c.startswith("shim_")]
+    use_shim = bool(shim_categories) or categories is None  # Include shim for --all
 
     # Build test patterns
     if categories:
@@ -553,7 +578,7 @@ def run_tests(categories: list[str] | None = None, verbose: bool = False) -> int
     else:
         # All categories
         patterns = []
-        for tests in TEST_CATEGORIES.values():
+        for cat, tests in TEST_CATEGORIES.items():
             patterns.extend(tests)
 
     # Build pytest command
@@ -567,12 +592,21 @@ def run_tests(categories: list[str] | None = None, verbose: bool = False) -> int
     for pattern in patterns:
         pytest_args.append(f"tests/{pattern}")
 
-    print(f"Running {len(patterns)} tests against Rust extension...")
+    if use_shim:
+        print(f"Running {len(patterns)} tests with Python shim layer...")
+    else:
+        print(f"Running {len(patterns)} tests against Rust extension...")
     print("")
 
     # Run pytest with PYTHONPATH set
     env = os.environ.copy()
-    pythonpath_parts = [str(repo_root)]
+
+    if use_shim:
+        # Put our shim first so it takes precedence over site-packages
+        pythonpath_parts = [str(shim_path), str(repo_root)]
+    else:
+        pythonpath_parts = [str(repo_root)]
+
     if "PYTHONPATH" in env:
         pythonpath_parts.append(env["PYTHONPATH"])
     env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
