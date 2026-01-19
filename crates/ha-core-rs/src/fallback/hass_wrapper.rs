@@ -115,28 +115,66 @@ fn create_states_wrapper(py: Python<'_>, states: Arc<StateMachine>) -> PyResult<
     let simple_namespace = types.getattr("SimpleNamespace")?;
     let wrapper = simple_namespace.call0()?;
 
-    // Create a get function that retrieves state from our StateMachine
-    // We need to capture the states Arc, but PyO3 closures are tricky
-    // For now, create a simple wrapper that returns None
-    let code = r#"
-def get(entity_id):
-    """Get state of an entity."""
-    return None
+    // Create a dict to store pending states from Python integration setup
+    // These will be synced to the Rust StateMachine via get_pending_states()
+    let pending_states = PyDict::new_bound(py);
+    wrapper.setattr("_pending_states", &pending_states)?;
 
-async def async_set(entity_id, new_state, attributes=None, force_update=False, context=None):
-    """Set state of an entity."""
-    import logging
-    logging.getLogger(__name__).debug(f"State set: {entity_id} = {new_state}")
+    // Create functions that use the pending_states dict
+    let code = r#"
+def _make_get(pending_states):
+    def get(entity_id):
+        """Get state of an entity."""
+        if entity_id in pending_states:
+            return pending_states[entity_id]
+        return None
+    return get
+
+def _make_async_set(pending_states):
+    async def async_set(entity_id, new_state, attributes=None, force_update=False, context=None):
+        """Set state of an entity."""
+        import asyncio
+        pending_states[entity_id] = {
+            "state": str(new_state),
+            "attributes": attributes or {}
+        }
+    return async_set
+
+def _make_set(pending_states):
+    def set(entity_id, new_state, attributes=None, force_update=False, context=None):
+        """Set state of an entity (sync version)."""
+        pending_states[entity_id] = {
+            "state": str(new_state),
+            "attributes": attributes or {}
+        }
+    return set
+
+def _make_get_pending(pending_states):
+    def get_pending_states():
+        """Get all pending states (for syncing to Rust)."""
+        return dict(pending_states)
+    return get_pending_states
 "#;
 
     let globals = PyDict::new_bound(py);
     py.run_bound(code, Some(&globals), None)?;
 
-    let get_fn = globals.get_item("get")?.unwrap();
+    // Create the functions with the pending_states dict
+    let make_get = globals.get_item("_make_get")?.unwrap();
+    let get_fn = make_get.call1((&pending_states,))?;
     wrapper.setattr("get", get_fn)?;
 
-    let async_set = globals.get_item("async_set")?.unwrap();
+    let make_async_set = globals.get_item("_make_async_set")?.unwrap();
+    let async_set = make_async_set.call1((&pending_states,))?;
     wrapper.setattr("async_set", async_set)?;
+
+    let make_set = globals.get_item("_make_set")?.unwrap();
+    let set_fn = make_set.call1((&pending_states,))?;
+    wrapper.setattr("set", set_fn)?;
+
+    let make_get_pending = globals.get_item("_make_get_pending")?.unwrap();
+    let get_pending = make_get_pending.call1((&pending_states,))?;
+    wrapper.setattr("get_pending_states", get_pending)?;
 
     // Store the actual states for later use if needed
     let _ = states; // Currently unused but will be needed for real implementation
@@ -224,6 +262,9 @@ def _create_add_entities_callback(hass, entry, platform_name):
     """
     existing_ids = set()
 
+    # Import PlatformData to set on entities before accessing properties
+    from homeassistant.helpers.entity_platform import PlatformData
+
     def add_entities(entities, update_before_add=False, config_subentry_id=None):
         """Add entities to Home Assistant."""
         for entity in entities:
@@ -267,6 +308,15 @@ def _create_add_entities_callback(hass, entry, platform_name):
                         domain = 'button'
                     else:
                         domain = platform_name
+
+                # Set platform_data on entity BEFORE accessing properties
+                # This is required for entities with translation keys
+                if not hasattr(entity, 'platform_data') or entity.platform_data is None:
+                    try:
+                        platform_data = PlatformData(hass, domain=domain, platform_name=platform_name)
+                        entity.platform_data = platform_data
+                    except Exception as e:
+                        _LOGGER.debug(f"Could not set platform_data: {e}")
 
                 # Get entity unique_id and generate entity_id
                 unique_id = getattr(entity, '_attr_unique_id', None) or getattr(entity, 'unique_id', None)
@@ -326,8 +376,13 @@ def _create_add_entities_callback(hass, entry, platform_name):
                 # Build attributes dict
                 attributes = {}
 
-                # Get friendly name
-                name = getattr(entity, '_attr_name', None) or getattr(entity, 'name', None)
+                # Get friendly name - try _attr_name first, then property
+                name = getattr(entity, '_attr_name', None)
+                if name is None:
+                    try:
+                        name = getattr(entity, 'name', None)
+                    except (ValueError, AttributeError):
+                        pass  # name property might require platform_data
                 if name:
                     attributes['friendly_name'] = str(name)
                 elif hasattr(entity, '_attr_device_info'):
@@ -337,24 +392,39 @@ def _create_add_entities_callback(hass, entry, platform_name):
                     elif hasattr(device_info, 'name'):
                         attributes['friendly_name'] = device_info.name
 
-                # Get device class
-                device_class = getattr(entity, '_attr_device_class', None) or getattr(entity, 'device_class', None)
+                # Get device class - try _attr_ first, then property
+                device_class = getattr(entity, '_attr_device_class', None)
+                if device_class is None:
+                    try:
+                        device_class = getattr(entity, 'device_class', None)
+                    except (ValueError, AttributeError):
+                        pass
                 if device_class:
                     # Handle enums
                     if hasattr(device_class, 'value'):
                         device_class = device_class.value
                     attributes['device_class'] = str(device_class)
 
-                # Get unit of measurement
+                # Get unit of measurement - try _attr_ attributes first, then properties
                 unit = getattr(entity, '_attr_native_unit_of_measurement', None) or \
-                       getattr(entity, '_attr_unit_of_measurement', None) or \
-                       getattr(entity, 'native_unit_of_measurement', None) or \
-                       getattr(entity, 'unit_of_measurement', None)
+                       getattr(entity, '_attr_unit_of_measurement', None)
+                if unit is None:
+                    # Try properties (might raise ValueError if platform_data not set)
+                    try:
+                        unit = getattr(entity, 'native_unit_of_measurement', None) or \
+                               getattr(entity, 'unit_of_measurement', None)
+                    except (ValueError, AttributeError):
+                        pass  # Properties require platform_data, skip if not available
                 if unit:
                     attributes['unit_of_measurement'] = str(unit)
 
-                # Get icon
-                icon = getattr(entity, '_attr_icon', None) or getattr(entity, 'icon', None)
+                # Get icon - try _attr_ first, then property
+                icon = getattr(entity, '_attr_icon', None)
+                if icon is None:
+                    try:
+                        icon = getattr(entity, 'icon', None)
+                    except (ValueError, AttributeError):
+                        pass
                 if icon:
                     attributes['icon'] = str(icon)
 
@@ -390,8 +460,13 @@ def _create_add_entities_callback(hass, entry, platform_name):
                     if effect_list:
                         attributes['effect_list'] = list(effect_list)
 
-                # Get supported features
-                features = getattr(entity, '_attr_supported_features', None) or getattr(entity, 'supported_features', None)
+                # Get supported features - try _attr_ first, then property
+                features = getattr(entity, '_attr_supported_features', None)
+                if features is None:
+                    try:
+                        features = getattr(entity, 'supported_features', None)
+                    except (ValueError, AttributeError):
+                        pass
                 if features:
                     if hasattr(features, 'value'):
                         features = features.value
