@@ -77,6 +77,10 @@ pub enum ConfigEntrySource {
     Reconfigure,
     /// System-created entry
     System,
+    /// Device registration (e.g., mobile app)
+    Registration,
+    /// Integration-triggered discovery
+    IntegrationDiscovery,
 }
 
 /// Reason an entry was disabled

@@ -30,8 +30,60 @@ pub enum DeviceEntryType {
 }
 
 /// A device identifier (domain, id) pair
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// The id can be either a string or an integer in the JSON, but is stored as String
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct DeviceIdentifier(pub String, pub String);
+
+impl<'de> Deserialize<'de> for DeviceIdentifier {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{self, SeqAccess, Visitor};
+
+        struct DeviceIdentifierVisitor;
+
+        impl<'de> Visitor<'de> for DeviceIdentifierVisitor {
+            type Value = DeviceIdentifier;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a tuple of [domain, id, ...] where id parts are joined")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let domain: String = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+
+                // Collect all remaining elements as ID parts
+                // Some integrations use 3+ element tuples like ["homekit", "id", "bridge"]
+                let mut id_parts: Vec<String> = Vec::new();
+                while let Some(value) = seq.next_element::<serde_json::Value>()? {
+                    let part = match value {
+                        serde_json::Value::String(s) => s,
+                        serde_json::Value::Number(n) => n.to_string(),
+                        _ => return Err(de::Error::custom("id parts must be string or number")),
+                    };
+                    id_parts.push(part);
+                }
+
+                if id_parts.is_empty() {
+                    return Err(de::Error::invalid_length(1, &self));
+                }
+
+                // Join multiple ID parts with colon separator
+                let id = id_parts.join(":");
+
+                Ok(DeviceIdentifier(domain, id))
+            }
+        }
+
+        deserializer.deserialize_seq(DeviceIdentifierVisitor)
+    }
+}
 
 impl DeviceIdentifier {
     pub fn new(domain: impl Into<String>, id: impl Into<String>) -> Self {

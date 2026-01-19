@@ -1,5 +1,6 @@
 //! Error types for template rendering
 
+use std::path::PathBuf;
 use thiserror::Error;
 
 /// Result type for template operations
@@ -31,6 +32,22 @@ pub enum TemplateError {
     /// Invalid argument to function
     #[error("invalid argument to {function}: {message}")]
     InvalidArgument { function: String, message: String },
+
+    /// IO error reading template file
+    #[error("failed to read template from {}: {source}", path.display())]
+    IoError {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// Invalid path (e.g., no filename)
+    #[error("invalid template path: {}", path.display())]
+    InvalidPath { path: PathBuf },
+
+    /// Failed to parse a template file
+    #[error("failed to parse template '{}': {message}", name)]
+    ParseError { name: String, message: String },
 }
 
 impl From<minijinja::Error> for TemplateError {
