@@ -179,3 +179,21 @@ jobs:
       - name: Run HA compatibility tests
         run: make test-ha-compat
 
+  # Summary job for branch protection
+  test:
+    runs-on: ubuntu-latest
+    needs: [lint, test-rust, test-python, test-integration, test-ha-compat]
+    if: always()
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [[ "${{ needs.lint.result }}" != "success" ]] || \
+             [[ "${{ needs.test-rust.result }}" != "success" ]] || \
+             [[ "${{ needs.test-python.result }}" != "success" ]] || \
+             [[ "${{ needs.test-integration.result }}" != "success" ]] || \
+             [[ "${{ needs.test-ha-compat.result }}" != "success" ]]; then
+            echo "One or more jobs failed"
+            exit 1
+          fi
+          echo "All jobs passed"
+
