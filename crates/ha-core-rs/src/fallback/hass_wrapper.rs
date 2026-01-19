@@ -7,10 +7,11 @@ use ha_event_bus::EventBus;
 use ha_service_registry::ServiceRegistry;
 use ha_state_machine::StateMachine;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PySet};
+use pyo3::types::PyDict;
 use std::sync::Arc;
 
 use super::errors::FallbackResult;
+use super::pyclass_wrappers::{BusWrapper, ConfigWrapper, ServicesWrapper, StatesWrapper};
 
 /// Create a Python HomeAssistant-like object
 ///
@@ -43,25 +44,23 @@ pub fn create_hass_wrapper(
     let data = PyDict::new_bound(py);
     hass.setattr("data", data)?;
 
-    // Create wrapper objects for bus, states, services
-    // Bus wrapper with async_fire method
-    let bus_wrapper = create_bus_wrapper(py, bus)?;
+    // Create #[pyclass] wrapper objects for bus, states, services
+    // These call directly into Rust code instead of using Python stubs
+    let bus_wrapper = Py::new(py, BusWrapper::new(bus))?;
     hass.setattr("bus", bus_wrapper)?;
 
-    // States wrapper with get/set methods
-    let states_wrapper = create_states_wrapper(py, states)?;
+    let states_wrapper = Py::new(py, StatesWrapper::new(states))?;
     hass.setattr("states", states_wrapper)?;
 
-    // Services wrapper with async_call method
-    let services_wrapper = create_services_wrapper(py, services)?;
+    let services_wrapper = Py::new(py, ServicesWrapper::new(services))?;
     hass.setattr("services", services_wrapper)?;
 
     // Config entries wrapper with platform setup methods
     let config_entries_wrapper = create_config_entries_wrapper(py)?;
     hass.setattr("config_entries", config_entries_wrapper)?;
 
-    // Add config attribute with location and components
-    let config = create_config_wrapper(py)?;
+    // Add config attribute with location and components using #[pyclass]
+    let config = Py::new(py, ConfigWrapper::new(py)?)?;
     hass.setattr("config", config)?;
 
     // Add loop attribute (get the running event loop or create one)
@@ -84,133 +83,6 @@ pub fn create_hass_wrapper(
     hass.setattr("helpers", helpers)?;
 
     Ok(hass.unbind())
-}
-
-/// Create a bus wrapper with async_fire method
-fn create_bus_wrapper(py: Python<'_>, _bus: Arc<EventBus>) -> PyResult<PyObject> {
-    let types = py.import_bound("types")?;
-    let simple_namespace = types.getattr("SimpleNamespace")?;
-    let bus = simple_namespace.call0()?;
-
-    // For now, create a simple fire function that logs
-    // In the future, this should actually fire events via our Rust EventBus
-    let code = r#"
-async def async_fire(event_type, event_data=None, origin=None, context=None):
-    """Fire an event."""
-    import logging
-    logging.getLogger(__name__).debug(f"Event fired: {event_type}")
-"#;
-
-    let globals = PyDict::new_bound(py);
-    py.run_bound(code, Some(&globals), None)?;
-    let async_fire = globals.get_item("async_fire")?.unwrap();
-    bus.setattr("async_fire", async_fire)?;
-
-    Ok(bus.unbind())
-}
-
-/// Create a states wrapper with get method
-fn create_states_wrapper(py: Python<'_>, states: Arc<StateMachine>) -> PyResult<PyObject> {
-    let types = py.import_bound("types")?;
-    let simple_namespace = types.getattr("SimpleNamespace")?;
-    let wrapper = simple_namespace.call0()?;
-
-    // Create a dict to store pending states from Python integration setup
-    // These will be synced to the Rust StateMachine via get_pending_states()
-    let pending_states = PyDict::new_bound(py);
-    wrapper.setattr("_pending_states", &pending_states)?;
-
-    // Create functions that use the pending_states dict
-    let code = r#"
-def _make_get(pending_states):
-    def get(entity_id):
-        """Get state of an entity."""
-        if entity_id in pending_states:
-            return pending_states[entity_id]
-        return None
-    return get
-
-def _make_async_set(pending_states):
-    async def async_set(entity_id, new_state, attributes=None, force_update=False, context=None):
-        """Set state of an entity."""
-        import asyncio
-        pending_states[entity_id] = {
-            "state": str(new_state),
-            "attributes": attributes or {}
-        }
-    return async_set
-
-def _make_set(pending_states):
-    def set(entity_id, new_state, attributes=None, force_update=False, context=None):
-        """Set state of an entity (sync version)."""
-        pending_states[entity_id] = {
-            "state": str(new_state),
-            "attributes": attributes or {}
-        }
-    return set
-
-def _make_get_pending(pending_states):
-    def get_pending_states():
-        """Get all pending states (for syncing to Rust)."""
-        return dict(pending_states)
-    return get_pending_states
-"#;
-
-    let globals = PyDict::new_bound(py);
-    py.run_bound(code, Some(&globals), None)?;
-
-    // Create the functions with the pending_states dict
-    let make_get = globals.get_item("_make_get")?.unwrap();
-    let get_fn = make_get.call1((&pending_states,))?;
-    wrapper.setattr("get", get_fn)?;
-
-    let make_async_set = globals.get_item("_make_async_set")?.unwrap();
-    let async_set = make_async_set.call1((&pending_states,))?;
-    wrapper.setattr("async_set", async_set)?;
-
-    let make_set = globals.get_item("_make_set")?.unwrap();
-    let set_fn = make_set.call1((&pending_states,))?;
-    wrapper.setattr("set", set_fn)?;
-
-    let make_get_pending = globals.get_item("_make_get_pending")?.unwrap();
-    let get_pending = make_get_pending.call1((&pending_states,))?;
-    wrapper.setattr("get_pending_states", get_pending)?;
-
-    // Store the actual states for later use if needed
-    let _ = states; // Currently unused but will be needed for real implementation
-
-    Ok(wrapper.unbind())
-}
-
-/// Create a services wrapper with async_call method
-fn create_services_wrapper(py: Python<'_>, _services: Arc<ServiceRegistry>) -> PyResult<PyObject> {
-    let types = py.import_bound("types")?;
-    let simple_namespace = types.getattr("SimpleNamespace")?;
-    let wrapper = simple_namespace.call0()?;
-
-    // Create async_call that logs for now
-    let code = r#"
-async def async_call(domain, service, service_data=None, blocking=False, context=None, target=None):
-    """Call a service."""
-    import logging
-    logging.getLogger(__name__).debug(f"Service called: {domain}.{service}")
-
-async def async_register(domain, service, service_func, schema=None):
-    """Register a service."""
-    import logging
-    logging.getLogger(__name__).debug(f"Service registered: {domain}.{service}")
-"#;
-
-    let globals = PyDict::new_bound(py);
-    py.run_bound(code, Some(&globals), None)?;
-
-    let async_call = globals.get_item("async_call")?.unwrap();
-    wrapper.setattr("async_call", async_call)?;
-
-    let async_register = globals.get_item("async_register")?.unwrap();
-    wrapper.setattr("async_register", async_register)?;
-
-    Ok(wrapper.unbind())
 }
 
 /// Create a config_entries wrapper with platform setup methods
@@ -623,32 +495,6 @@ async def async_init(domain, *, context=None, data=None):
     flow.setattr("async_init", async_init)?;
 
     Ok(flow.unbind())
-}
-
-/// Create a config wrapper with location and components
-fn create_config_wrapper(py: Python<'_>) -> PyResult<PyObject> {
-    let types = py.import_bound("types")?;
-    let simple_namespace = types.getattr("SimpleNamespace")?;
-    let config = simple_namespace.call0()?;
-
-    // Basic config attributes
-    config.setattr("config_dir", "/config")?;
-    config.setattr("latitude", 32.87336)?; // Default: San Diego
-    config.setattr("longitude", -117.22743)?;
-    config.setattr("elevation", 0)?;
-    config.setattr("time_zone", "UTC")?;
-    config.setattr("units", "metric")?;
-    config.setattr("location_name", "Home")?;
-
-    // Components set - tracks loaded components
-    let components = PySet::empty_bound(py)?;
-    config.setattr("components", components)?;
-
-    // Internal URL (for some integrations)
-    config.setattr("internal_url", py.None())?;
-    config.setattr("external_url", py.None())?;
-
-    Ok(config.unbind())
 }
 
 /// Create an async_create_task function

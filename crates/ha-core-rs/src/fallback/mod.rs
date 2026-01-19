@@ -39,6 +39,7 @@ mod config_entry;
 mod errors;
 mod hass_wrapper;
 mod integration;
+mod pyclass_wrappers;
 mod runtime;
 mod service_bridge;
 
@@ -58,46 +59,6 @@ use pyo3::prelude::*;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::info;
-
-/// Convert a Python value to a serde_json::Value
-fn python_to_json_value(value: &Bound<'_, pyo3::PyAny>) -> serde_json::Value {
-    // Try to extract various types
-    if let Ok(b) = value.extract::<bool>() {
-        return serde_json::Value::Bool(b);
-    }
-    if let Ok(i) = value.extract::<i64>() {
-        return serde_json::Value::Number(i.into());
-    }
-    if let Ok(f) = value.extract::<f64>() {
-        if let Some(n) = serde_json::Number::from_f64(f) {
-            return serde_json::Value::Number(n);
-        }
-    }
-    if let Ok(s) = value.extract::<String>() {
-        return serde_json::Value::String(s);
-    }
-    if let Ok(list) = value.downcast::<pyo3::types::PyList>() {
-        let arr: Vec<serde_json::Value> = list
-            .iter()
-            .map(|item| python_to_json_value(&item))
-            .collect();
-        return serde_json::Value::Array(arr);
-    }
-    if let Ok(dict) = value.downcast::<pyo3::types::PyDict>() {
-        let mut map = serde_json::Map::new();
-        for (k, v) in dict.iter() {
-            if let Ok(key) = k.extract::<String>() {
-                map.insert(key, python_to_json_value(&v));
-            }
-        }
-        return serde_json::Value::Object(map);
-    }
-    if value.is_none() {
-        return serde_json::Value::Null;
-    }
-    // Default to string representation
-    serde_json::Value::String(value.to_string())
-}
 
 /// Main entry point for fallback mode
 ///
@@ -202,75 +163,10 @@ impl FallbackBridge {
             let py_entry = config_entry_to_python(py, entry)?;
 
             // Call setup_entry via the integration loader
-            let result =
-                self.integrations
-                    .setup_entry(domain, &py_hass, &py_entry, &self.async_bridge)?;
-
-            // Sync pending states from Python to Rust StateMachine
-            if result {
-                if let Ok(states_wrapper) = py_hass.bind(py).getattr("states") {
-                    if let Ok(get_pending) = states_wrapper.getattr("get_pending_states") {
-                        if let Ok(pending) = get_pending.call0() {
-                            if let Ok(pending_dict) = pending.downcast::<pyo3::types::PyDict>() {
-                                use ha_core::{Context, EntityId};
-                                use std::collections::HashMap;
-
-                                for (entity_id, state_data) in pending_dict.iter() {
-                                    if let (Ok(entity_id_str), Ok(state_dict)) = (
-                                        entity_id.extract::<String>(),
-                                        state_data.downcast::<pyo3::types::PyDict>(),
-                                    ) {
-                                        // Parse entity_id
-                                        let entity_id = match entity_id_str.parse::<EntityId>() {
-                                            Ok(id) => id,
-                                            Err(_) => continue,
-                                        };
-
-                                        // Extract state value
-                                        let state_value = state_dict
-                                            .get_item("state")
-                                            .ok()
-                                            .flatten()
-                                            .and_then(|s| s.extract::<String>().ok())
-                                            .unwrap_or_else(|| "unknown".to_string());
-
-                                        // Extract attributes
-                                        let mut attrs: HashMap<String, serde_json::Value> =
-                                            HashMap::new();
-                                        if let Some(py_attrs) =
-                                            state_dict.get_item("attributes").ok().flatten()
-                                        {
-                                            if let Ok(attrs_dict) =
-                                                py_attrs.downcast::<pyo3::types::PyDict>()
-                                            {
-                                                for (key, value) in attrs_dict.iter() {
-                                                    if let Ok(key_str) = key.extract::<String>() {
-                                                        // Convert Python value to serde_json::Value
-                                                        let json_value =
-                                                            python_to_json_value(&value);
-                                                        attrs.insert(key_str, json_value);
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        // Set state in StateMachine
-                                        let context = Context::new();
-                                        states.set(entity_id.clone(), &state_value, attrs, context);
-                                        tracing::debug!(
-                                            entity_id = %entity_id,
-                                            state = %state_value,
-                                            "Synced Python entity state to Rust"
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            Ok(result)
+            // States are now set directly via #[pyclass] StatesWrapper,
+            // so no sync step is needed.
+            self.integrations
+                .setup_entry(domain, &py_hass, &py_entry, &self.async_bridge)
         })
     }
 
