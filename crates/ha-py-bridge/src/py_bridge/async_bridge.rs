@@ -3,7 +3,7 @@
 //! Provides utilities for calling Python async functions from Rust
 //! and handling the asyncio event loop.
 
-use super::errors::{FallbackError, FallbackResult};
+use super::errors::{PyBridgeError, PyBridgeResult};
 use pyo3::prelude::*;
 use std::future::Future;
 use std::pin::Pin;
@@ -19,7 +19,7 @@ pub struct AsyncBridge {
 
 impl AsyncBridge {
     /// Create a new async bridge
-    pub fn new() -> FallbackResult<Self> {
+    pub fn new() -> PyBridgeResult<Self> {
         Python::with_gil(|py| {
             // Get or create an asyncio event loop
             let asyncio = py.import_bound("asyncio")?;
@@ -43,7 +43,7 @@ impl AsyncBridge {
     }
 
     /// Run a Python coroutine to completion
-    pub fn run_coroutine<T>(&self, coro: PyObject) -> FallbackResult<T>
+    pub fn run_coroutine<T>(&self, coro: PyObject) -> PyBridgeResult<T>
     where
         T: for<'py> FromPyObject<'py>,
     {
@@ -51,23 +51,23 @@ impl AsyncBridge {
             let event_loop = self
                 .event_loop
                 .as_ref()
-                .ok_or_else(|| FallbackError::AsyncBridge("No event loop".to_string()))?;
+                .ok_or_else(|| PyBridgeError::AsyncBridge("No event loop".to_string()))?;
 
             let result = event_loop
                 .bind(py)
                 .call_method1("run_until_complete", (coro,))?;
 
-            result.extract().map_err(FallbackError::from)
+            result.extract().map_err(PyBridgeError::from)
         })
     }
 
     /// Run a Python coroutine and return the result as PyObject
-    pub fn run_coroutine_py(&self, coro: PyObject) -> FallbackResult<PyObject> {
+    pub fn run_coroutine_py(&self, coro: PyObject) -> PyBridgeResult<PyObject> {
         Python::with_gil(|py| {
             let event_loop = self
                 .event_loop
                 .as_ref()
-                .ok_or_else(|| FallbackError::AsyncBridge("No event loop".to_string()))?;
+                .ok_or_else(|| PyBridgeError::AsyncBridge("No event loop".to_string()))?;
 
             let result = event_loop
                 .bind(py)
@@ -83,7 +83,7 @@ impl AsyncBridge {
         obj: &PyObject,
         method: &str,
         args: impl IntoPy<Py<pyo3::types::PyTuple>>,
-    ) -> FallbackResult<PyObject> {
+    ) -> PyBridgeResult<PyObject> {
         Python::with_gil(|py| {
             let bound = obj.bind(py);
             let coro = bound.call_method1(method, args)?;
@@ -92,12 +92,12 @@ impl AsyncBridge {
     }
 
     /// Schedule a callback to run in the asyncio event loop
-    pub fn call_soon(&self, callback: PyObject, args: PyObject) -> FallbackResult<()> {
+    pub fn call_soon(&self, callback: PyObject, args: PyObject) -> PyBridgeResult<()> {
         Python::with_gil(|py| {
             let event_loop = self
                 .event_loop
                 .as_ref()
-                .ok_or_else(|| FallbackError::AsyncBridge("No event loop".to_string()))?;
+                .ok_or_else(|| PyBridgeError::AsyncBridge("No event loop".to_string()))?;
 
             event_loop
                 .bind(py)
@@ -134,7 +134,7 @@ impl Default for AsyncBridge {
 pub struct PyFuture {
     coro: PyObject,
     bridge: Arc<AsyncBridge>,
-    result: Option<oneshot::Receiver<FallbackResult<PyObject>>>,
+    result: Option<oneshot::Receiver<PyBridgeResult<PyObject>>>,
 }
 
 impl PyFuture {
@@ -148,7 +148,7 @@ impl PyFuture {
     }
 
     /// Spawn the coroutine on a blocking thread
-    fn spawn_blocking(&mut self) -> oneshot::Receiver<FallbackResult<PyObject>> {
+    fn spawn_blocking(&mut self) -> oneshot::Receiver<PyBridgeResult<PyObject>> {
         let (tx, rx) = oneshot::channel();
         let coro = Python::with_gil(|py| self.coro.clone_ref(py));
         let bridge = self.bridge.clone();
@@ -163,7 +163,7 @@ impl PyFuture {
 }
 
 impl Future for PyFuture {
-    type Output = FallbackResult<PyObject>;
+    type Output = PyBridgeResult<PyObject>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // If we haven't spawned yet, do so now
@@ -176,7 +176,7 @@ impl Future for PyFuture {
         let rx = self.result.as_mut().unwrap();
         match Pin::new(rx).poll(cx) {
             Poll::Ready(Ok(result)) => Poll::Ready(result),
-            Poll::Ready(Err(_)) => Poll::Ready(Err(FallbackError::AsyncBridge(
+            Poll::Ready(Err(_)) => Poll::Ready(Err(PyBridgeError::AsyncBridge(
                 "Channel closed".to_string(),
             ))),
             Poll::Pending => Poll::Pending,
@@ -185,14 +185,14 @@ impl Future for PyFuture {
 }
 
 /// Helper to run Python async code from Tokio
-pub async fn run_python_async<F, T>(f: F) -> FallbackResult<T>
+pub async fn run_python_async<F, T>(f: F) -> PyBridgeResult<T>
 where
     F: FnOnce(Python<'_>) -> PyResult<T> + Send + 'static,
     T: Send + 'static,
 {
-    tokio::task::spawn_blocking(move || Python::with_gil(|py| f(py).map_err(FallbackError::from)))
+    tokio::task::spawn_blocking(move || Python::with_gil(|py| f(py).map_err(PyBridgeError::from)))
         .await
-        .map_err(|e| FallbackError::AsyncBridge(e.to_string()))?
+        .map_err(|e| PyBridgeError::AsyncBridge(e.to_string()))?
 }
 
 /// Create a Python awaitable that resolves when a Rust future completes

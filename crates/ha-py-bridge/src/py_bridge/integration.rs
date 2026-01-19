@@ -3,7 +3,7 @@
 //! Loads and manages Python Home Assistant integrations for components
 //! that aren't yet implemented in Rust.
 
-use super::errors::{FallbackError, FallbackResult};
+use super::errors::{PyBridgeError, PyBridgeResult};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::collections::{HashMap, HashSet};
@@ -80,7 +80,7 @@ impl IntegrationLoader {
     }
 
     /// Load an integration by domain
-    pub fn load(&self, domain: &str) -> FallbackResult<()> {
+    pub fn load(&self, domain: &str) -> PyBridgeResult<()> {
         // Check if already loaded
         {
             let loaded = self.loaded.read().unwrap();
@@ -104,7 +104,7 @@ impl IntegrationLoader {
                 }
                 Err(e) => {
                     warn!("Failed to load integration {}: {}", domain, e);
-                    Err(FallbackError::IntegrationLoadFailed {
+                    Err(PyBridgeError::IntegrationLoadFailed {
                         domain: domain.to_string(),
                         reason: e.to_string(),
                     })
@@ -150,11 +150,11 @@ impl IntegrationLoader {
         domain: &str,
         method: &str,
         args: impl IntoPy<Py<pyo3::types::PyTuple>>,
-    ) -> FallbackResult<PyObject> {
+    ) -> PyBridgeResult<PyObject> {
         let loaded = self.loaded.read().unwrap();
         let module = loaded
             .get(domain)
-            .ok_or_else(|| FallbackError::IntegrationNotFound(domain.to_string()))?;
+            .ok_or_else(|| PyBridgeError::IntegrationNotFound(domain.to_string()))?;
 
         Python::with_gil(|py| {
             let module = module.bind(py);
@@ -164,11 +164,11 @@ impl IntegrationLoader {
     }
 
     /// Get an attribute from a loaded integration
-    pub fn get_attr(&self, domain: &str, attr: &str) -> FallbackResult<PyObject> {
+    pub fn get_attr(&self, domain: &str, attr: &str) -> PyBridgeResult<PyObject> {
         let loaded = self.loaded.read().unwrap();
         let module = loaded
             .get(domain)
-            .ok_or_else(|| FallbackError::IntegrationNotFound(domain.to_string()))?;
+            .ok_or_else(|| PyBridgeError::IntegrationNotFound(domain.to_string()))?;
 
         Python::with_gil(|py| {
             let module = module.bind(py);
@@ -188,14 +188,14 @@ impl IntegrationLoader {
         hass: &PyObject,
         entry: &PyObject,
         async_bridge: &super::AsyncBridge,
-    ) -> FallbackResult<bool> {
+    ) -> PyBridgeResult<bool> {
         // Load integration if not already loaded
         self.load(domain)?;
 
         Python::with_gil(|py| {
             let module = self
                 .get(domain)
-                .ok_or_else(|| FallbackError::IntegrationNotFound(domain.to_string()))?;
+                .ok_or_else(|| PyBridgeError::IntegrationNotFound(domain.to_string()))?;
 
             let module = module.bind(py);
 
@@ -227,16 +227,16 @@ impl IntegrationLoader {
         hass: &PyObject,
         entry: &PyObject,
         async_bridge: &super::AsyncBridge,
-    ) -> FallbackResult<bool> {
+    ) -> PyBridgeResult<bool> {
         // Check if integration is loaded
         if !self.is_loaded(domain) {
-            return Err(FallbackError::IntegrationNotFound(domain.to_string()));
+            return Err(PyBridgeError::IntegrationNotFound(domain.to_string()));
         }
 
         Python::with_gil(|py| {
             let module = self
                 .get(domain)
-                .ok_or_else(|| FallbackError::IntegrationNotFound(domain.to_string()))?;
+                .ok_or_else(|| PyBridgeError::IntegrationNotFound(domain.to_string()))?;
 
             let module = module.bind(py);
 
@@ -283,7 +283,7 @@ pub struct IntegrationManifest {
 
 impl IntegrationManifest {
     /// Load manifest from a Python integration
-    pub fn from_domain(domain: &str) -> FallbackResult<Self> {
+    pub fn from_domain(domain: &str) -> PyBridgeResult<Self> {
         Python::with_gil(|py| {
             let _manifest_module = format!("homeassistant.components.{}.manifest", domain);
 

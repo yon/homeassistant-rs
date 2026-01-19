@@ -3,10 +3,10 @@ requires = ["maturin>=1.4,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "ha-core-rs"
+name = "ha-py-bridge"
 # Version matches Python Home Assistant version being tracked
 version = "2026.1.1"
-description = "Rust core components for Home Assistant"
+description = "Home Assistant Python bridge - Rust core with Python shim layer"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 classifiers = [
@@ -27,13 +27,16 @@ keywords = ["home-assistant", "rust", "automation", "iot"]
 Repository = "https://github.com/yon/homeassistant-rs"
 
 [tool.maturin]
-manifest-path = "crates/ha-core-rs/Cargo.toml"
-# Export as ha_core_rs to avoid conflicting with vendor/ha-core/homeassistant
-# This allows HA tests to use both:
-#   - homeassistant.* (HA's full package from vendor/ha-core)
-#   - ha_core_rs.* (our Rust implementations)
+# Cargo.toml is now in the same directory
+manifest-path = "Cargo.toml"
+# Export as ha_core_rs - this is the native module name that Python imports
 module-name = "ha_core_rs"
 features = ["extension"]
 strip = true
-# Use version from pyproject.toml, not Cargo.toml (which uses Rust-style versioning)
-python-packages = []
+# Include the Python shim package in the wheel
+python-source = "python"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["python/tests"]

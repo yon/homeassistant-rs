@@ -1,13 +1,12 @@
-//! Mode 2: Python fallback for embedded interpreter
+//! Mode 2: Python bridge for running Python integrations
 //!
-//! This module provides functionality for embedding Python to delegate
-//! unimplemented components to Python Home Assistant.
+//! This module provides functionality for embedding Python to run
+//! Python Home Assistant integrations from a Rust main process.
 //!
 //! ## Overview
 //!
-//! When running in fallback mode, the Rust application is the main process
-//! and embeds a Python interpreter to run Python Home Assistant code for
-//! components that aren't yet implemented in Rust.
+//! When running in py_bridge mode, the Rust application is the main process
+//! and embeds a Python interpreter to run Python Home Assistant integrations.
 //!
 //! ## Components
 //!
@@ -20,7 +19,7 @@
 //! ## Example
 //!
 //! ```ignore
-//! use ha_core_rs::fallback::{PythonRuntime, IntegrationLoader, AsyncBridge};
+//! use ha_core_rs::py_bridge::{PythonRuntime, IntegrationLoader, AsyncBridge};
 //!
 //! // Initialize Python runtime
 //! PythonRuntime::initialize(Some(Path::new("/path/to/homeassistant")))?;
@@ -45,7 +44,7 @@ mod service_bridge;
 
 pub use async_bridge::{run_python_async, rust_future_to_python, AsyncBridge, PyFuture};
 pub use config_entry::{config_entry_to_python, create_config_entry_instance};
-pub use errors::{FallbackError, FallbackResult};
+pub use errors::{PyBridgeError, PyBridgeResult};
 pub use hass_wrapper::{
     call_python_entity_service, create_hass_wrapper, get_python_devices, get_python_entities,
 };
@@ -63,10 +62,10 @@ use std::path::Path;
 use std::sync::Arc;
 use tracing::info;
 
-/// Main entry point for fallback mode
+/// Main entry point for Python bridge mode
 ///
 /// Initializes the Python runtime and sets up the bridge infrastructure.
-pub struct FallbackBridge {
+pub struct PyBridge {
     /// Python runtime
     runtime: &'static PythonRuntime,
     /// Integration loader
@@ -79,13 +78,13 @@ pub struct FallbackBridge {
     pub registries: Arc<Registries>,
 }
 
-impl FallbackBridge {
-    /// Create a new fallback bridge
+impl PyBridge {
+    /// Create a new Python bridge
     ///
     /// # Arguments
     /// * `ha_path` - Optional path to the Home Assistant Python installation
     /// * `registries` - Rust registries for device/entity registration
-    pub fn new(ha_path: Option<&Path>, registries: Arc<Registries>) -> FallbackResult<Self> {
+    pub fn new(ha_path: Option<&Path>, registries: Arc<Registries>) -> PyBridgeResult<Self> {
         // Initialize Python runtime
         PythonRuntime::initialize(ha_path)?;
 
@@ -93,7 +92,7 @@ impl FallbackBridge {
         let async_bridge = Arc::new(AsyncBridge::new()?);
         let services = ServiceBridge::new(async_bridge.clone());
 
-        info!("Fallback bridge initialized");
+        info!("Python bridge initialized");
 
         Ok(Self {
             runtime,
@@ -114,23 +113,23 @@ impl FallbackBridge {
         self.integrations.components().is_rust_component(name)
     }
 
-    /// Check if a component should use Python fallback
+    /// Check if a component should use Python
     pub fn is_python_component(&self, name: &str) -> bool {
         self.integrations.components().is_python_component(name)
     }
 
     /// Load a Python integration
-    pub fn load_integration(&self, domain: &str) -> FallbackResult<()> {
+    pub fn load_integration(&self, domain: &str) -> PyBridgeResult<()> {
         self.integrations.load(domain)
     }
 
     /// Get Python version
-    pub fn python_version(&self) -> FallbackResult<String> {
+    pub fn python_version(&self) -> PyBridgeResult<String> {
         self.runtime.python_version()
     }
 
     /// Execute Python code with the GIL
-    pub fn with_python<F, T>(&self, f: F) -> FallbackResult<T>
+    pub fn with_python<F, T>(&self, f: F) -> PyBridgeResult<T>
     where
         F: FnOnce(Python<'_>) -> PyResult<T>,
     {
@@ -152,7 +151,7 @@ impl FallbackBridge {
         bus: Arc<EventBus>,
         states: Arc<StateMachine>,
         services: Arc<ServiceRegistry>,
-    ) -> FallbackResult<bool> {
+    ) -> PyBridgeResult<bool> {
         let domain = &entry.domain;
 
         Python::with_gil(|py| {
@@ -190,7 +189,7 @@ impl FallbackBridge {
         bus: Arc<EventBus>,
         states: Arc<StateMachine>,
         services: Arc<ServiceRegistry>,
-    ) -> FallbackResult<bool> {
+    ) -> PyBridgeResult<bool> {
         let domain = &entry.domain;
 
         Python::with_gil(|py| {
@@ -218,9 +217,9 @@ mod tests {
     }
 
     #[test]
-    fn test_fallback_bridge_creation() {
+    fn test_py_bridge_creation() {
         let registries = create_test_registries();
-        let bridge = FallbackBridge::new(None, registries);
+        let bridge = PyBridge::new(None, registries);
         assert!(bridge.is_ok());
 
         let bridge = bridge.unwrap();
@@ -231,7 +230,7 @@ mod tests {
     #[test]
     fn test_python_version() {
         let registries = create_test_registries();
-        let bridge = FallbackBridge::new(None, registries).unwrap();
+        let bridge = PyBridge::new(None, registries).unwrap();
         let version = bridge.python_version().unwrap();
         assert!(version.starts_with("3."));
     }

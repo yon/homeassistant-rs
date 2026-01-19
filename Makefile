@@ -30,11 +30,11 @@ build-release: ## Build all crates in release mode
 
 .PHONY: build-wheel
 build-wheel: $(VENV_STAMP) ## Build Python wheel (Mode 1: extension)
-	$(MATURIN) build --release
+	cd crates/ha-py-bridge && $(CURDIR)/$(MATURIN) build --release
 
 .PHONY: build-wheel-debug
 build-wheel-debug: $(VENV_STAMP) ## Build Python wheel in debug mode
-	$(MATURIN) build
+	cd crates/ha-py-bridge && $(CURDIR)/$(MATURIN) build
 
 ##@ Check & Lint
 
@@ -80,26 +80,26 @@ dev: fmt clippy test ## Run all development checks (format, lint, test)
 
 .PHONY: install-dev
 install-dev: $(VENV_STAMP) ## Install Python extension in development mode
-	$(MATURIN) develop
+	cd crates/ha-py-bridge && $(CURDIR)/$(MATURIN) develop
 
 .PHONY: run
 run: $(VENV_STAMP) ## Run the Home Assistant server (strict mode - no native fallback)
-	PYTHONPATH=$(CURDIR)/python:$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])") \
+	PYTHONPATH=$(CURDIR)/crates/ha-py-bridge/python:$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])") \
 	HA_FRONTEND_PATH=$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])")/hass_frontend \
 	PYO3_PYTHON=$(CURDIR)/$(PYTHON) \
 	$(CARGO) run --bin homeassistant --features python
 
 .PHONY: run-fallback
 run-fallback: $(VENV_STAMP) ## Run with native HA fallback enabled (development only)
-	HA_ALLOW_NATIVE_FALLBACK=1 \
-	PYTHONPATH=$(CURDIR)/python:$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])") \
+	ALLOW_HA_NATIVE_FALLBACK=1 \
+	PYTHONPATH=$(CURDIR)/crates/ha-py-bridge/python:$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])") \
 	HA_FRONTEND_PATH=$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])")/hass_frontend \
 	PYO3_PYTHON=$(CURDIR)/$(PYTHON) \
 	$(CARGO) run --bin homeassistant --features python
 
 .PHONY: run-release
 run-release: $(VENV_STAMP) ## Run the Home Assistant server in release mode (strict)
-	PYTHONPATH=$(CURDIR)/python:$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])") \
+	PYTHONPATH=$(CURDIR)/crates/ha-py-bridge/python:$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])") \
 	HA_FRONTEND_PATH=$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])")/hass_frontend \
 	PYO3_PYTHON=$(CURDIR)/$(PYTHON) \
 	$(CARGO) run --bin homeassistant --features python --release
@@ -172,11 +172,11 @@ test-integration: build $(VENV_STAMP) ## Run WebSocket API integration tests
 
 .PHONY: test-python
 test-python: install-dev ## Run all Python tests (shim + PyO3 extension)
-	$(VENV_BIN)/pytest python/tests/ crates/ha-core-rs/tests/python/ -v
+	$(VENV_BIN)/pytest crates/ha-py-bridge/python/tests/ -v
 
 .PHONY: test-rust
 test-rust: ## Run all Rust tests
-	$(CARGO) test --workspace --exclude ha-core-rs
+	$(CARGO) test --workspace --exclude ha-py-bridge
 	$(CARGO) test -p ha-automation --test compat_test
 	$(CARGO) test -p ha-script --test compat_test
 

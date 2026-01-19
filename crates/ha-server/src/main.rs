@@ -26,7 +26,7 @@ use tracing::{debug, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 #[cfg(feature = "python")]
-use ha_core_rs::fallback::{call_python_entity_service, get_python_entities, FallbackBridge};
+use ha_py_bridge::py_bridge::{call_python_entity_service, get_python_entities, PyBridge};
 
 /// The central Home Assistant instance
 pub struct HomeAssistant {
@@ -44,9 +44,9 @@ pub struct HomeAssistant {
     pub states: Arc<StateMachine>,
     /// Template engine for rendering templates
     pub template_engine: Arc<TemplateEngine>,
-    /// Python fallback bridge for running Python integrations
+    /// Python bridge for running Python integrations
     #[cfg(feature = "python")]
-    pub python_bridge: Option<FallbackBridge>,
+    pub python_bridge: Option<PyBridge>,
 }
 
 impl HomeAssistant {
@@ -77,7 +77,7 @@ impl HomeAssistant {
         #[cfg(feature = "python")]
         let python_bridge = match {
             let ha_python_path = std::env::var("HA_PYTHON_PATH").map(PathBuf::from).ok();
-            FallbackBridge::new(ha_python_path.as_deref(), registries.clone())
+            PyBridge::new(ha_python_path.as_deref(), registries.clone())
         } {
             Ok(bridge) => {
                 match bridge.python_version() {

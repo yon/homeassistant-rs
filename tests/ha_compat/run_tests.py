@@ -553,7 +553,7 @@ def run_tests(categories: list[str] | None = None, verbose: bool = False) -> int
     repo_root = get_repo_root()
     ha_core = get_ha_core_dir()
     venv = repo_root / ".venv"
-    shim_path = repo_root / "python"
+    shim_path = repo_root / "crates" / "ha-py-bridge" / "python"
 
     if not ha_core.exists():
         print(f"Error: HA core not found at {ha_core}")

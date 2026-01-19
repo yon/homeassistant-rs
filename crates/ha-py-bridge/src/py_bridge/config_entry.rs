@@ -8,7 +8,7 @@ use pyo3::types::PyDict;
 use pyo3::IntoPy;
 use std::collections::HashMap;
 
-use super::errors::FallbackResult;
+use super::errors::PyBridgeResult;
 
 /// Convert a serde_json::Value to a Python object
 fn json_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
@@ -93,7 +93,7 @@ fn source_to_str(source: &ConfigEntrySource) -> &'static str {
 ///
 /// This creates a dict with all the fields that Python integrations expect
 /// when calling async_setup_entry(hass, entry).
-pub fn config_entry_to_python(py: Python<'_>, entry: &ConfigEntry) -> FallbackResult<PyObject> {
+pub fn config_entry_to_python(py: Python<'_>, entry: &ConfigEntry) -> PyBridgeResult<PyObject> {
     let dict = PyDict::new_bound(py);
 
     // Required fields
@@ -146,7 +146,7 @@ pub fn config_entry_to_python(py: Python<'_>, entry: &ConfigEntry) -> FallbackRe
 pub fn create_config_entry_instance(
     py: Python<'_>,
     entry: &ConfigEntry,
-) -> FallbackResult<PyObject> {
+) -> PyBridgeResult<PyObject> {
     // Import the ConfigEntry class from homeassistant.config_entries
     let config_entries_module = py.import_bound("homeassistant.config_entries")?;
 

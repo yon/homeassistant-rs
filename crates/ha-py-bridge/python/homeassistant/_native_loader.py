@@ -17,8 +17,26 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Path to vendor/ha-core
-_VENDOR_PATH = Path(__file__).parents[2] / "vendor/ha-core"
+# Find the vendor/ha-core directory by searching upward from this file
+def _find_vendor_path() -> Path:
+    """Find vendor/ha-core by searching up from this file's location."""
+    # Start from this file and search upward for vendor/ha-core
+    current = Path(__file__).resolve().parent
+    for _ in range(10):  # Limit search depth
+        vendor_path = current / "vendor" / "ha-core"
+        if vendor_path.exists():
+            return vendor_path
+        parent = current.parent
+        if parent == current:
+            break  # Reached root
+        current = parent
+    # Fallback: try from cwd
+    cwd_vendor = Path.cwd() / "vendor" / "ha-core"
+    if cwd_vendor.exists():
+        return cwd_vendor
+    raise RuntimeError("Could not find vendor/ha-core directory")
+
+_VENDOR_PATH = _find_vendor_path()
 
 # Cache for loaded modules - keyed by module name
 _module_cache: dict[str, Any] = {}
