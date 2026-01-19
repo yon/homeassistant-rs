@@ -1,6 +1,6 @@
 [package]
-name = "ha-core-rs"
-description = "Home Assistant core in Rust - PyO3 bridge for extension and embedded modes"
+name = "ha-py-bridge"
+description = "Home Assistant Python bridge - PyO3 bindings and Python shim layer"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

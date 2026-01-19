@@ -13,7 +13,7 @@ path = "src/main.rs"
 [features]
 default = []
 # Enable Python bridge for running Python integrations
-python = ["dep:ha-core-rs", "dep:pyo3-build-config"]
+python = ["dep:ha-py-bridge", "dep:pyo3-build-config"]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -22,8 +22,8 @@ ha-automation = { workspace = true }
 ha-config = { workspace = true }
 ha-config-entries = { workspace = true }
 ha-core = { workspace = true }
-ha-core-rs = { path = "../ha-core-rs", default-features = false, features = ["py_bridge"], optional = true }
 ha-event-bus = { workspace = true }
+ha-py-bridge = { path = "../ha-py-bridge", default-features = false, features = ["py_bridge"], optional = true }
 ha-registries = { workspace = true }
 ha-script = { workspace = true }
 ha-service-registry = { workspace = true }

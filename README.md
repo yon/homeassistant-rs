@@ -72,10 +72,10 @@ Open http://localhost:8123
 
 ```bash
 # Run all Rust tests
-cargo test --workspace --exclude ha-core-rs
+cargo test --workspace --exclude ha-py-bridge
 
 # Run tests with Python support
-PYO3_PYTHON=$(pwd)/.venv/bin/python cargo test -p ha-core-rs --features py_bridge --no-default-features --lib
+PYO3_PYTHON=$(pwd)/.venv/bin/python cargo test -p ha-py-bridge --features py_bridge --no-default-features --lib
 
 # Run HA compatibility tests
 .venv/bin/python tests/ha_compat/run_tests.py --all -v
@@ -85,19 +85,19 @@ PYO3_PYTHON=$(pwd)/.venv/bin/python cargo test -p ha-core-rs --features py_bridg
 
 ```
 crates/
+├── ha-api/               # REST + WebSocket API (axum)
+├── ha-automation/        # Trigger-Condition-Action engine
+├── ha-config-entries/    # ConfigEntry lifecycle
+├── ha-config/            # YAML loading, !include, !secret
 ├── ha-core/              # Core types (EntityId, State, Event, Context)
 ├── ha-event-bus/         # Pub/sub event system
-├── ha-state-machine/     # Entity state management
-├── ha-service-registry/  # Service registration and dispatch
-├── ha-config/            # YAML loading, !include, !secret
-├── ha-config-entries/    # ConfigEntry lifecycle
+├── ha-py-bridge/         # PyO3 bridge and Python shim layer
 ├── ha-registries/        # Entity/Device/Area/Floor/Label registries
-├── ha-template/          # Jinja2-compatible templates (minijinja)
-├── ha-automation/        # Trigger-Condition-Action engine
 ├── ha-script/            # Script executor
-├── ha-core-rs/           # PyO3 bridge for Python integrations
-├── ha-api/               # REST + WebSocket API (axum)
 ├── ha-server/            # Main binary
+├── ha-service-registry/  # Service registration and dispatch
+├── ha-state-machine/     # Entity state management
+├── ha-template/          # Jinja2-compatible templates (minijinja)
 └── ha-test-comparison/   # Comparison test infrastructure
 ```
 

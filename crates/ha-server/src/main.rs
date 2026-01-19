@@ -26,7 +26,7 @@ use tracing::{debug, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 #[cfg(feature = "python")]
-use ha_core_rs::py_bridge::{call_python_entity_service, get_python_entities, PyBridge};
+use ha_py_bridge::py_bridge::{call_python_entity_service, get_python_entities, PyBridge};
 
 /// The central Home Assistant instance
 pub struct HomeAssistant {

@@ -4,7 +4,7 @@ These tests ensure that the shim layer:
 1. BLOCKS native HA imports in strict mode (default)
 2. Only allows explicitly shimmed modules
 3. Properly routes entity state writes to Rust via RustStateMixin
-4. Only enables fallback when HA_ALLOW_NATIVE_FALLBACK=1 is explicitly set
+4. Only enables fallback when ALLOW_HA_NATIVE_FALLBACK=1 is explicitly set
 """
 
 import importlib
@@ -16,8 +16,8 @@ from unittest import mock
 import pytest
 
 # Ensure we're testing the shim, not any installed homeassistant
-SHIM_PATH = Path(__file__).parents[2] / "python"
-VENDOR_PATH = Path(__file__).parents[2] / "vendor/ha-core"
+SHIM_PATH = Path(__file__).parents[1]  # crates/ha-py-bridge/python
+VENDOR_PATH = Path(__file__).parents[4] / "vendor/ha-core"  # repo_root/vendor/ha-core
 
 
 @pytest.fixture(autouse=True)
@@ -25,6 +25,8 @@ def clean_homeassistant_modules():
     """Remove all homeassistant modules and configure sys.path for shim."""
     # Save original state
     original_path = sys.path.copy()
+    original_modules = {k: v for k, v in sys.modules.items()
+                        if k == "homeassistant" or k.startswith("homeassistant.")}
 
     def clear_modules():
         to_remove = [name for name in sys.modules if name == "homeassistant" or name.startswith("homeassistant.")]
@@ -33,11 +35,12 @@ def clean_homeassistant_modules():
 
     clear_modules()
 
-    # Remove any site-packages homeassistant paths and add our shim first
+    # Add our shim first on sys.path
+    # We keep site-packages for dependencies (propcache, etc.) but our shim
+    # takes precedence because it's first
     shim_str = str(SHIM_PATH)
-    new_path = [p for p in sys.path if "site-packages/homeassistant" not in p]
     # Remove shim if already present, then add at start
-    new_path = [p for p in new_path if p != shim_str]
+    new_path = [p for p in sys.path if p != shim_str]
     new_path.insert(0, shim_str)
     sys.path = new_path
     importlib.invalidate_caches()
@@ -53,16 +56,16 @@ def clean_homeassistant_modules():
 @pytest.fixture
 def strict_mode():
     """Ensure strict mode (no fallback)."""
-    with mock.patch.dict(os.environ, {"HA_ALLOW_NATIVE_FALLBACK": ""}, clear=False):
+    with mock.patch.dict(os.environ, {"ALLOW_HA_NATIVE_FALLBACK": ""}, clear=False):
         # Remove the var entirely if it exists
-        os.environ.pop("HA_ALLOW_NATIVE_FALLBACK", None)
+        os.environ.pop("ALLOW_HA_NATIVE_FALLBACK", None)
         yield
 
 
 @pytest.fixture
 def fallback_mode():
     """Enable fallback mode."""
-    with mock.patch.dict(os.environ, {"HA_ALLOW_NATIVE_FALLBACK": "1"}):
+    with mock.patch.dict(os.environ, {"ALLOW_HA_NATIVE_FALLBACK": "1"}):
         yield
 
 
@@ -275,7 +278,7 @@ class TestFallbackMode:
 
         import homeassistant
 
-        assert "HA_ALLOW_NATIVE_FALLBACK is enabled" in caplog.text
+        assert "ALLOW_HA_NATIVE_FALLBACK is enabled" in caplog.text
 
 
 class TestNoAccidentalNativeInclusion:
@@ -312,7 +315,7 @@ class TestNoAccidentalNativeInclusion:
     def test_env_var_values(self, strict_mode):
         """Only specific values should enable fallback."""
         # Test that empty string doesn't enable fallback
-        with mock.patch.dict(os.environ, {"HA_ALLOW_NATIVE_FALLBACK": ""}):
+        with mock.patch.dict(os.environ, {"ALLOW_HA_NATIVE_FALLBACK": ""}):
             for name in list(sys.modules.keys()):
                 if name.startswith("homeassistant"):
                     del sys.modules[name]
@@ -325,7 +328,7 @@ class TestNoAccidentalNativeInclusion:
         for name in list(sys.modules.keys()):
             if name.startswith("homeassistant"):
                 del sys.modules[name]
-        with mock.patch.dict(os.environ, {"HA_ALLOW_NATIVE_FALLBACK": "0"}):
+        with mock.patch.dict(os.environ, {"ALLOW_HA_NATIVE_FALLBACK": "0"}):
             import homeassistant
             native_path = str(VENDOR_PATH / "homeassistant")
             assert native_path not in homeassistant.__path__
@@ -334,7 +337,7 @@ class TestNoAccidentalNativeInclusion:
         for name in list(sys.modules.keys()):
             if name.startswith("homeassistant"):
                 del sys.modules[name]
-        with mock.patch.dict(os.environ, {"HA_ALLOW_NATIVE_FALLBACK": "false"}):
+        with mock.patch.dict(os.environ, {"ALLOW_HA_NATIVE_FALLBACK": "false"}):
             import homeassistant
             native_path = str(VENDOR_PATH / "homeassistant")
             assert native_path not in homeassistant.__path__
