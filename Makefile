@@ -134,16 +134,12 @@ help: ## Display this help message
 .PHONY: setup-venv
 setup-venv: $(VENV_STAMP) ## Create Python virtual environment with tools
 
-##@ HA Comparison Testing
-# Detailed targets in tests/Makefile - these delegate to it
+##@ HA Test Environment
+# Setup and manage HA test instances
 
-.PHONY: ha-compat-setup
-ha-compat-setup: $(VENV_STAMP) ## Setup HA compatibility test environment
+.PHONY: ha-setup
+ha-setup: $(VENV_STAMP) ## Setup HA compatibility test environment
 	./tests/ha_compat/setup.sh
-
-.PHONY: ha-compat-test
-ha-compat-test: install-dev ## Run HA test suite with Rust extension
-	$(PYTHON) tests/ha_compat/run_tests.py --all -v
 
 .PHONY: ha-start
 ha-start: ## Start HA test instance in Docker
@@ -157,18 +153,18 @@ ha-status: ## Check status of HA test instance
 ha-stop: ## Stop HA test instance
 	$(MAKE) -f tests/Makefile ha-stop
 
-.PHONY: test-compare
-test-compare: ## Run API comparison tests against Python HA
-	$(MAKE) -f tests/Makefile compare
-
 ##@ Testing
 
 .PHONY: test
 test: test-rust test-python test-integration ## Run ALL tests (Rust + Python + integration)
 
-.PHONY: test-coverage
-test-coverage: ## Run Rust tests with coverage (requires cargo-tarpaulin)
-	$(CARGO) tarpaulin --workspace --out Html --output-dir target/coverage
+.PHONY: test-compare
+test-compare: ## Run API comparison tests against Python HA (requires Docker)
+	$(MAKE) -f tests/Makefile compare
+
+.PHONY: test-ha-compat
+test-ha-compat: install-dev ## Run HA test suite with Rust extension
+	$(PYTHON) tests/ha_compat/run_tests.py --all -v
 
 .PHONY: test-integration
 test-integration: build $(VENV_STAMP) ## Run WebSocket API integration tests
@@ -183,10 +179,6 @@ test-rust: ## Run all Rust tests
 	$(CARGO) test --workspace --exclude ha-core-rs
 	$(CARGO) test -p ha-automation --test compat_test
 	$(CARGO) test -p ha-script --test compat_test
-
-.PHONY: test-verbose
-test-verbose: ## Run Rust tests with verbose output
-	$(CARGO) test --workspace -- --nocapture
 
 ##@ Utilities
 
