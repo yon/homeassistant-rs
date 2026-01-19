@@ -15,8 +15,8 @@
 //! ### Mode 1: Extension (feature = "extension")
 //! Build as a Python extension module that replaces the Python homeassistant package.
 //!
-//! ### Mode 2: Fallback (feature = "fallback")
-//! Embed Python interpreter to delegate to Python HA for unimplemented parts.
+//! ### Mode 2: Python Bridge (feature = "py_bridge")
+//! Embed Python interpreter to run Python integrations from Rust.
 
 // PyO3 macros trigger false positive clippy warnings about useless conversions
 #![allow(clippy::useless_conversion)]
@@ -24,8 +24,8 @@
 #[cfg(feature = "extension")]
 mod extension;
 
-#[cfg(feature = "fallback")]
-pub mod fallback;
+#[cfg(feature = "py_bridge")]
+pub mod py_bridge;
 
 #[cfg(feature = "extension")]
 use pyo3::prelude::*;
@@ -33,9 +33,9 @@ use pyo3::prelude::*;
 #[cfg(feature = "extension")]
 use pyo3::types::PyModule;
 
-// Re-export fallback types for convenience
-#[cfg(feature = "fallback")]
-pub use fallback::{FallbackBridge, FallbackError, FallbackResult};
+// Re-export py_bridge types for convenience
+#[cfg(feature = "py_bridge")]
+pub use py_bridge::{PyBridge, PyBridgeError, PyBridgeResult};
 
 /// Python module initialization - exports as 'ha_core_rs'
 ///

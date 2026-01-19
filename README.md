@@ -75,7 +75,7 @@ Open http://localhost:8123
 cargo test --workspace --exclude ha-core-rs
 
 # Run tests with Python support
-PYO3_PYTHON=$(pwd)/.venv/bin/python cargo test -p ha-core-rs --features fallback --no-default-features --lib
+PYO3_PYTHON=$(pwd)/.venv/bin/python cargo test -p ha-core-rs --features py_bridge --no-default-features --lib
 
 # Run HA compatibility tests
 .venv/bin/python tests/ha_compat/run_tests.py --all -v

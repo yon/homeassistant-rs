@@ -11,7 +11,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::sync::{Arc, OnceLock};
 
-use super::errors::FallbackResult;
+use super::errors::PyBridgeResult;
 use super::pyclass_wrappers::{
     BusWrapper, ConfigWrapper, RegistriesWrapper, ServicesWrapper, StatesWrapper,
 };
@@ -330,7 +330,7 @@ pub fn create_hass_wrapper(
     states: Arc<StateMachine>,
     services: Arc<ServiceRegistry>,
     registries: Arc<Registries>,
-) -> FallbackResult<PyObject> {
+) -> PyBridgeResult<PyObject> {
     // Create a simple namespace object to hold our attributes
     let types = py.import_bound("types")?;
     let simple_namespace = types.getattr("SimpleNamespace")?;

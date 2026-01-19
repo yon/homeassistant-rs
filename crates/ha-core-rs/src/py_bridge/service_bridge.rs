@@ -3,7 +3,7 @@
 //! Allows Rust code to call services registered in Python Home Assistant.
 
 use super::async_bridge::AsyncBridge;
-use super::errors::{FallbackError, FallbackResult};
+use super::errors::{PyBridgeError, PyBridgeResult};
 use ha_core::{Context, ServiceCall};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -45,11 +45,11 @@ impl ServiceBridge {
         service: &str,
         service_data: serde_json::Value,
         context: &Context,
-    ) -> FallbackResult<Option<serde_json::Value>> {
+    ) -> PyBridgeResult<Option<serde_json::Value>> {
         let hass = self
             .hass
             .as_ref()
-            .ok_or_else(|| FallbackError::ServiceCall("Not connected to Python HA".to_string()))?;
+            .ok_or_else(|| PyBridgeError::ServiceCall("Not connected to Python HA".to_string()))?;
 
         Python::with_gil(|py| {
             let hass_bound = hass.bind(py);
@@ -81,11 +81,11 @@ impl ServiceBridge {
     }
 
     /// Check if a service exists in Python
-    pub fn has_service(&self, domain: &str, service: &str) -> FallbackResult<bool> {
+    pub fn has_service(&self, domain: &str, service: &str) -> PyBridgeResult<bool> {
         let hass = self
             .hass
             .as_ref()
-            .ok_or_else(|| FallbackError::ServiceCall("Not connected to Python HA".to_string()))?;
+            .ok_or_else(|| PyBridgeError::ServiceCall("Not connected to Python HA".to_string()))?;
 
         Python::with_gil(|py| {
             let hass_bound = hass.bind(py);
@@ -102,11 +102,11 @@ impl ServiceBridge {
         &self,
         domain: &str,
         service: &str,
-    ) -> FallbackResult<Option<String>> {
+    ) -> PyBridgeResult<Option<String>> {
         let hass = self
             .hass
             .as_ref()
-            .ok_or_else(|| FallbackError::ServiceCall("Not connected to Python HA".to_string()))?;
+            .ok_or_else(|| PyBridgeError::ServiceCall("Not connected to Python HA".to_string()))?;
 
         Python::with_gil(|py| {
             let hass_bound = hass.bind(py);

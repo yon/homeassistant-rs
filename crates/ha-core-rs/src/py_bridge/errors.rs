@@ -1,10 +1,10 @@
-//! Error types for the fallback module
+//! Error types for the Python bridge module
 
 use thiserror::Error;
 
-/// Errors that can occur in the Python fallback system
+/// Errors that can occur in the Python bridge system
 #[derive(Debug, Error)]
-pub enum FallbackError {
+pub enum PyBridgeError {
     /// Python interpreter error
     #[error("Python error: {0}")]
     Python(String),
@@ -17,7 +17,7 @@ pub enum FallbackError {
     #[error("Failed to load integration '{domain}': {reason}")]
     IntegrationLoadFailed { domain: String, reason: String },
 
-    /// Component not implemented in Rust and no Python fallback available
+    /// Component not implemented in Rust and no Python available
     #[error("Component '{0}' not implemented")]
     NotImplemented(String),
 
@@ -34,11 +34,11 @@ pub enum FallbackError {
     ServiceCall(String),
 }
 
-impl From<pyo3::PyErr> for FallbackError {
+impl From<pyo3::PyErr> for PyBridgeError {
     fn from(err: pyo3::PyErr) -> Self {
-        FallbackError::Python(err.to_string())
+        PyBridgeError::Python(err.to_string())
     }
 }
 
-/// Result type for fallback operations
-pub type FallbackResult<T> = Result<T, FallbackError>;
+/// Result type for Python bridge operations
+pub type PyBridgeResult<T> = Result<T, PyBridgeError>;

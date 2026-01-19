@@ -1,6 +1,6 @@
 //! Python runtime management for embedded interpreter
 
-use super::errors::{FallbackError, FallbackResult};
+use super::errors::{PyBridgeError, PyBridgeResult};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::path::Path;
@@ -30,7 +30,7 @@ impl PythonRuntime {
     }
 
     /// Initialize the Python runtime with Home Assistant path
-    pub fn initialize(ha_path: Option<&Path>) -> FallbackResult<()> {
+    pub fn initialize(ha_path: Option<&Path>) -> PyBridgeResult<()> {
         // pyo3 with auto-initialize handles Python initialization
         Python::with_gil(|py| {
             let sys = py.import_bound("sys")?;
@@ -68,15 +68,15 @@ impl PythonRuntime {
     }
 
     /// Execute Python code and return the result
-    pub fn exec<F, T>(&self, f: F) -> FallbackResult<T>
+    pub fn exec<F, T>(&self, f: F) -> PyBridgeResult<T>
     where
         F: FnOnce(Python<'_>) -> PyResult<T>,
     {
-        Python::with_gil(|py| f(py).map_err(FallbackError::from))
+        Python::with_gil(|py| f(py).map_err(PyBridgeError::from))
     }
 
     /// Import a Python module
-    pub fn import_module(&self, name: &str) -> FallbackResult<()> {
+    pub fn import_module(&self, name: &str) -> PyBridgeResult<()> {
         Python::with_gil(|py| {
             py.import_bound(name)?;
             debug!("Imported Python module: {}", name);
@@ -90,7 +90,7 @@ impl PythonRuntime {
     }
 
     /// Get Python version info
-    pub fn python_version(&self) -> FallbackResult<String> {
+    pub fn python_version(&self) -> PyBridgeResult<String> {
         Python::with_gil(|py| {
             let sys = py.import_bound("sys")?;
             let version = sys.getattr("version")?;
@@ -119,11 +119,11 @@ impl<'py> GilGuard<'py> {
 }
 
 /// Helper to run code with the GIL held
-pub fn with_gil<F, T>(f: F) -> FallbackResult<T>
+pub fn with_gil<F, T>(f: F) -> PyBridgeResult<T>
 where
     F: FnOnce(Python<'_>) -> PyResult<T>,
 {
-    Python::with_gil(|py| f(py).map_err(FallbackError::from))
+    Python::with_gil(|py| f(py).map_err(PyBridgeError::from))
 }
 
 #[cfg(test)]
