@@ -2285,21 +2285,20 @@ async fn handle_repairs_list_issues(
 
 /// Handle persistent_notification/subscribe command
 async fn handle_persistent_notification_subscribe(
-    _conn: &Arc<ActiveConnection>,
+    conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> Result<(), String> {
-    // Send initial empty notifications event
-    let event = OutgoingMessage::Event(EventMessage {
-        id,
-        msg_type: "event",
-        event: serde_json::json!({
-            "notifications": {}
-        }),
-    });
-    tx.send(event).await.map_err(|e| e.to_string())?;
+    // Get current notifications
+    let notifications = conn.state.notifications.get_all_map();
 
-    // Send success response
+    // Convert to JSON-serializable format
+    let notifications_json: serde_json::Map<String, serde_json::Value> = notifications
+        .into_iter()
+        .map(|(k, v)| (k, serde_json::to_value(v).unwrap_or_default()))
+        .collect();
+
+    // Send success response first (matching Python HA behavior)
     let result = OutgoingMessage::Result(ResultMessage {
         id,
         msg_type: "result",
@@ -2307,7 +2306,18 @@ async fn handle_persistent_notification_subscribe(
         result: Some(serde_json::Value::Null),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result).await.map_err(|e| e.to_string())?;
+
+    // Send initial notifications event with "current" type
+    let event = OutgoingMessage::Event(EventMessage {
+        id,
+        msg_type: "event",
+        event: serde_json::json!({
+            "type": "current",
+            "notifications": notifications_json
+        }),
+    });
+    tx.send(event).await.map_err(|e| e.to_string())
 }
 
 /// Handle labs/subscribe command

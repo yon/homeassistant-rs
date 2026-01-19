@@ -6,6 +6,7 @@
 
 pub mod auth;
 pub mod frontend;
+pub mod persistent_notification;
 mod websocket;
 
 use axum::{
@@ -42,6 +43,8 @@ pub struct AppState {
     pub config_entries: Arc<RwLock<ConfigEntries>>,
     /// Registries (entity, device, area, floor, label)
     pub registries: Arc<Registries>,
+    /// Persistent notification manager
+    pub notifications: Arc<persistent_notification::PersistentNotificationManager>,
     /// Cached services response (loaded from JSON for comparison testing)
     pub services_cache: Option<Arc<serde_json::Value>>,
     /// Cached events response (loaded from JSON for comparison testing)
@@ -554,6 +557,7 @@ mod tests {
         let registries = Arc::new(Registries::new(&temp_dir));
         let storage = Arc::new(Storage::new(&temp_dir));
         let config_entries = Arc::new(RwLock::new(ConfigEntries::new(storage)));
+        let notifications = persistent_notification::create_manager();
         AppState {
             event_bus,
             state_machine,
@@ -562,6 +566,7 @@ mod tests {
             components: Arc::new(vec![]),
             config_entries,
             registries,
+            notifications,
             services_cache: None,
             events_cache: None,
             frontend_config: None,
