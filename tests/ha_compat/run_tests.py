@@ -520,13 +520,12 @@ def list_categories():
     print("")
     print(f"Total: {total} tests across {len(TEST_CATEGORIES)} categories")
 
-def run_tests(categories: list[str] | None = None, verbose: bool = False, use_mock: bool = False) -> int:
+def run_tests(categories: list[str] | None = None, verbose: bool = False) -> int:
     """Run the compatibility tests against Rust implementations.
 
     Args:
         categories: List of test categories to run, or None for all
         verbose: Enable verbose output
-        use_mock: Use mock homeassistant package from python/ instead of real HA
 
     Returns:
         Exit code (0 for success)
@@ -534,15 +533,10 @@ def run_tests(categories: list[str] | None = None, verbose: bool = False, use_mo
     repo_root = get_repo_root()
     ha_core = get_ha_core_dir()
     venv = repo_root / ".venv"
-    mock_package = repo_root / "python"
 
     if not ha_core.exists():
         print(f"Error: HA core not found at {ha_core}")
         print("Run: make ha-compat-setup")
-        return 1
-
-    if use_mock and not mock_package.exists():
-        print(f"Error: Mock package not found at {mock_package}")
         return 1
 
     # Build test patterns
@@ -570,52 +564,20 @@ def run_tests(categories: list[str] | None = None, verbose: bool = False, use_mo
         "-x",  # Stop on first failure
     ]
 
-    # When using mock, use our own config to avoid pytest adding vendor/ha-core to sys.path
-    if use_mock:
-        pytest_args.extend([
-            f"--rootdir={repo_root}",  # Use repo root as rootdir
-            f"-c={mock_package}/pytest.ini",  # Use our pytest config, not HA's pyproject.toml
-            "-p", "no:cacheprovider",  # Disable cache to avoid path issues
-            "-p", "pytest_mock_ha",  # Load our mock injection plugin
-        ])
+    for pattern in patterns:
+        pytest_args.append(f"tests/{pattern}")
 
-    # Add test patterns - use absolute paths when using mock to avoid cwd issues
-    if use_mock:
-        for pattern in patterns:
-            pytest_args.append(str(ha_core / "tests" / pattern))
-    else:
-        for pattern in patterns:
-            pytest_args.append(f"tests/{pattern}")
-
-    mode_desc = "mock homeassistant package" if use_mock else "Rust extension"
-    print(f"Running {len(patterns)} tests against {mode_desc}...")
+    print(f"Running {len(patterns)} tests against Rust extension...")
     print("")
 
     # Run pytest with PYTHONPATH set
     env = os.environ.copy()
-    pythonpath_parts = []
-
-    # If using mock, set env var so root conftest.py activates mock mode
-    if use_mock:
-        env["HOMEASSISTANT_MOCK"] = "1"
-        pythonpath_parts.append(str(mock_package))
-        print(f"Using mock package: {mock_package}")
-
-    pythonpath_parts.append(str(repo_root))
+    pythonpath_parts = [str(repo_root)]
     if "PYTHONPATH" in env:
         pythonpath_parts.append(env["PYTHONPATH"])
     env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
 
-    # For mock mode, use Python's -P flag and importlib mode
-    if use_mock:
-        pytest_args = [
-            sys.executable, "-P", "-m", "pytest",
-            "--import-mode=importlib",  # Don't add test directories to sys.path
-        ] + pytest_args[1:]  # Skip the original pytest path
-
-    # Run from HA core directory for non-mock mode, repo root for mock mode
-    cwd = repo_root if use_mock else ha_core
-    result = subprocess.run(pytest_args, cwd=cwd, env=env)
+    result = subprocess.run(pytest_args, cwd=ha_core, env=env)
     return result.returncode
 
 def main():
@@ -625,8 +587,6 @@ def main():
                         help="Test category to run (can specify multiple)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     parser.add_argument("--all", "-a", action="store_true", help="Run all categories")
-    parser.add_argument("--mock", "-m", action="store_true",
-                        help="Use mock homeassistant package from python/ instead of real HA")
 
     args = parser.parse_args()
 
@@ -638,7 +598,7 @@ def main():
     if args.all:
         categories = None
 
-    return run_tests(categories=categories, verbose=args.verbose, use_mock=args.mock)
+    return run_tests(categories=categories, verbose=args.verbose)
 
 if __name__ == "__main__":
     sys.exit(main())

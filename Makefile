@@ -83,20 +83,16 @@ install-dev: $(VENV_STAMP) ## Install Python extension in development mode
 	$(MATURIN) develop
 
 .PHONY: run
-run: ## Run the Home Assistant server (Mode 2: standalone)
-	$(CARGO) run --bin homeassistant
-
-.PHONY: run-python
-run-python: $(VENV_STAMP) ## Run the Home Assistant server with Python integration support
-	PYTHONPATH=$(CURDIR)/vendor/ha-core:$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])") \
-	HA_CONFIG_DIR=tests/comparison/config \
+run: $(VENV_STAMP) ## Run the Home Assistant server with Python integration support
 	HA_FRONTEND_PATH=$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])")/hass_frontend \
 	PYO3_PYTHON=$(CURDIR)/$(PYTHON) \
 	$(CARGO) run --bin homeassistant --features python
 
 .PHONY: run-release
-run-release: ## Run the Home Assistant server in release mode
-	$(CARGO) run --bin homeassistant --release
+run-release: $(VENV_STAMP) ## Run the Home Assistant server in release mode
+	HA_FRONTEND_PATH=$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])")/hass_frontend \
+	PYO3_PYTHON=$(CURDIR)/$(PYTHON) \
+	$(CARGO) run --bin homeassistant --features python --release
 
 .PHONY: setup
 setup: $(VENV_STAMP) ## Setup development environment (git hooks, venv)
@@ -143,10 +139,6 @@ ha-compat-setup: $(VENV_STAMP) ## Setup HA compatibility test environment
 ha-compat-test: install-dev ## Run HA test suite with Rust extension
 	$(PYTHON) tests/ha_compat/run_tests.py --all -v
 
-.PHONY: ha-mock-test
-ha-mock-test: $(VENV_STAMP) ## Run HA test suite with mock homeassistant package
-	$(PYTHON) tests/ha_compat/run_tests.py --mock -v -c state
-
 .PHONY: ha-start
 ha-start: ## Start HA test instance in Docker
 	$(MAKE) -f tests/Makefile ha-start
@@ -170,7 +162,7 @@ test: ## Run all Rust tests (excludes Python bridge, use python-test for that)
 	$(CARGO) test --workspace --exclude ha-core-rs
 
 .PHONY: test-all
-test-all: test test-compat ## Run all tests including compat tests
+test-all: test test-compat test-integration ## Run all tests including compat and integration tests
 
 .PHONY: test-compat
 test-compat: ## Run HA compatibility tests (Rust-only, fast)
@@ -188,6 +180,10 @@ test-doc: ## Run documentation tests
 .PHONY: test-fallback
 test-fallback: $(VENV_STAMP) ## Run Python fallback mode tests (ha-core-rs with embedded Python)
 	PYO3_PYTHON=$(CURDIR)/$(PYTHON) $(CARGO) test -p ha-core-rs --features fallback --no-default-features --lib
+
+.PHONY: test-integration
+test-integration: build $(VENV_STAMP) ## Run WebSocket API integration tests (starts Rust server)
+	$(VENV_BIN)/pytest tests/integration/ -v
 
 .PHONY: test-verbose
 test-verbose: ## Run all tests with verbose output
