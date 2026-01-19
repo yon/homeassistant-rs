@@ -2,12 +2,46 @@
 //!
 //! Parses the `homeassistant:` section from configuration.yaml
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_yaml::Value;
 use std::path::Path;
 
 use crate::error::{ConfigError, ConfigResult};
 use crate::loader::load_yaml;
+
+/// Deserialize f64 that might be stored as a string (e.g., "41.123" instead of 41.123)
+fn string_or_f64<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    let value = Value::deserialize(deserializer)?;
+    match value {
+        Value::Number(n) => n.as_f64().ok_or_else(|| D::Error::custom("invalid number")),
+        Value::String(s) => s
+            .parse::<f64>()
+            .map_err(|_| D::Error::custom("invalid number string")),
+        Value::Null => Ok(0.0),
+        _ => Err(D::Error::custom("expected number or string")),
+    }
+}
+
+/// Deserialize i32 that might be stored as a string
+fn string_or_i32<'de, D>(deserializer: D) -> Result<i32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    let value = Value::deserialize(deserializer)?;
+    match value {
+        Value::Number(n) => Ok(n.as_i64().unwrap_or(0) as i32),
+        Value::String(s) => s
+            .parse::<i32>()
+            .map_err(|_| D::Error::custom("invalid integer string")),
+        Value::Null => Ok(0),
+        _ => Err(D::Error::custom("expected integer or string")),
+    }
+}
 
 /// Unit system configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -61,15 +95,15 @@ pub struct CoreConfig {
     pub name: String,
 
     /// Latitude of the location
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_f64")]
     pub latitude: f64,
 
     /// Longitude of the location
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_f64")]
     pub longitude: f64,
 
     /// Elevation in meters
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_i32")]
     pub elevation: i32,
 
     /// Unit system (metric or imperial)
