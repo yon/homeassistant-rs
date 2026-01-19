@@ -10,7 +10,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,16 +31,72 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - name: Lint
+        run: make lint
 
-      - name: Run clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+  test-rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Run tests
-        run: cargo test --workspace --exclude ha-core-rs
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
 
-  test-fallback:
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run Rust tests
+        run: make test-rust
+
+  test-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-python-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install HA core (needed for shim tests)
+        run: |
+          make setup-venv
+          .venv/bin/pip install -e vendor/ha-core
+
+      - name: Run Python tests
+        run: make test-python
+
+  test-integration:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,14 +118,18 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-fallback-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-integration-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Run fallback mode tests
-        env:
-          PYO3_PYTHON: python3
-        run: cargo test -p ha-core-rs --features fallback --no-default-features --lib
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-integration-${{ hashFiles('**/Cargo.lock') }}
 
-  ha-compat-test:
+      - name: Run integration tests
+        run: make test-integration
+
+  test-ha-compat:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -99,20 +159,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('tests/ha_compat/requirements.txt') }}
+          key: ${{ runner.os }}-pip-compat-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Install dependencies
+      - name: Install HA core dependencies
         run: |
-          python -m venv .venv
-          .venv/bin/pip install --upgrade pip
-          .venv/bin/pip install maturin
-          # Install HA core test requirements (pinned versions from requirements_test.txt)
+          make setup-venv
           .venv/bin/pip install \
-            pytest==9.0.2 \
-            pytest-asyncio==1.3.0 \
             pytest-aiohttp==1.1.0 \
             pytest-socket==0.7.0 \
-            pytest-timeout==2.4.0 \
             pytest-unordered==0.7.0 \
             pytest-freezer==0.4.9 \
             freezegun==1.5.2 \
@@ -122,9 +176,6 @@ jobs:
             bcrypt==4.3.0
           .venv/bin/pip install -e vendor/ha-core
 
-      - name: Build and install Rust extension
-        run: .venv/bin/maturin develop
-
       - name: Run HA compatibility tests
-        run: .venv/bin/python tests/ha_compat/run_tests.py --all -v
+        run: make test-ha-compat
 
