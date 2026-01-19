@@ -5,7 +5,7 @@
 mod automation_engine;
 
 use anyhow::Result;
-use ha_api::{auth::AuthState, frontend::FrontendConfig, AppState};
+use ha_api::{auth::AuthState, frontend::FrontendConfig, persistent_notification, AppState};
 use ha_automation::AutomationConfig;
 use ha_config::CoreConfig;
 use ha_config_entries::ConfigEntries;
@@ -926,6 +926,111 @@ impl HomeAssistant {
 
 // Note: HomeAssistant no longer implements Default since new() requires config_dir
 
+/// Register persistent_notification services
+fn register_persistent_notification_services(
+    services: &ServiceRegistry,
+    notifications: Arc<persistent_notification::PersistentNotificationManager>,
+) {
+    const DOMAIN: &str = persistent_notification::DOMAIN;
+
+    // Register persistent_notification.create service
+    let notifications_clone = notifications.clone();
+    services.register_with_description(
+        ServiceDescription {
+            domain: DOMAIN.to_string(),
+            service: "create".to_string(),
+            name: Some("Create notification".to_string()),
+            description: Some("Create a persistent notification".to_string()),
+            schema: Some(json!({
+                "message": {"required": true, "selector": {"text": {}}},
+                "title": {"required": false, "selector": {"text": {}}},
+                "notification_id": {"required": false, "selector": {"text": {}}}
+            })),
+            target: None,
+            supports_response: SupportsResponse::None,
+        },
+        move |call: ServiceCall| {
+            let notifications = notifications_clone.clone();
+            async move {
+                let message = call
+                    .service_data
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                let title = call
+                    .service_data
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                let notification_id = call
+                    .service_data
+                    .get("notification_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| ulid::Ulid::new().to_string().to_lowercase());
+
+                notifications.create(notification_id, message, title);
+                Ok(None)
+            }
+        },
+    );
+
+    // Register persistent_notification.dismiss service
+    let notifications_clone = notifications.clone();
+    services.register_with_description(
+        ServiceDescription {
+            domain: DOMAIN.to_string(),
+            service: "dismiss".to_string(),
+            name: Some("Dismiss notification".to_string()),
+            description: Some("Dismiss a persistent notification".to_string()),
+            schema: Some(json!({
+                "notification_id": {"required": true, "selector": {"text": {}}}
+            })),
+            target: None,
+            supports_response: SupportsResponse::None,
+        },
+        move |call: ServiceCall| {
+            let notifications = notifications_clone.clone();
+            async move {
+                if let Some(notification_id) = call
+                    .service_data
+                    .get("notification_id")
+                    .and_then(|v| v.as_str())
+                {
+                    notifications.dismiss(notification_id);
+                }
+                Ok(None)
+            }
+        },
+    );
+
+    // Register persistent_notification.dismiss_all service
+    let notifications_clone = notifications.clone();
+    services.register_with_description(
+        ServiceDescription {
+            domain: DOMAIN.to_string(),
+            service: "dismiss_all".to_string(),
+            name: Some("Dismiss all notifications".to_string()),
+            description: Some("Dismiss all persistent notifications".to_string()),
+            schema: None,
+            target: None,
+            supports_response: SupportsResponse::None,
+        },
+        move |_call: ServiceCall| {
+            let notifications = notifications_clone.clone();
+            async move {
+                notifications.dismiss_all();
+                Ok(None)
+            }
+        },
+    );
+
+    info!("Persistent notification services registered");
+}
+
 /// Load components list from JSON file or use defaults
 fn load_components(config_dir: &std::path::Path) -> Vec<String> {
     let components_file = config_dir.join("components.json");
@@ -946,11 +1051,12 @@ fn load_components(config_dir: &std::path::Path) -> Vec<String> {
 
     // Default components
     vec![
-        "homeassistant".to_string(),
         "api".to_string(),
         "automation".to_string(),
-        "script".to_string(),
+        "homeassistant".to_string(),
+        "persistent_notification".to_string(),
         "scene".to_string(),
+        "script".to_string(),
     ]
 }
 
@@ -1489,6 +1595,12 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Create persistent notification manager
+    let notifications = persistent_notification::create_manager();
+
+    // Register persistent_notification services
+    register_persistent_notification_services(&hass.services, notifications.clone());
+
     // Create API state with auth (mark as onboarded for dev mode)
     let api_state = AppState {
         event_bus: hass.bus.clone(),
@@ -1498,6 +1610,7 @@ async fn main() -> Result<()> {
         components: Arc::new(components),
         config_entries: hass.config_entries.clone(),
         registries: hass.registries.clone(),
+        notifications,
         services_cache,
         events_cache,
         frontend_config,
