@@ -1425,6 +1425,7 @@ fn entity_entry_to_json(entry: &ha_registries::EntityEntry) -> serde_json::Value
         "has_entity_name": entry.has_entity_name,
         "aliases": entry.aliases,
         "labels": entry.labels,
+        "categories": entry.categories,
         "capabilities": entry.capabilities,
         "device_class": entry.device_class,
         "original_device_class": entry.original_device_class,

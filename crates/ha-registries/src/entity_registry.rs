@@ -143,6 +143,9 @@ pub struct EntityEntry {
     /// Alternative names/IDs
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub aliases: Vec<String>,
+    /// Category assignments by scope (e.g., "helpers" -> category_id)
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub categories: std::collections::HashMap<String, String>,
 
     /// Creation timestamp
     #[serde(default = "Utc::now")]
@@ -188,6 +191,7 @@ impl EntityEntry {
             area_id: None,
             labels: Vec::new(),
             aliases: Vec::new(),
+            categories: std::collections::HashMap::new(),
             created_at: now,
             modified_at: now,
         }
