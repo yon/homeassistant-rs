@@ -7,7 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [lib]
-name = "ha_core_rs"
+name = "ha_py_bridge"
 # Use only rlib by default. For Python extension (cdylib), use `maturin build`.
 crate-type = ["rlib"]
 
