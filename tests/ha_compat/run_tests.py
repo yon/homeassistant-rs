@@ -486,6 +486,19 @@ TEST_CATEGORIES = {
         "components/websocket_api/test_http.py::test_non_json_message",
         "components/websocket_api/test_http.py::test_binary_message",
     ],
+
+    # ==========================================================================
+    # Config Entries WebSocket API (tests/components/config/) - ha-api crate
+    # Tests the config_entries/subscribe and related WebSocket commands
+    # ==========================================================================
+    "config_entries_ws": [
+        "components/config/test_config_entries.py::test_subscribe_entries_ws",
+        "components/config/test_config_entries.py::test_subscribe_entries_ws_filtered",
+        "components/config/test_config_entries.py::test_get_matching_entries_ws",
+        "components/config/test_config_entries.py::test_get_single",
+        "components/config/test_config_entries.py::test_update_entry",
+        "components/config/test_config_entries.py::test_disable_entry",
+    ],
 }
 
 def get_repo_root() -> Path:
