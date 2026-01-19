@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/ha-api",
     "crates/ha-automation",
+    "crates/ha-components",
     "crates/ha-config",
     "crates/ha-config-entries",
     "crates/ha-core",
@@ -82,6 +83,7 @@ tokio-test = "0.4"
 # Workspace crates
 ha-api = { path = "crates/ha-api" }
 ha-automation = { path = "crates/ha-automation" }
+ha-components = { path = "crates/ha-components" }
 ha-config = { path = "crates/ha-config" }
 ha-config-entries = { path = "crates/ha-config-entries" }
 ha-core = { path = "crates/ha-core" }

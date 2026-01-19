@@ -1054,6 +1054,8 @@ fn load_components(config_dir: &std::path::Path) -> Vec<String> {
         "api".to_string(),
         "automation".to_string(),
         "homeassistant".to_string(),
+        "input_boolean".to_string(),
+        "input_number".to_string(),
         "persistent_notification".to_string(),
         "scene".to_string(),
         "script".to_string(),
@@ -1150,6 +1152,86 @@ fn load_automations(config_dir: &Path) -> Vec<AutomationConfig> {
             warn!("Failed to parse automations: {}", e);
             Vec::new()
         }
+    }
+}
+
+/// Load input helpers (input_boolean, input_number) from configuration
+fn load_input_helpers(config_dir: &Path, states: &StateMachine) {
+    let config_file = config_dir.join("configuration.yaml");
+
+    if !config_file.exists() {
+        debug!("No configuration.yaml found, no input helpers to load");
+        return;
+    }
+
+    // Load the full YAML with includes resolved
+    let yaml = match ha_config::load_yaml(config_dir, "configuration.yaml") {
+        Ok(yaml) => yaml,
+        Err(e) => {
+            warn!("Failed to load configuration.yaml for input helpers: {}", e);
+            return;
+        }
+    };
+
+    // Collect all input_boolean configs (from root and packages)
+    let mut all_input_booleans: HashMap<String, Option<ha_components::InputBooleanConfig>> =
+        HashMap::new();
+    let mut all_input_numbers: HashMap<String, ha_components::InputNumberConfig> = HashMap::new();
+
+    // Load from root level
+    if let Some(input_boolean_value) = yaml.get("input_boolean") {
+        if let Ok(configs) = serde_yaml::from_value::<
+            HashMap<String, Option<ha_components::InputBooleanConfig>>,
+        >(input_boolean_value.clone())
+        {
+            all_input_booleans.extend(configs);
+        }
+    }
+
+    if let Some(input_number_value) = yaml.get("input_number") {
+        if let Ok(configs) = serde_yaml::from_value::<
+            HashMap<String, ha_components::InputNumberConfig>,
+        >(input_number_value.clone())
+        {
+            all_input_numbers.extend(configs);
+        }
+    }
+
+    // Load from packages (homeassistant.packages contains merged package content)
+    if let Some(homeassistant) = yaml.get("homeassistant") {
+        if let Some(packages) = homeassistant.get("packages") {
+            if let Some(packages_map) = packages.as_mapping() {
+                for (_, package_content) in packages_map {
+                    // Each package can have input_boolean and input_number sections
+                    if let Some(input_boolean_value) = package_content.get("input_boolean") {
+                        if let Ok(configs) = serde_yaml::from_value::<
+                            HashMap<String, Option<ha_components::InputBooleanConfig>>,
+                        >(input_boolean_value.clone())
+                        {
+                            all_input_booleans.extend(configs);
+                        }
+                    }
+
+                    if let Some(input_number_value) = package_content.get("input_number") {
+                        if let Ok(configs) = serde_yaml::from_value::<
+                            HashMap<String, ha_components::InputNumberConfig>,
+                        >(input_number_value.clone())
+                        {
+                            all_input_numbers.extend(configs);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Load the collected configs
+    if !all_input_booleans.is_empty() {
+        ha_components::load_input_booleans(&all_input_booleans, states);
+    }
+
+    if !all_input_numbers.is_empty() {
+        ha_components::load_input_numbers(&all_input_numbers, states);
     }
 }
 
@@ -1519,6 +1601,13 @@ async fn main() -> Result<()> {
     // Register automation and script services
     hass.register_automation_services();
     hass.register_script_services();
+
+    // Register input helper services
+    ha_components::register_input_boolean_services(&hass.services, hass.states.clone());
+    ha_components::register_input_number_services(&hass.services, hass.states.clone());
+
+    // Load input helpers from configuration
+    load_input_helpers(&config_dir, &hass.states);
 
     // Load entities from config or use demo entities
     hass.load_entities(&config_dir);

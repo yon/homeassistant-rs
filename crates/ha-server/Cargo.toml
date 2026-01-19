@@ -19,6 +19,7 @@ python = ["dep:ha-py-bridge", "dep:pyo3-build-config"]
 anyhow = { workspace = true }
 ha-api = { path = "../ha-api" }
 ha-automation = { workspace = true }
+ha-components = { workspace = true }
 ha-config = { workspace = true }
 ha-config-entries = { workspace = true }
 ha-core = { workspace = true }
@@ -29,6 +30,7 @@ ha-script = { workspace = true }
 ha-service-registry = { workspace = true }
 ha-state-machine = { workspace = true }
 ha-template = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 tokio = { workspace = true }

@@ -1,0 +1,18 @@
+[package]
+name = "ha-components"
+description = "Home Assistant built-in components"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ha-core = { workspace = true }
+ha-service-registry = { workspace = true }
+ha-state-machine = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
