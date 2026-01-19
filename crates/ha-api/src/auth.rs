@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::{
+    body::Bytes,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
@@ -160,6 +161,12 @@ impl AuthState {
 
         // Generate auth code
         let code = Ulid::new().to_string().to_lowercase();
+        tracing::info!(
+            "complete_login_flow: generated code={}, client_id={}",
+            code,
+            flow.client_id
+        );
+
         let auth_code = AuthCode {
             code: code.clone(),
             client_id: flow.client_id,
@@ -178,11 +185,34 @@ impl AuthState {
 
     /// Exchange an auth code for tokens
     async fn exchange_auth_code(&self, code: &str, client_id: &str) -> Option<TokenResponse> {
+        tracing::info!("exchange_auth_code: code={}, client_id={}", code, client_id);
+
         // Remove and validate auth code
-        let auth_code = self.inner.auth_codes.write().await.remove(code)?;
+        let auth_code = match self.inner.auth_codes.write().await.remove(code) {
+            Some(c) => c,
+            None => {
+                tracing::warn!("exchange_auth_code: code not found");
+                // List all codes for debugging
+                let codes = self.inner.auth_codes.read().await;
+                for (k, _) in codes.iter() {
+                    tracing::info!("  stored code: {}", k);
+                }
+                return None;
+            }
+        };
+
+        tracing::info!(
+            "exchange_auth_code: found code, stored_client_id={}",
+            auth_code.client_id
+        );
 
         // Verify client_id matches
         if auth_code.client_id != client_id {
+            tracing::warn!(
+                "exchange_auth_code: client_id mismatch: stored={}, provided={}",
+                auth_code.client_id,
+                client_id
+            );
             return None;
         }
 
@@ -355,6 +385,66 @@ pub struct Credential {
     pub auth_provider_id: Option<String>,
 }
 
+/// Parse multipart form data into a TokenRequest
+fn parse_multipart_form(body: &str) -> Result<TokenRequest, String> {
+    let mut grant_type = None;
+    let mut client_id = None;
+    let mut code = None;
+    let mut refresh_token = None;
+
+    // Find the boundary (first line)
+    let first_line = body.lines().next().ok_or("Empty body")?;
+    let boundary = first_line.trim();
+
+    // Split by boundary
+    for part in body.split(boundary) {
+        let part = part.trim();
+        if part.is_empty() || part == "--" {
+            continue;
+        }
+
+        // Find the field name
+        if let Some(name_start) = part.find("name=\"") {
+            let name_start = name_start + 6;
+            if let Some(name_end) = part[name_start..].find('"') {
+                let name = &part[name_start..name_start + name_end];
+
+                // Find the value (after double newline)
+                if let Some(value_start) = part.find("\r\n\r\n") {
+                    let value = part[value_start + 4..].trim().trim_end_matches("--");
+                    let value = value.trim();
+
+                    match name {
+                        "grant_type" => grant_type = Some(value.to_string()),
+                        "client_id" => client_id = Some(value.to_string()),
+                        "code" => code = Some(value.to_string()),
+                        "refresh_token" => refresh_token = Some(value.to_string()),
+                        _ => {}
+                    }
+                } else if let Some(value_start) = part.find("\n\n") {
+                    let value = part[value_start + 2..].trim().trim_end_matches("--");
+                    let value = value.trim();
+
+                    match name {
+                        "grant_type" => grant_type = Some(value.to_string()),
+                        "client_id" => client_id = Some(value.to_string()),
+                        "code" => code = Some(value.to_string()),
+                        "refresh_token" => refresh_token = Some(value.to_string()),
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(TokenRequest {
+        grant_type: grant_type.ok_or("missing grant_type")?,
+        client_id: client_id.ok_or("missing client_id")?,
+        code,
+        refresh_token,
+    })
+}
+
 /// Generate a random token
 fn generate_token() -> String {
     use std::collections::hash_map::RandomState;
@@ -502,10 +592,22 @@ pub async fn get_providers(State(auth): State<AuthState>) -> impl IntoResponse {
 }
 
 /// POST /auth/login_flow - Start a new login flow
-pub async fn create_login_flow(
-    State(auth): State<AuthState>,
-    Json(request): Json<LoginFlowInitRequest>,
-) -> impl IntoResponse {
+pub async fn create_login_flow(State(auth): State<AuthState>, body: Bytes) -> impl IntoResponse {
+    // Parse JSON from body without strict Content-Type checking
+    let request: LoginFlowInitRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(AuthErrorResponse {
+                    message: format!("Invalid JSON: {}", e),
+                    message_code: Some("invalid_json".to_string()),
+                }),
+            )
+                .into_response();
+        }
+    };
+
     let flow = auth
         .create_login_flow(request.client_id, request.redirect_uri)
         .await;
@@ -529,15 +631,30 @@ pub async fn create_login_flow(
         result: None,
     };
 
-    Json(response)
+    Json(response).into_response()
 }
 
 /// POST /auth/login_flow/{flow_id} - Submit login credentials
 pub async fn submit_login_flow(
     State(auth): State<AuthState>,
     Path(flow_id): Path<String>,
-    Json(request): Json<LoginFlowStepRequest>,
+    body: Bytes,
 ) -> impl IntoResponse {
+    // Parse JSON from body without strict Content-Type checking
+    let request: LoginFlowStepRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(AuthErrorResponse {
+                    message: format!("Invalid JSON: {}", e),
+                    message_code: Some("invalid_json".to_string()),
+                }),
+            )
+                .into_response();
+        }
+    };
+
     // Verify flow exists
     let flow = match auth.get_login_flow(&flow_id).await {
         Some(f) => f,
@@ -585,10 +702,67 @@ pub async fn submit_login_flow(
 }
 
 /// POST /auth/token - Exchange auth code or refresh token for access token
-pub async fn get_token(
-    State(auth): State<AuthState>,
-    axum::Form(request): axum::Form<TokenRequest>,
-) -> impl IntoResponse {
+pub async fn get_token(State(auth): State<AuthState>, body: Bytes) -> impl IntoResponse {
+    tracing::info!("get_token: received {} bytes", body.len());
+
+    // Parse form data from body without strict Content-Type checking
+    let body_str = match std::str::from_utf8(&body) {
+        Ok(s) => s,
+        Err(_) => {
+            tracing::warn!("get_token: invalid UTF-8");
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(AuthErrorResponse {
+                    message: "Invalid UTF-8 in request body".to_string(),
+                    message_code: None,
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    // Try to parse as URL-encoded first, then as multipart form data
+    let request: TokenRequest = if body_str.starts_with("------") || body_str.starts_with("--") {
+        // Multipart form data - parse manually
+        match parse_multipart_form(body_str) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("get_token: multipart parse error: {}", e);
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(AuthErrorResponse {
+                        message: format!("Invalid multipart form data: {}", e),
+                        message_code: None,
+                    }),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        // URL-encoded form data
+        match serde_urlencoded::from_str(body_str) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("get_token: urlencoded parse error: {}", e);
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(AuthErrorResponse {
+                        message: format!("Invalid form data: {}", e),
+                        message_code: None,
+                    }),
+                )
+                    .into_response();
+            }
+        }
+    };
+
+    tracing::info!(
+        "get_token: grant_type={}, client_id={}, code={:?}",
+        request.grant_type,
+        request.client_id,
+        request.code
+    );
+
     match request.grant_type.as_str() {
         "authorization_code" => {
             let code = match request.code {

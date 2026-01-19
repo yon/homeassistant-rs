@@ -13,7 +13,7 @@ use ha_config_entries::ConfigEntries;
 use ha_config_entries::ConfigEntryState;
 use ha_core::{Context, EntityId, ServiceCall, SupportsResponse};
 use ha_event_bus::EventBus;
-use ha_registries::Storage;
+use ha_registries::{Registries, Storage};
 use ha_service_registry::{ServiceDescription, ServiceRegistry};
 use ha_state_machine::StateMachine;
 use ha_template::TemplateEngine;
@@ -26,7 +26,7 @@ use tracing::{debug, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 #[cfg(feature = "python")]
-use ha_core_rs::fallback::FallbackBridge;
+use ha_core_rs::fallback::{call_python_entity_service, get_python_entities, FallbackBridge};
 
 /// The central Home Assistant instance
 pub struct HomeAssistant {
@@ -36,6 +36,8 @@ pub struct HomeAssistant {
     pub bus: Arc<EventBus>,
     /// Config entries manager
     pub config_entries: Arc<RwLock<ConfigEntries>>,
+    /// Registries for entities, devices, areas, etc.
+    pub registries: Arc<Registries>,
     /// Service registry for service calls
     pub services: Arc<ServiceRegistry>,
     /// State machine for entity states
@@ -52,7 +54,8 @@ impl HomeAssistant {
     ///
     /// # Arguments
     /// * `config_dir` - Path to the Home Assistant config directory
-    pub fn new(config_dir: &Path) -> Self {
+    /// * `registries` - Registries for entities, devices, areas, etc.
+    pub fn new(config_dir: &Path, registries: Arc<Registries>) -> Self {
         let bus = Arc::new(EventBus::new());
         let states = Arc::new(StateMachine::new(bus.clone()));
         let services = Arc::new(ServiceRegistry::new());
@@ -74,7 +77,7 @@ impl HomeAssistant {
         #[cfg(feature = "python")]
         let python_bridge = match {
             let ha_python_path = std::env::var("HA_PYTHON_PATH").map(PathBuf::from).ok();
-            FallbackBridge::new(ha_python_path.as_deref())
+            FallbackBridge::new(ha_python_path.as_deref(), registries.clone())
         } {
             Ok(bridge) => {
                 match bridge.python_version() {
@@ -96,6 +99,7 @@ impl HomeAssistant {
             automation_engine,
             bus,
             config_entries,
+            registries,
             services,
             states,
             template_engine,
@@ -1131,6 +1135,221 @@ async fn setup_config_entries(hass: &HomeAssistant) {
     }
 }
 
+/// Register entity domain services for Python entities
+///
+/// After Python integrations load entities, we need to register services like
+/// `light.turn_on`, `light.turn_off` etc. in the Rust ServiceRegistry so that
+/// service calls route to the Python entity methods.
+#[cfg(feature = "python")]
+fn register_python_entity_services(services: &ServiceRegistry) {
+    use std::collections::HashSet;
+
+    // Get all Python entities and extract unique domains
+    let domains: HashSet<String> = match get_python_entities() {
+        Ok(entities) => entities
+            .iter()
+            .filter_map(|entity_id| entity_id.split('.').next().map(String::from))
+            .collect(),
+        Err(e) => {
+            warn!("Failed to get Python entities: {}", e);
+            return;
+        }
+    };
+
+    if domains.is_empty() {
+        debug!("No Python entities found, skipping domain service registration");
+        return;
+    }
+
+    info!(
+        "Registering services for Python entity domains: {:?}",
+        domains
+    );
+
+    // Define services for each domain type
+    let domain_services: std::collections::HashMap<&str, Vec<&str>> = [
+        ("light", vec!["turn_on", "turn_off", "toggle"]),
+        ("switch", vec!["turn_on", "turn_off", "toggle"]),
+        (
+            "fan",
+            vec![
+                "turn_on",
+                "turn_off",
+                "toggle",
+                "set_percentage",
+                "set_preset_mode",
+            ],
+        ),
+        (
+            "cover",
+            vec![
+                "open_cover",
+                "close_cover",
+                "stop_cover",
+                "set_cover_position",
+            ],
+        ),
+        ("lock", vec!["lock", "unlock", "open"]),
+        (
+            "climate",
+            vec!["set_temperature", "set_hvac_mode", "set_preset_mode"],
+        ),
+        (
+            "media_player",
+            vec![
+                "turn_on",
+                "turn_off",
+                "play_media",
+                "media_play",
+                "media_pause",
+                "media_stop",
+                "volume_up",
+                "volume_down",
+                "volume_set",
+                "volume_mute",
+            ],
+        ),
+        ("vacuum", vec!["start", "stop", "pause", "return_to_base"]),
+        ("button", vec!["press"]),
+        ("number", vec!["set_value"]),
+        ("select", vec!["select_option"]),
+        (
+            "humidifier",
+            vec!["turn_on", "turn_off", "set_humidity", "set_mode"],
+        ),
+        ("siren", vec!["turn_on", "turn_off"]),
+        ("valve", vec!["open_valve", "close_valve"]),
+        (
+            "water_heater",
+            vec!["set_temperature", "set_operation_mode"],
+        ),
+        (
+            "alarm_control_panel",
+            vec![
+                "alarm_arm_home",
+                "alarm_arm_away",
+                "alarm_arm_night",
+                "alarm_disarm",
+                "alarm_trigger",
+            ],
+        ),
+    ]
+    .into_iter()
+    .collect();
+
+    for domain in &domains {
+        // Get services for this domain, or default to turn_on/turn_off/toggle
+        let services_list = domain_services
+            .get(domain.as_str())
+            .cloned()
+            .unwrap_or_else(|| vec!["turn_on", "turn_off", "toggle"]);
+
+        for service_name in services_list {
+            // Skip if already registered
+            if services.has_service(domain, service_name) {
+                continue;
+            }
+
+            let domain_clone = domain.clone();
+            let service_clone = service_name.to_string();
+
+            services.register_with_description(
+                ServiceDescription {
+                    domain: domain.clone(),
+                    service: service_name.to_string(),
+                    name: None,
+                    description: Some(format!(
+                        "Call {} on {} entities (Python)",
+                        service_name, domain
+                    )),
+                    schema: None,
+                    target: Some(json!({
+                        "entity": {
+                            "domain": domain
+                        }
+                    })),
+                    supports_response: SupportsResponse::None,
+                },
+                move |call: ServiceCall| {
+                    let domain = domain_clone.clone();
+                    let service = service_clone.clone();
+                    async move {
+                        // Extract entity_id from service data
+                        let entity_ids: Vec<String> =
+                            if let Some(entity_id) = call.service_data.get("entity_id") {
+                                if let Some(s) = entity_id.as_str() {
+                                    vec![s.to_string()]
+                                } else if let Some(arr) = entity_id.as_array() {
+                                    arr.iter()
+                                        .filter_map(|v| v.as_str().map(String::from))
+                                        .collect()
+                                } else {
+                                    vec![]
+                                }
+                            } else {
+                                vec![]
+                            };
+
+                        if entity_ids.is_empty() {
+                            warn!("Service {}.{} called without entity_id", domain, service);
+                            return Ok(None);
+                        }
+
+                        // Call the service on each entity
+                        for entity_id in entity_ids {
+                            // Verify the entity belongs to this domain
+                            if !entity_id.starts_with(&format!("{}.", domain)) {
+                                continue;
+                            }
+
+                            debug!(
+                                "Calling Python entity service: {}.{} on {}",
+                                domain, service, entity_id
+                            );
+
+                            // Build service data without entity_id
+                            let mut service_data = call.service_data.clone();
+                            if let Some(obj) = service_data.as_object_mut() {
+                                obj.remove("entity_id");
+                            }
+
+                            match call_python_entity_service(&entity_id, &service, service_data) {
+                                Ok(true) => {
+                                    debug!(
+                                        "Service {}.{} succeeded on {}",
+                                        domain, service, entity_id
+                                    );
+                                }
+                                Ok(false) => {
+                                    warn!(
+                                        "Service {}.{} not supported on {}",
+                                        domain, service, entity_id
+                                    );
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Error calling {}.{} on {}: {}",
+                                        domain, service, entity_id, e
+                                    );
+                                }
+                            }
+                        }
+
+                        Ok(None)
+                    }
+                },
+            );
+
+            info!("Registered service: {}.{}", domain, service_name);
+        }
+    }
+}
+
+#[cfg(not(feature = "python"))]
+fn register_python_entity_services(_services: &ServiceRegistry) {
+    // No-op when Python is not enabled
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
@@ -1168,7 +1387,13 @@ async fn main() -> Result<()> {
         CoreConfig::default()
     };
 
-    let hass = HomeAssistant::new(&config_dir);
+    // Create registries before HomeAssistant so Python bridge can use them
+    let registries = Arc::new(Registries::new(&config_dir));
+    if let Err(e) = registries.load_all().await {
+        warn!("Failed to load registries: {}", e);
+    }
+
+    let hass = HomeAssistant::new(&config_dir, registries);
 
     // Register core services
     hass.register_core_services();
@@ -1231,6 +1456,10 @@ async fn main() -> Result<()> {
     // Load and setup config entries
     setup_config_entries(&hass).await;
 
+    // Register Python entity domain services (light.turn_on, etc.)
+    // This must happen after config entries are set up so Python entities are registered
+    register_python_entity_services(&hass.services);
+
     info!("Home Assistant initialized");
 
     // Configure frontend if HA_FRONTEND_PATH is set
@@ -1255,6 +1484,8 @@ async fn main() -> Result<()> {
         service_registry: hass.services.clone(),
         config: Arc::new(config),
         components: Arc::new(components),
+        config_entries: hass.config_entries.clone(),
+        registries: hass.registries.clone(),
         services_cache,
         events_cache,
         frontend_config,
@@ -1292,6 +1523,12 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    /// Helper to create a HomeAssistant instance with test registries
+    fn create_test_hass(temp_dir: &TempDir) -> HomeAssistant {
+        let registries = Arc::new(Registries::new(temp_dir.path()));
+        HomeAssistant::new(temp_dir.path(), registries)
+    }
 
     #[test]
     fn test_load_automations_no_config() {
@@ -1384,14 +1621,14 @@ script: []
     #[test]
     fn test_home_assistant_new() {
         let temp_dir = TempDir::new().unwrap();
-        let hass = HomeAssistant::new(temp_dir.path());
+        let hass = create_test_hass(&temp_dir);
         assert!(!hass.automation_engine.is_running());
     }
 
     #[tokio::test]
     async fn test_automation_engine_start_stop() {
         let temp_dir = TempDir::new().unwrap();
-        let hass = HomeAssistant::new(temp_dir.path());
+        let hass = create_test_hass(&temp_dir);
         assert!(!hass.automation_engine.is_running());
 
         hass.automation_engine.start().await;
@@ -1406,7 +1643,7 @@ script: []
     #[tokio::test]
     async fn test_automation_manager_load() {
         let temp_dir = TempDir::new().unwrap();
-        let hass = HomeAssistant::new(temp_dir.path());
+        let hass = create_test_hass(&temp_dir);
 
         let configs = vec![AutomationConfig {
             id: Some("test_auto".to_string()),
@@ -1435,7 +1672,7 @@ script: []
     #[tokio::test]
     async fn test_automation_enable_disable() {
         let temp_dir = TempDir::new().unwrap();
-        let hass = HomeAssistant::new(temp_dir.path());
+        let hass = create_test_hass(&temp_dir);
 
         let configs = vec![AutomationConfig {
             id: Some("test_auto".to_string()),
@@ -1498,7 +1735,7 @@ script: []
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         let temp_dir = TempDir::new().unwrap();
-        let hass = HomeAssistant::new(temp_dir.path());
+        let hass = create_test_hass(&temp_dir);
 
         // Track service calls
         let call_count = Arc::new(AtomicUsize::new(0));
@@ -1589,7 +1826,7 @@ script: []
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         let temp_dir = TempDir::new().unwrap();
-        let hass = HomeAssistant::new(temp_dir.path());
+        let hass = create_test_hass(&temp_dir);
 
         // Track service calls
         let call_count = Arc::new(AtomicUsize::new(0));
@@ -1696,7 +1933,7 @@ script: []
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         let temp_dir = TempDir::new().unwrap();
-        let hass = HomeAssistant::new(temp_dir.path());
+        let hass = create_test_hass(&temp_dir);
 
         let call_count = Arc::new(AtomicUsize::new(0));
         let call_count_clone = call_count.clone();
@@ -1769,7 +2006,7 @@ script: []
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         let temp_dir = TempDir::new().unwrap();
-        let hass = HomeAssistant::new(temp_dir.path());
+        let hass = create_test_hass(&temp_dir);
 
         let call_count = Arc::new(AtomicUsize::new(0));
         let call_count_clone = call_count.clone();

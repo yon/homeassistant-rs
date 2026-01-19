@@ -5,3 +5,5 @@ homeassistant:
   elevation: 0
   unit_system: metric
   time_zone: "America/Los_Angeles"
+  internal_url: "http://localhost:8123"
+  external_url: "http://localhost:8123"

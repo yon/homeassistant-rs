@@ -37,11 +37,52 @@ use pyo3::types::PyModule;
 #[cfg(feature = "fallback")]
 pub use fallback::{FallbackBridge, FallbackError, FallbackResult};
 
-/// Python module initialization - exports as 'homeassistant'
+/// Python module initialization - exports as 'ha_core_rs'
+///
+/// This module provides Rust implementations of HA core types.
+/// Types are exported at the top level for easy access:
+///   - ha_core_rs.HomeAssistant, ha_core_rs.State, etc.
+///   - ha_core_rs.Storage, ha_core_rs.EntityRegistry, etc.
 #[cfg(feature = "extension")]
 #[pymodule]
-fn homeassistant(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Create and register submodules
+fn ha_core_rs(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    use extension::*;
+
+    // Core types - exported at top level for conftest.py compatibility
+    m.add_class::<PyHomeAssistant>()?;
+    m.add_class::<PyState>()?;
+    m.add_class::<PyEvent>()?;
+    m.add_class::<PyContext>()?;
+    m.add_class::<PyEntityId>()?;
+    m.add_class::<PyEventBus>()?;
+    m.add_class::<PyStateMachine>()?;
+    m.add_class::<PyServiceRegistry>()?;
+    m.add_class::<PyUnsubscribe>()?;
+
+    // Core functions
+    m.add_function(wrap_pyfunction!(split_entity_id, m)?)?;
+    m.add_function(wrap_pyfunction!(valid_entity_id, m)?)?;
+    m.add_function(wrap_pyfunction!(callback, m)?)?;
+
+    // Storage
+    m.add_class::<PyStorage>()?;
+
+    // Registries
+    m.add_class::<PyEntityRegistry>()?;
+    m.add_class::<PyDeviceRegistry>()?;
+    m.add_class::<PyAreaRegistry>()?;
+    m.add_class::<PyFloorRegistry>()?;
+    m.add_class::<PyLabelRegistry>()?;
+
+    // Template
+    m.add_class::<PyTemplate>()?;
+    m.add_class::<PyTemplateEngine>()?;
+
+    // Config Entries
+    m.add_class::<PyConfigEntry>()?;
+    m.add_class::<PyConfigEntries>()?;
+
+    // Also create submodules for alternative import paths
     let core = PyModule::new_bound(py, "core")?;
     register_core_module(py, &core)?;
     m.add_submodule(&core)?;
@@ -59,13 +100,12 @@ fn homeassistant(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_submodule(&const_mod)?;
 
     // Register submodules in sys.modules for proper imports
-    // This is required for `from homeassistant.core import X` to work
     let sys = py.import_bound("sys")?;
     let modules = sys.getattr("modules")?;
-    modules.set_item("homeassistant.core", &core)?;
-    modules.set_item("homeassistant.config_entries", &config_entries)?;
-    modules.set_item("homeassistant.helpers", &helpers)?;
-    modules.set_item("homeassistant.const", &const_mod)?;
+    modules.set_item("ha_core_rs.core", &core)?;
+    modules.set_item("ha_core_rs.config_entries", &config_entries)?;
+    modules.set_item("ha_core_rs.helpers", &helpers)?;
+    modules.set_item("ha_core_rs.const", &const_mod)?;
 
     Ok(())
 }

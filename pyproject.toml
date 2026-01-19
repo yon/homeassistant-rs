@@ -28,7 +28,11 @@ Repository = "https://github.com/yon/homeassistant-rs"
 
 [tool.maturin]
 manifest-path = "crates/ha-core-rs/Cargo.toml"
-module-name = "homeassistant"
+# Export as ha_core_rs to avoid conflicting with vendor/ha-core/homeassistant
+# This allows HA tests to use both:
+#   - homeassistant.* (HA's full package from vendor/ha-core)
+#   - ha_core_rs.* (our Rust implementations)
+module-name = "ha_core_rs"
 features = ["extension"]
 strip = true
 # Use version from pyproject.toml, not Cargo.toml (which uses Rust-style versioning)
