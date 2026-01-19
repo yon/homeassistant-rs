@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 ha-config = { workspace = true }
+ha-config-entries = { workspace = true }
 ha-core = { workspace = true }
 ha-event-bus = { workspace = true }
 ha-registries = { workspace = true }

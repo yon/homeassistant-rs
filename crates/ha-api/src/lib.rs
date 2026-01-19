@@ -16,6 +16,7 @@ use axum::{
     Json, Router,
 };
 use ha_config::CoreConfig;
+use ha_config_entries::ConfigEntries;
 use ha_core::{Context, EntityId, Event};
 use ha_event_bus::EventBus;
 use ha_registries::Registries;
@@ -24,6 +25,7 @@ use ha_state_machine::StateMachine;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::info;
@@ -36,6 +38,8 @@ pub struct AppState {
     pub service_registry: Arc<ServiceRegistry>,
     pub config: Arc<CoreConfig>,
     pub components: Arc<Vec<String>>,
+    /// Config entries manager
+    pub config_entries: Arc<RwLock<ConfigEntries>>,
     /// Registries (entity, device, area, floor, label)
     pub registries: Arc<Registries>,
     /// Cached services response (loaded from JSON for comparison testing)
@@ -540,18 +544,23 @@ mod tests {
     use tower::ServiceExt;
 
     fn create_test_state() -> AppState {
+        use ha_registries::Storage;
+
         let event_bus = Arc::new(EventBus::new());
         let state_machine = Arc::new(StateMachine::new(event_bus.clone()));
         let service_registry = Arc::new(ServiceRegistry::new());
         // Use a temp directory for test registries
         let temp_dir = std::env::temp_dir().join("ha-api-test");
         let registries = Arc::new(Registries::new(&temp_dir));
+        let storage = Arc::new(Storage::new(&temp_dir));
+        let config_entries = Arc::new(RwLock::new(ConfigEntries::new(storage)));
         AppState {
             event_bus,
             state_machine,
             service_registry,
             config: Arc::new(CoreConfig::default()),
             components: Arc::new(vec![]),
+            config_entries,
             registries,
             services_cache: None,
             events_cache: None,

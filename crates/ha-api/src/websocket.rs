@@ -193,6 +193,8 @@ pub enum IncomingMessage {
     #[serde(rename = "config_entries/subscribe")]
     ConfigEntriesSubscribe {
         id: u64,
+        #[serde(default)]
+        type_filter: Option<Vec<String>>,
     },
     #[serde(rename = "config_entries/flow/subscribe")]
     ConfigEntriesFlowSubscribe {
@@ -682,9 +684,9 @@ async fn handle_message(
             conn.validate_id(id).map_err(|e| e.to_string())?;
             handle_config_entries_get(conn, id, &entry_id, tx).await
         }
-        IncomingMessage::ConfigEntriesSubscribe { id } => {
+        IncomingMessage::ConfigEntriesSubscribe { id, type_filter } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
-            handle_config_entries_subscribe(conn, id, tx).await
+            handle_config_entries_subscribe(conn, id, type_filter, tx).await
         }
         IncomingMessage::DeviceRegistryList { id } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
@@ -2332,30 +2334,70 @@ async fn handle_labs_subscribe(
     tx.send(result).await.map_err(|e| e.to_string())
 }
 
-/// Handle config_entries/get command
-async fn handle_config_entries_get(
-    _conn: &Arc<ActiveConnection>,
-    id: u64,
-    entry_id: &str,
-    tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
-    // TODO: Access config_entries manager when available in AppState
-    // For now, return a stub entry to prevent frontend errors
-    let entry_json = serde_json::json!({
-        "entry_id": entry_id,
-        "domain": "unknown",
-        "title": "Unknown",
-        "source": "user",
-        "state": "loaded",
+/// Convert ConfigEntryState to HA-compatible string
+fn config_entry_state_to_string(state: &ha_config_entries::ConfigEntryState) -> &'static str {
+    use ha_config_entries::ConfigEntryState;
+    match state {
+        ConfigEntryState::FailedUnload => "failed_unload",
+        ConfigEntryState::Loaded => "loaded",
+        ConfigEntryState::MigrationError => "migration_error",
+        ConfigEntryState::NotLoaded => "not_loaded",
+        ConfigEntryState::SetupError => "setup_error",
+        ConfigEntryState::SetupInProgress => "setup_in_progress",
+        ConfigEntryState::SetupRetry => "setup_retry",
+        ConfigEntryState::UnloadInProgress => "unload_in_progress",
+    }
+}
+
+/// Convert a ConfigEntry to JSON format expected by frontend
+fn config_entry_to_json(entry: &ha_config_entries::ConfigEntry) -> serde_json::Value {
+    serde_json::json!({
+        "entry_id": entry.entry_id,
+        "domain": entry.domain,
+        "title": entry.title,
+        "source": format!("{:?}", entry.source).to_lowercase(),
+        "state": config_entry_state_to_string(&entry.state),
         "supports_options": false,
         "supports_remove_device": false,
         "supports_unload": true,
         "supports_reconfigure": false,
-        "pref_disable_new_entities": false,
-        "pref_disable_polling": false,
-        "disabled_by": null,
-        "reason": null,
-    });
+        "pref_disable_new_entities": entry.pref_disable_new_entities,
+        "pref_disable_polling": entry.pref_disable_polling,
+        "disabled_by": entry.disabled_by.as_ref().map(|d| format!("{:?}", d).to_lowercase()),
+        "reason": entry.reason,
+    })
+}
+
+/// Handle config_entries/get command
+async fn handle_config_entries_get(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    entry_id: &str,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Get the config entry from state
+    let config_entries = conn.state.config_entries.read().await;
+
+    let entry_json = if let Some(entry) = config_entries.get(entry_id) {
+        config_entry_to_json(&entry)
+    } else {
+        // Return a stub entry if not found to prevent frontend errors
+        serde_json::json!({
+            "entry_id": entry_id,
+            "domain": "unknown",
+            "title": "Unknown",
+            "source": "user",
+            "state": "not_loaded",
+            "supports_options": false,
+            "supports_remove_device": false,
+            "supports_unload": true,
+            "supports_reconfigure": false,
+            "pref_disable_new_entities": false,
+            "pref_disable_polling": false,
+            "disabled_by": null,
+            "reason": null,
+        })
+    };
 
     let result = OutgoingMessage::Result(ResultMessage {
         id,
@@ -2369,18 +2411,39 @@ async fn handle_config_entries_get(
 
 /// Handle config_entries/subscribe command
 async fn handle_config_entries_subscribe(
-    _conn: &Arc<ActiveConnection>,
+    conn: &Arc<ActiveConnection>,
     id: u64,
+    type_filter: Option<Vec<String>>,
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> Result<(), String> {
-    // Send initial empty state
-    let event = OutgoingMessage::Event(EventMessage {
-        id,
-        msg_type: "event",
-        event: serde_json::json!([]),
-    });
-    tx.send(event).await.map_err(|e| e.to_string())?;
+    // Get all config entries from state
+    let config_entries = conn.state.config_entries.read().await;
 
+    // Filter entries by integration type if type_filter is provided
+    // For now, we only have device integrations (like "demo"), not helpers
+    // If type_filter is ["helper"], return empty since we have no helpers
+    let is_helper_only_filter = type_filter
+        .as_ref()
+        .map(|f| f.len() == 1 && f[0] == "helper")
+        .unwrap_or(false);
+
+    // Format entries as {"type": null, "entry": {...}} per native HA
+    let entries: Vec<serde_json::Value> = if is_helper_only_filter {
+        // No helper integrations currently
+        vec![]
+    } else {
+        config_entries
+            .iter()
+            .map(|entry| {
+                serde_json::json!({
+                    "type": serde_json::Value::Null,
+                    "entry": config_entry_to_json(&entry)
+                })
+            })
+            .collect()
+    };
+
+    // Native HA sends result FIRST, then event
     let result = OutgoingMessage::Result(ResultMessage {
         id,
         msg_type: "result",
@@ -2388,7 +2451,15 @@ async fn handle_config_entries_subscribe(
         result: Some(serde_json::Value::Null),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result).await.map_err(|e| e.to_string())?;
+
+    // Then send the event with all config entries
+    let event = OutgoingMessage::Event(EventMessage {
+        id,
+        msg_type: "event",
+        event: serde_json::json!(entries),
+    });
+    tx.send(event).await.map_err(|e| e.to_string())
 }
 
 /// Handle config_entries/flow/subscribe command

@@ -46,13 +46,16 @@ mod service_bridge;
 pub use async_bridge::{run_python_async, rust_future_to_python, AsyncBridge, PyFuture};
 pub use config_entry::{config_entry_to_python, create_config_entry_instance};
 pub use errors::{FallbackError, FallbackResult};
-pub use hass_wrapper::create_hass_wrapper;
+pub use hass_wrapper::{
+    call_python_entity_service, create_hass_wrapper, get_python_devices, get_python_entities,
+};
 pub use integration::{ComponentRegistry, IntegrationLoader, IntegrationManifest};
 pub use runtime::{with_gil, PythonRuntime};
 pub use service_bridge::ServiceBridge;
 
 use ha_config_entries::ConfigEntry;
 use ha_event_bus::EventBus;
+use ha_registries::Registries;
 use ha_service_registry::ServiceRegistry;
 use ha_state_machine::StateMachine;
 use pyo3::prelude::*;
@@ -72,6 +75,8 @@ pub struct FallbackBridge {
     pub async_bridge: Arc<AsyncBridge>,
     /// Service bridge
     pub services: ServiceBridge,
+    /// Registries for device/entity registration
+    pub registries: Arc<Registries>,
 }
 
 impl FallbackBridge {
@@ -79,7 +84,8 @@ impl FallbackBridge {
     ///
     /// # Arguments
     /// * `ha_path` - Optional path to the Home Assistant Python installation
-    pub fn new(ha_path: Option<&Path>) -> FallbackResult<Self> {
+    /// * `registries` - Rust registries for device/entity registration
+    pub fn new(ha_path: Option<&Path>, registries: Arc<Registries>) -> FallbackResult<Self> {
         // Initialize Python runtime
         PythonRuntime::initialize(ha_path)?;
 
@@ -94,6 +100,7 @@ impl FallbackBridge {
             integrations: IntegrationLoader::new(),
             async_bridge,
             services,
+            registries,
         })
     }
 
@@ -149,8 +156,14 @@ impl FallbackBridge {
         let domain = &entry.domain;
 
         Python::with_gil(|py| {
-            // Create Python hass wrapper
-            let py_hass = create_hass_wrapper(py, bus.clone(), states.clone(), services)?;
+            // Create Python hass wrapper with registries for device/entity registration
+            let py_hass = create_hass_wrapper(
+                py,
+                bus.clone(),
+                states.clone(),
+                services,
+                self.registries.clone(),
+            )?;
 
             // Set the hass reference in config_entries for platform setup
             // This allows async_forward_entry_setups to access hass.states
@@ -181,8 +194,8 @@ impl FallbackBridge {
         let domain = &entry.domain;
 
         Python::with_gil(|py| {
-            // Create Python hass wrapper
-            let py_hass = create_hass_wrapper(py, bus, states, services)?;
+            // Create Python hass wrapper with registries
+            let py_hass = create_hass_wrapper(py, bus, states, services, self.registries.clone())?;
 
             // Convert config entry to Python
             let py_entry = config_entry_to_python(py, entry)?;
@@ -197,10 +210,17 @@ impl FallbackBridge {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
+
+    fn create_test_registries() -> Arc<Registries> {
+        let temp_dir = TempDir::new().unwrap();
+        Arc::new(Registries::new(temp_dir.path()))
+    }
 
     #[test]
     fn test_fallback_bridge_creation() {
-        let bridge = FallbackBridge::new(None);
+        let registries = create_test_registries();
+        let bridge = FallbackBridge::new(None, registries);
         assert!(bridge.is_ok());
 
         let bridge = bridge.unwrap();
@@ -210,7 +230,8 @@ mod tests {
 
     #[test]
     fn test_python_version() {
-        let bridge = FallbackBridge::new(None).unwrap();
+        let registries = create_test_registries();
+        let bridge = FallbackBridge::new(None, registries).unwrap();
         let version = bridge.python_version().unwrap();
         assert!(version.starts_with("3."));
     }
