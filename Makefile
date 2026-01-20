@@ -3,7 +3,9 @@
 # Run `make help` to see all available targets.
 
 # Python virtual environment
-# Prefer Homebrew Python 3.13, fall back to python3
+# PYTHON_BIN: System Python used to create the venv
+# PYTHON: Python inside the venv (used after venv exists)
+PYTHON_BIN := $(shell command -v python3.13 2>/dev/null || command -v python3)
 VENV := .venv
 VENV_BIN := $(VENV)/bin
 PYTHON := $(VENV_BIN)/python
@@ -205,7 +207,7 @@ update: ## Update dependencies
 # Internal targets (not shown in help)
 
 $(VENV_STAMP):
-	$(PYTHON) -m venv $(VENV)
+	$(PYTHON_BIN) -m venv $(VENV)
 	$(VENV_BIN)/pip install --upgrade pip
 	$(VENV_BIN)/pip install maturin pytest pytest-asyncio aiohttp
 	touch $(VENV_STAMP)
