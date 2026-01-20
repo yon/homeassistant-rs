@@ -67,13 +67,15 @@ impl PyEventBus {
     /// Returns:
     ///     A callable that, when called, will unsubscribe from the event
     ///
-    /// Example:
-    ///     def on_state_changed(event):
-    ///         print(f"State changed: {event.data}")
+    /// Example (Python):
+    /// ```python
+    /// def on_state_changed(event):
+    ///     print(f"State changed: {event.data}")
     ///
-    ///     unsubscribe = bus.listen("state_changed", on_state_changed)
-    ///     # Later...
-    ///     unsubscribe()  # Stop listening
+    /// unsubscribe = bus.listen("state_changed", on_state_changed)
+    /// # Later...
+    /// unsubscribe()  # Stop listening
+    /// ```
     #[pyo3(signature = (event_type, callback))]
     fn listen(&self, py: Python<'_>, event_type: &str, callback: PyObject) -> PyResult<PyObject> {
         // Validate the callback is callable

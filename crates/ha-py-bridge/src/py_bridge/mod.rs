@@ -35,8 +35,9 @@
 
 mod async_bridge;
 mod config_entry;
+mod config_flow;
 mod errors;
-mod hass_wrapper;
+pub mod hass_wrapper;
 mod integration;
 mod pyclass_wrappers;
 mod runtime;
@@ -44,6 +45,7 @@ mod service_bridge;
 
 pub use async_bridge::{run_python_async, rust_future_to_python, AsyncBridge, PyFuture};
 pub use config_entry::{config_entry_to_python, create_config_entry_instance};
+pub use config_flow::ConfigFlowManager;
 pub use errors::{PyBridgeError, PyBridgeResult};
 pub use hass_wrapper::{
     call_python_entity_service, create_hass_wrapper, get_python_devices, get_python_entities,
@@ -230,6 +232,9 @@ impl PyBridge {
         let domain = &entry.domain;
 
         Python::with_gil(|py| {
+            // Get the event loop from AsyncBridge so hass.loop uses the same loop
+            let event_loop = self.async_bridge.get_event_loop(py);
+
             // Create Python hass wrapper with registries for device/entity registration
             let py_hass = create_hass_wrapper(
                 py,
@@ -238,6 +243,7 @@ impl PyBridge {
                 services,
                 self.registries.clone(),
                 self.config_dir.as_deref(),
+                event_loop,
             )?;
 
             // Set the hass reference in config_entries for platform setup
@@ -272,6 +278,9 @@ impl PyBridge {
         let domain = &entry.domain;
 
         Python::with_gil(|py| {
+            // Get the event loop from AsyncBridge so hass.loop uses the same loop
+            let event_loop = self.async_bridge.get_event_loop(py);
+
             // Create Python hass wrapper with registries
             let py_hass = create_hass_wrapper(
                 py,
@@ -280,6 +289,7 @@ impl PyBridge {
                 services,
                 self.registries.clone(),
                 self.config_dir.as_deref(),
+                event_loop,
             )?;
 
             // Convert config entry to Python

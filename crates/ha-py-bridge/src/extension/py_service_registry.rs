@@ -164,12 +164,14 @@ impl PyServiceRegistry {
     ///     schema: Optional JSON schema for service data validation
     ///     supports_response: Whether the service supports responses ("none", "only", "optional")
     ///
-    /// Example:
-    ///     def my_handler(call):
-    ///         print(f"Called with: {call}")
-    ///         return None
+    /// Example (Python):
+    /// ```python
+    /// def my_handler(call):
+    ///     print(f"Called with: {call}")
+    ///     return None
     ///
-    ///     registry.register("test", "my_service", my_handler)
+    /// registry.register("test", "my_service", my_handler)
+    /// ```
     #[pyo3(signature = (domain, service, handler, schema=None, supports_response="none"))]
     fn register(
         &self,

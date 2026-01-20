@@ -324,6 +324,10 @@ fn pyobject_to_json(obj: &Bound<'_, pyo3::PyAny>) -> PyResult<serde_json::Value>
 ///
 /// Note: This wrapper provides compatibility with common HA integration patterns.
 /// Some advanced features may require additional implementation.
+///
+/// # Arguments
+/// * `event_loop` - Optional event loop to use. If not provided, gets/creates one.
+///                  This should be the same event loop used by AsyncBridge.
 pub fn create_hass_wrapper(
     py: Python<'_>,
     bus: Arc<EventBus>,
@@ -331,6 +335,48 @@ pub fn create_hass_wrapper(
     services: Arc<ServiceRegistry>,
     registries: Arc<Registries>,
     config_dir: Option<&std::path::Path>,
+    event_loop: Option<PyObject>,
+) -> PyBridgeResult<PyObject> {
+    create_hass_wrapper_internal(
+        py, bus, states, services, registries, config_dir, event_loop, true,
+    )
+}
+
+/// Create a minimal Python HomeAssistant-like object for config flows
+///
+/// This is a simplified version that skips HA Python registry initialization.
+/// Used for config flows which don't need the full HA infrastructure but need
+/// a hass object with async_add_executor_job and other basic methods.
+pub fn create_hass_wrapper_for_config_flow(
+    py: Python<'_>,
+    bus: Arc<EventBus>,
+    states: Arc<StateMachine>,
+    services: Arc<ServiceRegistry>,
+    registries: Arc<Registries>,
+    config_dir: Option<&std::path::Path>,
+) -> PyBridgeResult<PyObject> {
+    // Skip registry initialization (the `false` parameter) since config flows
+    // don't need them and they require an asyncio event loop which isn't available
+    // when called from a sync REST handler context.
+    create_hass_wrapper_internal(
+        py, bus, states, services, registries, config_dir, None, false,
+    )
+}
+
+/// Internal implementation of hass wrapper creation
+///
+/// # Arguments
+/// * `init_registries` - If true, initialize Python HA registries. Set to false
+///                       for config flows to avoid asyncio event loop requirements.
+fn create_hass_wrapper_internal(
+    py: Python<'_>,
+    bus: Arc<EventBus>,
+    states: Arc<StateMachine>,
+    services: Arc<ServiceRegistry>,
+    registries: Arc<Registries>,
+    config_dir: Option<&std::path::Path>,
+    event_loop: Option<PyObject>,
+    init_registries: bool,
 ) -> PyBridgeResult<PyObject> {
     // Create SimpleNamespace for helpers (doesn't need to be hashable)
     let types = py.import_bound("types")?;
@@ -349,14 +395,22 @@ pub fn create_hass_wrapper(
     // Add config attribute with location and components using #[pyclass]
     let config = Py::new(py, ConfigWrapper::new(py)?)?;
 
-    // Add loop attribute (get the running event loop or create one)
+    // Add loop attribute - use provided event loop or get/create one
+    // IMPORTANT: This must be the same loop that AsyncBridge uses, otherwise
+    // Futures created by hass.loop.create_future() will be on a different loop
     let asyncio = py.import_bound("asyncio")?;
     let threading = py.import_bound("threading")?;
-    let loop_ = match asyncio.call_method0("get_running_loop") {
-        Ok(loop_) => loop_.unbind(),
-        Err(_) => {
-            // No running loop, create one
-            asyncio.call_method0("new_event_loop")?.unbind()
+    let loop_ = if let Some(loop_obj) = event_loop {
+        // Use the provided event loop (from AsyncBridge)
+        loop_obj
+    } else {
+        // Fallback: get running loop or create one
+        match asyncio.call_method0("get_running_loop") {
+            Ok(loop_) => loop_.unbind(),
+            Err(_) => {
+                // No running loop, create one
+                asyncio.call_method0("new_event_loop")?.unbind()
+            }
         }
     };
 
@@ -394,7 +448,11 @@ pub fn create_hass_wrapper(
     // Initialize HA Python registries so EntityComponent can use them
     // This needs to be done AFTER hass is created since registries need hass reference
     // Pass config_dir so it can load entity registry from disk
-    initialize_ha_registries(py, &hass, config_dir)?;
+    // NOTE: Skip for config flows since they don't need registries and the initialization
+    // requires an asyncio event loop which isn't available in sync REST handler context
+    if init_registries {
+        initialize_ha_registries(py, &hass, config_dir)?;
+    }
 
     Ok(hass.into_any())
 }
@@ -1504,11 +1562,19 @@ async def async_forward_entry_unload(entry, platform):
     """Forward unload of a single platform (legacy method)."""
     return await async_unload_platforms(entry, [platform])
 
-def async_entries(domain=None):
+def async_entries(domain=None, include_ignore=True, include_disabled=True):
     """Return config entries for a domain.
 
     This is a stub that returns an empty list since we don't track config entries here.
     Integrations that check for existing entries will think there are none.
+
+    Args:
+        domain: Optional domain to filter by.
+        include_ignore: Include ignored entries (default True).
+        include_disabled: Include disabled entries (default True).
+
+    Returns:
+        Empty list - integrations will proceed as if no entries exist.
     """
     # For now, return empty list - integrations will proceed as if no entries exist
     return []
@@ -1649,7 +1715,7 @@ mod tests {
             let services = Arc::new(ServiceRegistry::new());
             let registries = Arc::new(Registries::new(temp_dir.path()));
 
-            let result = create_hass_wrapper(py, bus, states, services, registries, None);
+            let result = create_hass_wrapper(py, bus, states, services, registries, None, None);
             assert!(result.is_ok());
 
             let hass = result.unwrap();

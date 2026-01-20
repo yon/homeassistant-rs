@@ -5,6 +5,7 @@
 //!           https://developers.home-assistant.io/docs/api/websocket
 
 pub mod auth;
+pub mod config_flow;
 pub mod frontend;
 pub mod persistent_notification;
 mod websocket;
@@ -13,7 +14,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use ha_components::SystemLog;
@@ -56,6 +57,8 @@ pub struct AppState {
     pub frontend_config: Option<frontend::FrontendConfig>,
     /// Authentication state
     pub auth_state: auth::AuthState,
+    /// Config flow handler for integration setup
+    pub config_flow_handler: Option<Arc<dyn config_flow::ConfigFlowHandler>>,
 }
 
 /// API status response
@@ -223,6 +226,19 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/health", get(health_check))
         // Onboarding status (always returns "done" for all steps)
         .route("/api/onboarding", get(get_onboarding))
+        // Config entries endpoint (for deletion via HTTP)
+        .route(
+            "/api/config/config_entries/entry/:entry_id",
+            delete(delete_config_entry),
+        )
+        // Config flow routes
+        .route("/api/config/config_entries/flow", post(start_config_flow))
+        .route(
+            "/api/config/config_entries/flow/:flow_id",
+            get(get_config_flow)
+                .post(progress_config_flow)
+                .delete(cancel_config_flow),
+        )
         .layer(TraceLayer::new_for_http())
         .layer(cors)
         .with_state(state.clone())
@@ -541,6 +557,222 @@ async fn fire_event(
     })
 }
 
+/// DELETE /api/config/config_entries/entry/{entry_id} - Delete a config entry
+async fn delete_config_entry(
+    State(state): State<AppState>,
+    Path(entry_id): Path<String>,
+) -> impl IntoResponse {
+    info!("HTTP DELETE config entry: {}", entry_id);
+
+    // Remove the config entry
+    let config_entries = state.config_entries.write().await;
+    match config_entries.remove(&entry_id).await {
+        Ok(_entry) => {
+            info!("Config entry {} deleted successfully via HTTP", entry_id);
+            // Return the same format as HA: {"require_restart": false}
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "require_restart": false
+                })),
+            )
+        }
+        Err(e) => {
+            tracing::warn!("Failed to delete config entry {}: {}", entry_id, e);
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "message": format!("Invalid entry specified: {}", entry_id)
+                })),
+            )
+        }
+    }
+}
+
+/// Request to start a config flow
+#[derive(Deserialize)]
+pub struct StartFlowRequest {
+    pub handler: String,
+    #[serde(default)]
+    pub show_advanced_options: bool,
+}
+
+/// POST /api/config/config_entries/flow - Start a new config flow
+async fn start_config_flow(
+    State(state): State<AppState>,
+    Json(request): Json<StartFlowRequest>,
+) -> impl IntoResponse {
+    info!(
+        "HTTP POST start config flow for handler: {}",
+        request.handler
+    );
+
+    let config_flow_handler = match &state.config_flow_handler {
+        Some(h) => h.clone(),
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "message": "Config flow handler not available"
+                })),
+            );
+        }
+    };
+
+    match config_flow_handler
+        .start_flow(&request.handler, request.show_advanced_options)
+        .await
+    {
+        Ok(flow_result) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(&flow_result).unwrap_or_default()),
+        ),
+        Err(e) => {
+            tracing::error!("Failed to start config flow: {}", e);
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "message": format!("Invalid handler specified: {}", e)
+                })),
+            )
+        }
+    }
+}
+
+/// GET /api/config/config_entries/flow/{flow_id} - Get flow state
+async fn get_config_flow(
+    State(state): State<AppState>,
+    Path(flow_id): Path<String>,
+) -> impl IntoResponse {
+    info!("HTTP GET config flow: {}", flow_id);
+
+    let config_flow_handler = match &state.config_flow_handler {
+        Some(h) => h.clone(),
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "message": "Config flow handler not available"
+                })),
+            );
+        }
+    };
+
+    // Call progress_flow with no user input to get current state
+    match config_flow_handler.progress_flow(&flow_id, None).await {
+        Ok(flow_result) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(&flow_result).unwrap_or_default()),
+        ),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "message": format!("Invalid flow specified: {}", e)
+            })),
+        ),
+    }
+}
+
+/// POST /api/config/config_entries/flow/{flow_id} - Continue a config flow with user input
+async fn progress_config_flow(
+    State(state): State<AppState>,
+    Path(flow_id): Path<String>,
+    Json(user_input): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    info!("HTTP POST progress config flow: {}", flow_id);
+
+    let config_flow_handler = match &state.config_flow_handler {
+        Some(h) => h.clone(),
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "message": "Config flow handler not available"
+                })),
+            );
+        }
+    };
+
+    // The user_input might be an empty object or have actual data
+    let input = if user_input.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+        None
+    } else {
+        Some(user_input)
+    };
+
+    match config_flow_handler.progress_flow(&flow_id, input).await {
+        Ok(flow_result) => {
+            // If the flow created an entry, save it
+            if flow_result.result_type == "create_entry" {
+                if let Some(ref result_data) = flow_result.result {
+                    if let Err(e) = save_config_entry_from_flow(
+                        &state,
+                        &flow_result.handler,
+                        flow_result.title.as_deref().unwrap_or(&flow_result.handler),
+                        result_data,
+                    )
+                    .await
+                    {
+                        tracing::warn!("Failed to save config entry: {}", e);
+                    }
+                }
+            }
+
+            (
+                StatusCode::OK,
+                Json(serde_json::to_value(&flow_result).unwrap_or_default()),
+            )
+        }
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "message": format!("Invalid flow specified: {}", e)
+            })),
+        ),
+    }
+}
+
+/// DELETE /api/config/config_entries/flow/{flow_id} - Cancel a config flow
+async fn cancel_config_flow(
+    State(_state): State<AppState>,
+    Path(flow_id): Path<String>,
+) -> impl IntoResponse {
+    info!("HTTP DELETE (cancel) config flow: {}", flow_id);
+    // TODO: Actually abort the flow in the manager
+    // For now, just return success
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "message": "Flow aborted"
+        })),
+    )
+}
+
+/// Save a config entry from a completed flow
+async fn save_config_entry_from_flow(
+    state: &AppState,
+    domain: &str,
+    title: &str,
+    data: &serde_json::Value,
+) -> Result<(), String> {
+    use ha_config_entries::ConfigEntry;
+
+    let entry = ConfigEntry::new(domain, title).with_data(
+        data.as_object()
+            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default(),
+    );
+
+    let config_entries = state.config_entries.write().await;
+    config_entries
+        .add(entry)
+        .await
+        .map_err(|e| format!("Failed to add config entry: {}", e))?;
+
+    info!("Saved config entry for {} ({})", domain, title);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,6 +808,7 @@ mod tests {
             events_cache: None,
             frontend_config: None,
             auth_state: auth::AuthState::new_onboarded(),
+            config_flow_handler: None,
         }
     }
 

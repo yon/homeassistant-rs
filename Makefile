@@ -177,10 +177,10 @@ test-python: install-dev ## Run all Python tests (shim + PyO3 extension)
 	$(VENV_BIN)/pytest crates/ha-py-bridge/python/tests/ -v
 
 .PHONY: test-rust
-test-rust: ## Run all Rust tests
-	cargo test --workspace --exclude ha-py-bridge
-	cargo test -p ha-automation --test compat_test
-	cargo test -p ha-script --test compat_test
+test-rust: $(VENV_STAMP) ## Run all Rust tests
+	$(RUN_ENV) cargo test --workspace --exclude ha-py-bridge
+	$(RUN_ENV) cargo test -p ha-automation --test compat_test
+	$(RUN_ENV) cargo test -p ha-script --test compat_test
 
 .PHONY: test-rust-server
 test-rust-server: build $(VENV_STAMP) ## Run WebSocket tests against Rust server (starts server automatically)
