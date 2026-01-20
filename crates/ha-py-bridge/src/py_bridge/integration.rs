@@ -251,6 +251,7 @@ impl IntegrationLoader {
     /// Setup a config entry for an integration
     ///
     /// Calls the Python integration's `async_setup_entry(hass, entry)` function.
+    /// If the integration has `async_setup`, it will be called first (once per domain).
     /// Returns `Ok(true)` if setup succeeded, `Ok(false)` if the integration
     /// doesn't support config entries.
     pub fn setup_entry(
@@ -269,6 +270,30 @@ impl IntegrationLoader {
                 .ok_or_else(|| PyBridgeError::IntegrationNotFound(domain.to_string()))?;
 
             let module = module.bind(py);
+
+            // Call async_setup(hass, config) first if it exists and hasn't been called yet
+            // Some integrations need this to initialize global state (e.g., homekit_controller)
+            if module.hasattr("async_setup")? {
+                let setup_called_key = format!("{}_async_setup_called", domain);
+                let hass_data = hass.bind(py).getattr("data")?;
+
+                // Check if async_setup has already been called for this domain
+                if !hass_data.contains(&setup_called_key)? {
+                    debug!("Calling async_setup for integration {}", domain);
+
+                    // Create empty config dict
+                    let config = pyo3::types::PyDict::new_bound(py);
+                    config.set_item(domain, pyo3::types::PyDict::new_bound(py))?;
+
+                    // Call async_setup(hass, config)
+                    let coro = module.call_method1("async_setup", (hass, config))?;
+                    let _: bool = async_bridge.run_coroutine(coro.unbind())?;
+
+                    // Mark as called
+                    hass_data.set_item(&setup_called_key, true)?;
+                    debug!("async_setup completed for integration {}", domain);
+                }
+            }
 
             // Check if integration has async_setup_entry
             if !module.hasattr("async_setup_entry")? {

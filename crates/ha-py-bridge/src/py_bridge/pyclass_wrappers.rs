@@ -411,13 +411,38 @@ impl BusWrapper {
     }
 
     /// Listen for events (placeholder - returns a dummy unsub function)
+    #[pyo3(signature = (event_type, _listener, event_filter=None))]
     fn async_listen<'py>(
         &self,
         py: Python<'py>,
         event_type: &str,
         _listener: PyObject,
+        event_filter: Option<PyObject>,
     ) -> PyResult<Bound<'py, PyAny>> {
+        let _ = event_filter; // Silence unused warning
         tracing::debug!(event_type = %event_type, "Event listener registered (stub)");
+
+        // Return a dummy unsubscribe function
+        let code = "lambda: None";
+        let unsub = py.eval_bound(code, None, None)?;
+
+        let asyncio = py.import_bound("asyncio")?;
+        let future = asyncio.call_method0("Future")?;
+        future.call_method1("set_result", (unsub,))?;
+        Ok(future)
+    }
+
+    /// Listen for an event once (placeholder - returns a dummy unsub function)
+    #[pyo3(signature = (event_type, _listener, event_filter=None))]
+    fn async_listen_once<'py>(
+        &self,
+        py: Python<'py>,
+        event_type: &str,
+        _listener: PyObject,
+        event_filter: Option<PyObject>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let _ = event_filter; // Silence unused warning
+        tracing::debug!(event_type = %event_type, "One-time event listener registered (stub)");
 
         // Return a dummy unsubscribe function
         let code = "lambda: None";
@@ -506,6 +531,66 @@ impl ServicesWrapper {
 }
 
 // ============================================================================
+// UnitSystemWrapper - unit system configuration
+// ============================================================================
+
+/// Python wrapper for Home Assistant unit system
+#[pyclass(name = "UnitSystemWrapper")]
+pub struct UnitSystemWrapper {
+    #[pyo3(get)]
+    length_unit: String,
+    #[pyo3(get)]
+    temperature_unit: String,
+    #[pyo3(get)]
+    mass_unit: String,
+    #[pyo3(get)]
+    volume_unit: String,
+    #[pyo3(get)]
+    pressure_unit: String,
+    #[pyo3(get)]
+    wind_speed_unit: String,
+    #[pyo3(get)]
+    accumulated_precipitation_unit: String,
+    is_metric: bool,
+}
+
+impl UnitSystemWrapper {
+    pub fn metric() -> Self {
+        Self {
+            length_unit: "km".to_string(),
+            temperature_unit: "°C".to_string(),
+            mass_unit: "g".to_string(),
+            volume_unit: "L".to_string(),
+            pressure_unit: "Pa".to_string(),
+            wind_speed_unit: "m/s".to_string(),
+            accumulated_precipitation_unit: "mm".to_string(),
+            is_metric: true,
+        }
+    }
+
+    pub fn imperial() -> Self {
+        Self {
+            length_unit: "mi".to_string(),
+            temperature_unit: "°F".to_string(),
+            mass_unit: "lb".to_string(),
+            volume_unit: "gal".to_string(),
+            pressure_unit: "psi".to_string(),
+            wind_speed_unit: "mph".to_string(),
+            accumulated_precipitation_unit: "in".to_string(),
+            is_metric: false,
+        }
+    }
+}
+
+#[pymethods]
+impl UnitSystemWrapper {
+    #[getter]
+    fn is_metric(&self) -> bool {
+        self.is_metric
+    }
+}
+
+// ============================================================================
 // ConfigWrapper - configuration data
 // ============================================================================
 
@@ -523,29 +608,29 @@ pub struct ConfigWrapper {
     #[pyo3(get)]
     time_zone: String,
     #[pyo3(get)]
-    units: String,
-    #[pyo3(get)]
     location_name: String,
     #[pyo3(get)]
     internal_url: Option<String>,
     #[pyo3(get)]
     external_url: Option<String>,
     components: Py<PySet>,
+    units: Py<UnitSystemWrapper>,
 }
 
 impl ConfigWrapper {
     pub fn new(py: Python<'_>) -> PyResult<Self> {
+        let units = Py::new(py, UnitSystemWrapper::metric())?;
         Ok(Self {
             config_dir: "/config".to_string(),
             latitude: 32.87336,
             longitude: -117.22743,
             elevation: 0,
             time_zone: "UTC".to_string(),
-            units: "metric".to_string(),
             location_name: "Home".to_string(),
             internal_url: None,
             external_url: None,
             components: PySet::empty_bound(py)?.unbind(),
+            units,
         })
     }
 }
@@ -555,6 +640,17 @@ impl ConfigWrapper {
     #[getter]
     fn components(&self, py: Python<'_>) -> PyResult<Py<PySet>> {
         Ok(self.components.clone_ref(py))
+    }
+
+    #[getter]
+    fn units(&self, py: Python<'_>) -> PyResult<Py<UnitSystemWrapper>> {
+        Ok(self.units.clone_ref(py))
+    }
+
+    // Alias for backwards compatibility
+    #[getter]
+    fn unit_system(&self, py: Python<'_>) -> PyResult<Py<UnitSystemWrapper>> {
+        Ok(self.units.clone_ref(py))
     }
 }
 
@@ -852,10 +948,26 @@ impl ConfigEntryWrapper {
         self.unique_id.as_deref()
     }
 
-    /// State (readonly)
+    /// State (readonly) - returns the Python ConfigEntryState enum
     #[getter]
-    fn state(&self) -> &str {
-        &self.state
+    fn state(&self, py: Python<'_>) -> PyResult<PyObject> {
+        // Import the ConfigEntryState enum from homeassistant.config_entries
+        let config_entries = py.import_bound("homeassistant.config_entries")?;
+        let state_enum = config_entries.getattr("ConfigEntryState")?;
+
+        // Map our string state to the enum value
+        let enum_value = match self.state.as_str() {
+            "not_loaded" => state_enum.getattr("NOT_LOADED")?,
+            "setup_in_progress" => state_enum.getattr("SETUP_IN_PROGRESS")?,
+            "loaded" => state_enum.getattr("LOADED")?,
+            "setup_error" => state_enum.getattr("SETUP_ERROR")?,
+            "setup_retry" => state_enum.getattr("SETUP_RETRY")?,
+            "migration_error" => state_enum.getattr("MIGRATION_ERROR")?,
+            "failed_unload" => state_enum.getattr("FAILED_UNLOAD")?,
+            _ => state_enum.getattr("NOT_LOADED")?, // Default to NOT_LOADED
+        };
+
+        Ok(enum_value.unbind())
     }
 
     /// Data dict (readonly)

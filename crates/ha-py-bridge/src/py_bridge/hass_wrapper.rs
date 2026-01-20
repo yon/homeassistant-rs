@@ -1503,6 +1503,15 @@ async def async_forward_entry_setup(entry, platform):
 async def async_forward_entry_unload(entry, platform):
     """Forward unload of a single platform (legacy method)."""
     return await async_unload_platforms(entry, [platform])
+
+def async_entries(domain=None):
+    """Return config entries for a domain.
+
+    This is a stub that returns an empty list since we don't track config entries here.
+    Integrations that check for existing entries will think there are none.
+    """
+    # For now, return empty list - integrations will proceed as if no entries exist
+    return []
 "#;
 
     // Use persistent globals so entity/device registries survive across calls
@@ -1549,6 +1558,10 @@ async def async_forward_entry_unload(entry, platform):
 
     let call_entity_service = globals.get_item("_call_entity_service")?.unwrap();
     wrapper.setattr("call_entity_service", call_entity_service)?;
+
+    // Add async_entries method for checking existing entries
+    let async_entries = globals.get_item("async_entries")?.unwrap();
+    wrapper.setattr("async_entries", async_entries)?;
 
     // Create the flow sub-object
     let flow = create_config_flow_wrapper(py)?;
