@@ -7,8 +7,22 @@ use super::errors::{PyBridgeError, PyBridgeResult};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::collections::{HashMap, HashSet};
-use std::sync::RwLock;
+use std::sync::{LazyLock, RwLock};
 use tracing::{debug, info, warn};
+
+/// Components implemented in Rust - NEVER load from Python
+/// These would conflict with or duplicate Rust implementations.
+static RUST_BLOCKLIST: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+    HashSet::from([
+        "automation",
+        "homeassistant",
+        "input_boolean",
+        "input_number",
+        "persistent_notification",
+        "script",
+        "system_log",
+    ])
+});
 
 /// Tracks which components are implemented in Rust vs Python
 pub struct ComponentRegistry {
@@ -68,19 +82,76 @@ pub struct IntegrationLoader {
     loaded: RwLock<HashMap<String, PyObject>>,
     /// Component registry
     components: ComponentRegistry,
+    /// Whitelist of allowed Python integrations (empty = none allowed)
+    allowlist: RwLock<HashSet<String>>,
 }
 
 impl IntegrationLoader {
-    /// Create a new integration loader
+    /// Create a new integration loader with an empty allowlist
     pub fn new() -> Self {
         Self {
             loaded: RwLock::new(HashMap::new()),
             components: ComponentRegistry::new(),
+            allowlist: RwLock::new(HashSet::new()),
         }
+    }
+
+    /// Set the allowlist of allowed Python integrations
+    ///
+    /// Only integrations in this list (and not in RUST_BLOCKLIST) can be loaded.
+    pub fn set_allowlist(&self, domains: Vec<String>) {
+        let filtered: Vec<String> = domains
+            .into_iter()
+            .filter(|d| {
+                if RUST_BLOCKLIST.contains(d.as_str()) {
+                    warn!("Cannot allowlist '{}' - implemented in Rust, ignoring", d);
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect();
+
+        info!("Setting Python allowlist: {:?}", filtered);
+        let mut allowlist = self.allowlist.write().unwrap();
+        *allowlist = filtered.into_iter().collect();
+    }
+
+    /// Check if an integration is allowed to load via Python
+    ///
+    /// Returns false if:
+    /// - The integration is in the RUST_BLOCKLIST (implemented in Rust)
+    /// - The allowlist is empty (no Python integrations allowed)
+    /// - The integration is not in the allowlist
+    pub fn is_allowed(&self, domain: &str) -> bool {
+        // Always block Rust-implemented components
+        if RUST_BLOCKLIST.contains(domain) {
+            debug!("Integration '{}' blocked - implemented in Rust", domain);
+            return false;
+        }
+
+        // Check allowlist (empty = none allowed, must be explicitly listed)
+        let allowlist = self.allowlist.read().unwrap();
+        let allowed = !allowlist.is_empty() && allowlist.contains(domain);
+        if !allowed {
+            debug!("Integration '{}' blocked - not in allowlist", domain);
+        }
+        allowed
+    }
+
+    /// Get the current allowlist
+    pub fn get_allowlist(&self) -> Vec<String> {
+        let allowlist = self.allowlist.read().unwrap();
+        allowlist.iter().cloned().collect()
     }
 
     /// Load an integration by domain
     pub fn load(&self, domain: &str) -> PyBridgeResult<()> {
+        // Check if integration is allowed
+        if !self.is_allowed(domain) {
+            return Err(PyBridgeError::IntegrationNotAllowed(domain.to_string()));
+        }
+
         // Check if already loaded
         {
             let loaded = self.loaded.read().unwrap();

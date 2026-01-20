@@ -35,7 +35,7 @@ use pyo3::types::PyModule;
 
 // Re-export py_bridge types for convenience
 #[cfg(feature = "py_bridge")]
-pub use py_bridge::{PyBridge, PyBridgeError, PyBridgeResult};
+pub use py_bridge::{load_allowlist_from_config, PyBridge, PyBridgeError, PyBridgeResult};
 
 /// Python module initialization - exports as 'ha_core_rs'
 ///

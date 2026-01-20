@@ -17,6 +17,10 @@ pub enum PyBridgeError {
     #[error("Failed to load integration '{domain}': {reason}")]
     IntegrationLoadFailed { domain: String, reason: String },
 
+    /// Integration not allowed (not whitelisted or Rust-blocked)
+    #[error("Integration '{0}' not allowed")]
+    IntegrationNotAllowed(String),
+
     /// Component not implemented in Rust and no Python available
     #[error("Component '{0}' not implemented")]
     NotImplemented(String),

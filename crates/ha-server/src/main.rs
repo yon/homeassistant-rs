@@ -27,7 +27,9 @@ use tracing::{debug, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 #[cfg(feature = "python")]
-use ha_py_bridge::py_bridge::{call_python_entity_service, get_python_entities, PyBridge};
+use ha_py_bridge::py_bridge::{
+    call_python_entity_service, get_python_entities, load_allowlist_from_config, PyBridge,
+};
 
 /// The central Home Assistant instance
 pub struct HomeAssistant {
@@ -90,13 +92,22 @@ impl HomeAssistant {
         #[cfg(feature = "python")]
         let python_bridge = match {
             let ha_python_path = std::env::var("HA_PYTHON_PATH").map(PathBuf::from).ok();
-            PyBridge::new(ha_python_path.as_deref(), registries.clone())
+            PyBridge::new(
+                ha_python_path.as_deref(),
+                registries.clone(),
+                Some(config_dir.to_path_buf()),
+            )
         } {
             Ok(bridge) => {
                 match bridge.python_version() {
                     Ok(version) => info!("Python bridge initialized: Python {}", version),
                     Err(_) => info!("Python bridge initialized"),
                 }
+
+                // Load Python integration allowlist from config
+                let allowlist = load_allowlist_from_config(config_dir);
+                bridge.set_allowlist(allowlist);
+
                 Some(bridge)
             }
             Err(e) => {

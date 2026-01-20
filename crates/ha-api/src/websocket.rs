@@ -190,6 +190,13 @@ pub enum IncomingMessage {
         id: u64,
         #[serde(default)]
         entry_id: Option<String>,
+        #[serde(default)]
+        domain: Option<String>,
+    },
+    #[serde(rename = "config_entries/subentries/list")]
+    ConfigEntriesSubentriesList {
+        id: u64,
+        entry_id: String,
     },
     #[serde(rename = "config_entries/subscribe")]
     ConfigEntriesSubscribe {
@@ -204,6 +211,11 @@ pub enum IncomingMessage {
     #[serde(rename = "logger/log_info")]
     LoggerLogInfo {
         id: u64,
+    },
+    #[serde(rename = "manifest/get")]
+    ManifestGet {
+        id: u64,
+        integration: String,
     },
     #[serde(rename = "manifest/list")]
     ManifestList {
@@ -632,8 +644,18 @@ async fn handle_message(
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> Result<(), String> {
     // Parse the message
-    let msg: IncomingMessage =
-        serde_json::from_str(text).map_err(|e| format!("Invalid message format: {}", e))?;
+    let msg: IncomingMessage = match serde_json::from_str(text) {
+        Ok(msg) => msg,
+        Err(e) => {
+            // Log unhandled message types for debugging
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(text) {
+                if let Some(msg_type) = json.get("type").and_then(|t| t.as_str()) {
+                    warn!("Unhandled WebSocket message type: {}", msg_type);
+                }
+            }
+            return Err(format!("Invalid message format: {}", e));
+        }
+    };
 
     match msg {
         IncomingMessage::AreaRegistryList { id } => {
@@ -685,9 +707,17 @@ async fn handle_message(
             conn.validate_id(id).map_err(|e| e.to_string())?;
             handle_config_entries_flow_subscribe(conn, id, tx).await
         }
-        IncomingMessage::ConfigEntriesGet { id, entry_id } => {
+        IncomingMessage::ConfigEntriesGet {
+            id,
+            entry_id,
+            domain,
+        } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
-            handle_config_entries_get(conn, id, entry_id.as_deref(), tx).await
+            handle_config_entries_get(conn, id, entry_id.as_deref(), domain.as_deref(), tx).await
+        }
+        IncomingMessage::ConfigEntriesSubentriesList { id, entry_id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_config_entries_subentries_list(conn, id, &entry_id, tx).await
         }
         IncomingMessage::ConfigEntriesSubscribe { id, type_filter } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
@@ -824,6 +854,10 @@ async fn handle_message(
         IncomingMessage::LovelaceResources { id } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
             handle_lovelace_resources(conn, id, tx).await
+        }
+        IncomingMessage::ManifestGet { id, integration } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_manifest_get(conn, id, &integration, tx).await
         }
         IncomingMessage::ManifestList { id } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
@@ -1828,18 +1862,20 @@ async fn handle_entity_registry_list_for_display(
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> Result<(), String> {
     // Return a simplified entity list for display purposes
+    // Uses short keys matching HA's entity_registry.py display format
     let entries: Vec<serde_json::Value> = conn
         .state
         .registries
         .entities
         .iter()
         .map(|entry| {
-            serde_json::json!({
+            let mut obj = serde_json::json!({
                 "ei": entry.entity_id,
                 "di": entry.device_id,
                 "pl": entry.platform,
                 "tk": entry.translation_key,
-                "en": entry.name,
+                // "en" should be name OR original_name (matching HA's logic)
+                "en": entry.name.clone().or_else(|| entry.original_name.clone()),
                 "ic": entry.icon,
                 "ai": entry.area_id,
                 "ec": entry.entity_category.map(|c| match c {
@@ -1851,7 +1887,14 @@ async fn handle_entity_registry_list_for_display(
                     ha_registries::HiddenBy::User => "user",
                 }),
                 "lb": entry.labels,
-            })
+            });
+            // Add "hn" (has_entity_name) if true - frontend needs this
+            if entry.has_entity_name {
+                obj.as_object_mut()
+                    .unwrap()
+                    .insert("hn".to_string(), serde_json::json!(true));
+            }
+            obj
         })
         .collect();
 
@@ -1906,6 +1949,10 @@ async fn handle_device_registry_list(
                 }),
                 "configuration_url": device.configuration_url,
                 "labels": device.labels,
+                "config_entries_subentries": device.config_entries_subentries,
+                "primary_config_entry": device.primary_config_entry,
+                "created_at": device.created_at.timestamp() as f64,
+                "modified_at": device.modified_at.timestamp() as f64,
             })
         })
         .collect();
@@ -2402,6 +2449,8 @@ fn config_entry_to_json(entry: &ha_config_entries::ConfigEntry) -> serde_json::V
         "pref_disable_polling": entry.pref_disable_polling,
         "disabled_by": entry.disabled_by.as_ref().map(|d| format!("{:?}", d).to_lowercase()),
         "reason": entry.reason,
+        // Required by frontend - empty object for integrations without subentries
+        "supported_subentry_types": {},
     })
 }
 
@@ -2410,6 +2459,7 @@ async fn handle_config_entries_get(
     conn: &Arc<ActiveConnection>,
     id: u64,
     entry_id: Option<&str>,
+    domain: Option<&str>,
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> Result<(), String> {
     // Get the config entry from state
@@ -2435,10 +2485,19 @@ async fn handle_config_entries_get(
                 "pref_disable_polling": false,
                 "disabled_by": null,
                 "reason": null,
+                "supported_subentry_types": {},
             })
         }
+    } else if let Some(domain) = domain {
+        // Filter by domain
+        let entries: Vec<serde_json::Value> = config_entries
+            .iter()
+            .filter(|entry| entry.domain == domain)
+            .map(|entry| config_entry_to_json(&entry))
+            .collect();
+        serde_json::Value::Array(entries)
     } else {
-        // Return all entries when no entry_id specified
+        // Return all entries when no filter specified
         let entries: Vec<serde_json::Value> = config_entries
             .iter()
             .map(|entry| config_entry_to_json(&entry))
@@ -2509,6 +2568,28 @@ async fn handle_config_entries_subscribe(
     tx.send(event).await.map_err(|e| e.to_string())
 }
 
+/// Handle config_entries/subentries/list command
+///
+/// Returns list of subentries for a config entry. Most integrations don't have subentries,
+/// so this returns an empty array.
+async fn handle_config_entries_subentries_list(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    _entry_id: &str,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Most integrations don't have subentries, return empty array
+    // Per HA format: [{"subentry_id": "...", "subentry_type": "...", "title": "...", "unique_id": "..."}]
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::json!([])),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
 /// Handle config_entries/flow/subscribe command
 async fn handle_config_entries_flow_subscribe(
     _conn: &Arc<ActiveConnection>,
@@ -2565,6 +2646,47 @@ async fn handle_manifest_list(
         error: None,
     });
     tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle manifest/get command
+async fn handle_manifest_get(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    integration: &str,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Return manifest for the requested integration
+    // For now, return a basic manifest structure
+    let manifest = serde_json::json!({
+        "domain": integration,
+        "name": capitalize_first(integration),
+        "config_flow": true,
+        "documentation": format!("https://www.home-assistant.io/integrations/{}/", integration),
+        "codeowners": [],
+        "requirements": [],
+        "dependencies": [],
+        "iot_class": "calculated",
+        "integration_type": "service",
+        "is_built_in": true,
+    });
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(manifest),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Capitalize first letter of a string
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+    }
 }
 
 /// Handle entity/source command

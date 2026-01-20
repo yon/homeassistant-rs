@@ -1,6 +1,6 @@
 //! Python ConfigEntry wrapper
 //!
-//! Converts Rust ConfigEntry to Python dict for passing to HA integrations.
+//! Converts Rust ConfigEntry to Python ConfigEntryWrapper for passing to HA integrations.
 
 use ha_config_entries::{ConfigEntry, ConfigEntrySource, ConfigEntryState};
 use pyo3::prelude::*;
@@ -9,6 +9,7 @@ use pyo3::IntoPy;
 use std::collections::HashMap;
 
 use super::errors::PyBridgeResult;
+use super::pyclass_wrappers::ConfigEntryWrapper;
 
 /// Convert a serde_json::Value to a Python object
 fn json_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
@@ -91,11 +92,42 @@ fn source_to_str(source: &ConfigEntrySource) -> &'static str {
     }
 }
 
-/// Convert a Rust ConfigEntry to a Python dict matching HA's ConfigEntry
+/// Convert a Rust ConfigEntry to a Python ConfigEntryWrapper
 ///
-/// This creates a dict with all the fields that Python integrations expect
-/// when calling async_setup_entry(hass, entry).
+/// This creates a ConfigEntryWrapper with all the fields that Python integrations expect
+/// when calling async_setup_entry(hass, entry), including runtime_data support.
 pub fn config_entry_to_python(py: Python<'_>, entry: &ConfigEntry) -> PyBridgeResult<PyObject> {
+    // Convert data and options to Python dicts
+    let data = hashmap_to_py(py, &entry.data)?;
+    let options = hashmap_to_py(py, &entry.options)?;
+    let discovery_keys = hashmap_to_py(py, &entry.discovery_keys)?;
+
+    // Create the ConfigEntryWrapper
+    let wrapper = ConfigEntryWrapper::new(
+        py,
+        entry.entry_id.clone(),
+        entry.domain.clone(),
+        entry.title.clone(),
+        entry.version,
+        entry.minor_version,
+        source_to_str(&entry.source).to_string(),
+        entry.unique_id.clone(),
+        state_to_str(entry.state).to_string(),
+        &data,
+        &options,
+        &discovery_keys,
+    )?;
+
+    // Return as a Py<ConfigEntryWrapper>
+    let py_wrapper = Py::new(py, wrapper)?;
+    Ok(py_wrapper.into_any())
+}
+
+/// Convert a Rust ConfigEntry to a Python dict (legacy, for backward compat)
+///
+/// This creates a dict with all the fields that Python integrations expect.
+/// Use config_entry_to_python() instead for proper runtime_data support.
+pub fn config_entry_to_dict(py: Python<'_>, entry: &ConfigEntry) -> PyBridgeResult<PyObject> {
     let dict = PyDict::new_bound(py);
 
     // Required fields

@@ -58,9 +58,63 @@ use ha_registries::Registries;
 use ha_service_registry::ServiceRegistry;
 use ha_state_machine::StateMachine;
 use pyo3::prelude::*;
+use serde::Deserialize;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{info, warn};
+
+/// Configuration structure for the Python integration allowlist
+#[derive(Debug, Deserialize, Default)]
+pub struct PythonAllowlistConfig {
+    /// List of allowed Python integration domains
+    #[serde(default)]
+    pub integrations: Vec<String>,
+}
+
+/// Load the Python integration allowlist from a config file
+///
+/// Looks for `ha_python_integration_allowlist.yaml` in the given config directory.
+/// Returns an empty list if the file doesn't exist or can't be parsed.
+pub fn load_allowlist_from_config(config_dir: &Path) -> Vec<String> {
+    let allowlist_path = config_dir.join("ha_python_integration_allowlist.yaml");
+
+    if !allowlist_path.exists() {
+        info!(
+            "No Python allowlist file at {}, all Python integrations blocked",
+            allowlist_path.display()
+        );
+        return Vec::new();
+    }
+
+    match std::fs::read_to_string(&allowlist_path) {
+        Ok(content) => match serde_yaml::from_str::<PythonAllowlistConfig>(&content) {
+            Ok(config) => {
+                info!(
+                    "Loaded Python allowlist from {}: {:?}",
+                    allowlist_path.display(),
+                    config.integrations
+                );
+                config.integrations
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to parse Python allowlist {}: {}",
+                    allowlist_path.display(),
+                    e
+                );
+                Vec::new()
+            }
+        },
+        Err(e) => {
+            warn!(
+                "Failed to read Python allowlist {}: {}",
+                allowlist_path.display(),
+                e
+            );
+            Vec::new()
+        }
+    }
+}
 
 /// Main entry point for Python bridge mode
 ///
@@ -76,6 +130,8 @@ pub struct PyBridge {
     pub services: ServiceBridge,
     /// Registries for device/entity registration
     pub registries: Arc<Registries>,
+    /// Config directory path (for loading registries from disk)
+    pub config_dir: Option<std::path::PathBuf>,
 }
 
 impl PyBridge {
@@ -84,7 +140,12 @@ impl PyBridge {
     /// # Arguments
     /// * `ha_path` - Optional path to the Home Assistant Python installation
     /// * `registries` - Rust registries for device/entity registration
-    pub fn new(ha_path: Option<&Path>, registries: Arc<Registries>) -> PyBridgeResult<Self> {
+    /// * `config_dir` - Optional path to config directory (for loading registries from disk)
+    pub fn new(
+        ha_path: Option<&Path>,
+        registries: Arc<Registries>,
+        config_dir: Option<std::path::PathBuf>,
+    ) -> PyBridgeResult<Self> {
         // Initialize Python runtime
         PythonRuntime::initialize(ha_path)?;
 
@@ -100,6 +161,7 @@ impl PyBridge {
             async_bridge,
             services,
             registries,
+            config_dir,
         })
     }
 
@@ -121,6 +183,19 @@ impl PyBridge {
     /// Load a Python integration
     pub fn load_integration(&self, domain: &str) -> PyBridgeResult<()> {
         self.integrations.load(domain)
+    }
+
+    /// Set the allowlist of allowed Python integrations
+    ///
+    /// Only integrations in this allowlist can be loaded via Python.
+    /// Integrations implemented in Rust are always blocked regardless of allowlist.
+    pub fn set_allowlist(&self, domains: Vec<String>) {
+        self.integrations.set_allowlist(domains);
+    }
+
+    /// Get the current allowlist
+    pub fn get_allowlist(&self) -> Vec<String> {
+        self.integrations.get_allowlist()
     }
 
     /// Get Python version
@@ -162,6 +237,7 @@ impl PyBridge {
                 states.clone(),
                 services,
                 self.registries.clone(),
+                self.config_dir.as_deref(),
             )?;
 
             // Set the hass reference in config_entries for platform setup
@@ -194,7 +270,14 @@ impl PyBridge {
 
         Python::with_gil(|py| {
             // Create Python hass wrapper with registries
-            let py_hass = create_hass_wrapper(py, bus, states, services, self.registries.clone())?;
+            let py_hass = create_hass_wrapper(
+                py,
+                bus,
+                states,
+                services,
+                self.registries.clone(),
+                self.config_dir.as_deref(),
+            )?;
 
             // Convert config entry to Python
             let py_entry = config_entry_to_python(py, entry)?;
@@ -219,7 +302,7 @@ mod tests {
     #[test]
     fn test_py_bridge_creation() {
         let registries = create_test_registries();
-        let bridge = PyBridge::new(None, registries);
+        let bridge = PyBridge::new(None, registries, None);
         assert!(bridge.is_ok());
 
         let bridge = bridge.unwrap();
@@ -230,7 +313,7 @@ mod tests {
     #[test]
     fn test_python_version() {
         let registries = create_test_registries();
-        let bridge = PyBridge::new(None, registries).unwrap();
+        let bridge = PyBridge::new(None, registries, None).unwrap();
         let version = bridge.python_version().unwrap();
         assert!(version.starts_with("3."));
     }

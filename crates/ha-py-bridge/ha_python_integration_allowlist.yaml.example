@@ -1,0 +1,25 @@
+# Python Integration Allowlist
+#
+# This file controls which Python integrations are allowed to load.
+# Copy this file to your HA config directory as 'ha_python_integration_allowlist.yaml'.
+#
+# IMPORTANT:
+# - If this file doesn't exist, ALL Python integrations are blocked
+# - Components implemented in Rust are ALWAYS blocked (regardless of this list):
+#   automation, homeassistant, input_boolean, input_number,
+#   persistent_notification, script, system_log
+#
+# Usage:
+# - List integration domains you want to load via Python
+# - Add integrations one at a time and test each
+# - Start with simple integrations that have few dependencies
+
+integrations:
+  # Simple integrations (good for initial testing):
+  # - sun              # No external deps
+
+  # Common integrations:
+  # - homekit_controller
+  # - apple_tv
+  # - esphome
+  # - hue
