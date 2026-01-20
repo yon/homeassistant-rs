@@ -430,6 +430,17 @@ TEST_CATEGORIES = {
     ],
 
     # ==========================================================================
+    # Service Bridge (tests/helpers/test_service.py) - ha-py-bridge crate
+    # Tests Python→Rust service registration and calling
+    # ==========================================================================
+    "service_bridge": [
+        "helpers/test_service.py::test_async_get_all_descriptions",
+        "helpers/test_service.py::test_register_with_mixed_case",
+        "helpers/test_service.py::test_call_context_user_not_exist",
+        "helpers/test_service.py::test_not_mutate_input",
+    ],
+
+    # ==========================================================================
     # REST API (tests/components/api/) - ha-api crate
     # ==========================================================================
     "api": [
