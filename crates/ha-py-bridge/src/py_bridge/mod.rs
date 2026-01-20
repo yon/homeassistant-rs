@@ -247,8 +247,11 @@ impl PyBridge {
                 set_hass.call1((&py_hass,))?;
             }
 
-            // Convert config entry to Python
-            let py_entry = config_entry_to_python(py, entry)?;
+            // Convert config entry to Python with state set to SETUP_IN_PROGRESS
+            // Python's coordinator checks that state is SETUP_IN_PROGRESS during setup
+            let mut entry_for_setup = entry.clone();
+            entry_for_setup.state = ha_config_entries::ConfigEntryState::SetupInProgress;
+            let py_entry = config_entry_to_python(py, &entry_for_setup)?;
 
             // Call setup_entry via the integration loader
             // States are now set directly via #[pyclass] StatesWrapper,
