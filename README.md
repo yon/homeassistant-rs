@@ -22,8 +22,9 @@ A Rust implementation of Home Assistant's core, designed as a drop-in replacemen
 | REST API | ✅ |
 | WebSocket API | ✅ |
 | Frontend Serving | ✅ |
-| Python Integration Loading | ✅ |
-| Authentication | 🚧 |
+| Config Flows (via Python bridge) | ✅ |
+| Python Integration Setup | 🚧 |
+| Authentication | 🔶 (OAuth2 works, tokens in-memory) |
 
 ## Quick Start
 
