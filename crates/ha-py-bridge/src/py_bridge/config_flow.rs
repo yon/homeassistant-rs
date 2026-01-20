@@ -1,0 +1,670 @@
+//! Config Flow Manager
+//!
+//! Manages configuration flows for Python integrations. This allows users
+//! to add and configure integrations through the frontend UI.
+
+use async_trait::async_trait;
+use pyo3::prelude::*;
+use pyo3::types::PyDict;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use tracing::{debug, info};
+use ulid::Ulid;
+
+use ha_api::config_flow::{ConfigFlowHandler, FlowResult, FormField};
+use ha_event_bus::EventBus;
+use ha_registries::Registries;
+use ha_service_registry::ServiceRegistry;
+use ha_state_machine::StateMachine;
+
+use super::hass_wrapper::create_hass_wrapper_for_config_flow;
+
+/// Active flow state
+struct ActiveFlow {
+    /// Integration domain
+    handler: String,
+    /// Python flow handler instance
+    flow_instance: PyObject,
+    /// Current step ID
+    current_step: String,
+}
+
+/// Manages active configuration flows
+///
+/// This struct holds references to Rust core objects and handles all Python
+/// interop internally via PyO3. Callers don't need to deal with PyO3 types.
+pub struct ConfigFlowManager {
+    /// Active flows: flow_id -> flow state
+    flows: RwLock<HashMap<String, ActiveFlow>>,
+    /// Event bus reference
+    event_bus: Arc<EventBus>,
+    /// State machine reference
+    state_machine: Arc<StateMachine>,
+    /// Service registry reference
+    service_registry: Arc<ServiceRegistry>,
+    /// Registries reference
+    registries: Arc<Registries>,
+    /// Config directory path
+    config_dir: Option<PathBuf>,
+}
+
+impl ConfigFlowManager {
+    /// Create a new ConfigFlowManager
+    pub fn new(
+        event_bus: Arc<EventBus>,
+        state_machine: Arc<StateMachine>,
+        service_registry: Arc<ServiceRegistry>,
+        registries: Arc<Registries>,
+        config_dir: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            flows: RwLock::new(HashMap::new()),
+            event_bus,
+            state_machine,
+            service_registry,
+            registries,
+            config_dir,
+        }
+    }
+
+    /// Create a hass wrapper for config flows
+    fn create_hass(&self) -> Result<PyObject, String> {
+        Python::with_gil(|py| {
+            create_hass_wrapper_for_config_flow(
+                py,
+                self.event_bus.clone(),
+                self.state_machine.clone(),
+                self.service_registry.clone(),
+                self.registries.clone(),
+                self.config_dir.as_deref(),
+            )
+            .map_err(|e| format!("Failed to create hass wrapper: {}", e))
+        })
+    }
+
+    /// Create a Python config flow instance and call async_step_user
+    fn create_flow_instance(
+        &self,
+        py: Python<'_>,
+        handler: &str,
+        flow_id: &str,
+        _show_advanced_options: bool,
+        hass: &PyObject,
+    ) -> Result<(PyObject, FlowResult), String> {
+        // Import the config_flow module for this integration
+        let module_path = format!("homeassistant.components.{}.config_flow", handler);
+        debug!("Importing config flow module: {}", module_path);
+
+        let module = py
+            .import_bound(module_path.as_str())
+            .map_err(|e| format!("Failed to import {}: {}", module_path, e))?;
+
+        // Find the ConfigFlow class (it's usually named {Domain}FlowHandler or ConfigFlow)
+        // Try common naming patterns
+        let flow_class = self.find_flow_class(py, &module, handler)?;
+
+        // Instantiate the flow
+        let flow_instance = flow_class
+            .call0()
+            .map_err(|e| format!("Failed to instantiate config flow: {}", e))?;
+
+        // Set hass attribute on the flow
+        flow_instance
+            .setattr("hass", hass)
+            .map_err(|e| format!("Failed to set hass on flow: {}", e))?;
+
+        // Set flow_id - HA sets this internally
+        flow_instance
+            .setattr("flow_id", flow_id)
+            .map_err(|e| format!("Failed to set flow_id: {}", e))?;
+
+        // Set context - used by flows for discovery info, etc.
+        let context = PyDict::new_bound(py);
+        context.set_item("source", "user").unwrap();
+        flow_instance
+            .setattr("context", context)
+            .map_err(|e| format!("Failed to set context: {}", e))?;
+
+        // Call async_step_user(None) to get the initial form
+        let result = self.call_flow_step(
+            py,
+            &flow_instance.clone().unbind(),
+            "user",
+            None,
+            flow_id,
+            handler,
+            hass,
+        )?;
+
+        Ok((flow_instance.unbind(), result))
+    }
+
+    /// Find the ConfigFlow class in the module
+    fn find_flow_class<'py>(
+        &self,
+        _py: Python<'py>,
+        module: &pyo3::Bound<'py, pyo3::types::PyModule>,
+        handler: &str,
+    ) -> Result<pyo3::Bound<'py, pyo3::PyAny>, String> {
+        // Common naming patterns for config flow classes
+        // Convert snake_case handler name to PascalCase for class name lookup
+        let pascal_name = snake_to_pascal(handler);
+        let class_names = [
+            format!("{}FlowHandler", pascal_name),
+            format!("{}ConfigFlow", pascal_name),
+        ];
+
+        for class_name in &class_names {
+            if let Ok(cls) = module.getattr(class_name.as_str()) {
+                debug!("Found config flow class: {}", class_name);
+                return Ok(cls);
+            }
+        }
+
+        // Try to find any class that has "FlowHandler" or "ConfigFlow" in the name
+        let dir = module.dir();
+        for name in dir.iter() {
+            if let Ok(name_str) = name.extract::<String>() {
+                if name_str.contains("FlowHandler") || name_str.contains("ConfigFlow") {
+                    if let Ok(cls) = module.getattr(name_str.as_str()) {
+                        if cls.is_callable() {
+                            debug!("Found config flow class by pattern: {}", name_str);
+                            return Ok(cls);
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(format!(
+            "Could not find ConfigFlow class in {}",
+            module
+                .name()
+                .map(|n| n.to_string())
+                .unwrap_or_else(|_| "unknown".to_string())
+        ))
+    }
+
+    /// Call a flow step and convert the result
+    fn call_flow_step(
+        &self,
+        py: Python<'_>,
+        flow_instance: &PyObject,
+        step: &str,
+        user_input: Option<serde_json::Value>,
+        flow_id: &str,
+        handler: &str,
+        _hass: &PyObject,
+    ) -> Result<FlowResult, String> {
+        let method_name = format!("async_step_{}", step);
+        debug!("Calling {} on flow", method_name);
+
+        // Convert user_input to Python dict
+        let py_input = match user_input {
+            Some(input) => json_to_pyobject(py, &input),
+            None => None,
+        };
+
+        // Get the method
+        let flow_bound = flow_instance.bind(py);
+        let method = flow_bound
+            .getattr(method_name.as_str())
+            .map_err(|e| format!("Flow has no method {}: {}", method_name, e))?;
+
+        // Call the method (it's async, so we get a coroutine)
+        let coro = if let Some(input) = py_input {
+            method
+                .call1((input,))
+                .map_err(|e| format!("Failed to call {}: {}", method_name, e))?
+        } else {
+            method
+                .call1((py.None(),))
+                .map_err(|e| format!("Failed to call {}: {}", method_name, e))?
+        };
+
+        // Run the coroutine using asyncio
+        let asyncio = py.import_bound("asyncio").map_err(|e| e.to_string())?;
+
+        // Get or create event loop
+        let loop_obj = match asyncio.call_method0("get_event_loop") {
+            Ok(l) => l,
+            Err(_) => {
+                let new_loop = asyncio
+                    .call_method0("new_event_loop")
+                    .map_err(|e| e.to_string())?;
+                asyncio
+                    .call_method1("set_event_loop", (&new_loop,))
+                    .map_err(|e| e.to_string())?;
+                new_loop
+            }
+        };
+
+        // Ensure the event loop is set as current
+        asyncio
+            .call_method1("set_event_loop", (&loop_obj,))
+            .map_err(|e| e.to_string())?;
+
+        let result = loop_obj
+            .call_method1("run_until_complete", (coro,))
+            .map_err(|e| format!("Failed to run coroutine: {}", e))?;
+
+        // Convert Python result to FlowResult
+        self.convert_flow_result(py, &result, flow_id, handler)
+    }
+
+    /// Convert a Python flow result dict to FlowResult
+    fn convert_flow_result(
+        &self,
+        py: Python<'_>,
+        result: &pyo3::Bound<'_, pyo3::PyAny>,
+        flow_id: &str,
+        handler: &str,
+    ) -> Result<FlowResult, String> {
+        // Result is a FlowResult TypedDict with type, step_id, data_schema, errors, etc.
+        let result_type = result
+            .get_item("type")
+            .ok()
+            .and_then(|t| {
+                // FlowResultType is an enum, get its value
+                if let Ok(val) = t.getattr("value") {
+                    val.extract::<String>().ok()
+                } else {
+                    t.extract::<String>().ok()
+                }
+            })
+            .unwrap_or_else(|| "form".to_string());
+
+        debug!("Flow result type: {}", result_type);
+
+        let step_id = result
+            .get_item("step_id")
+            .ok()
+            .and_then(|s| s.extract::<String>().ok());
+
+        let errors = result.get_item("errors").ok().and_then(|e| {
+            if e.is_none() {
+                return None;
+            }
+            let dict = e.downcast::<PyDict>().ok()?;
+            let mut map = HashMap::new();
+            for (k, v) in dict.iter() {
+                if let (Ok(key), Ok(val)) = (k.extract::<String>(), v.extract::<String>()) {
+                    map.insert(key, val);
+                }
+            }
+            if map.is_empty() {
+                None
+            } else {
+                Some(map)
+            }
+        });
+
+        let description_placeholders =
+            result
+                .get_item("description_placeholders")
+                .ok()
+                .and_then(|e| {
+                    if e.is_none() {
+                        return None;
+                    }
+                    let dict = e.downcast::<PyDict>().ok()?;
+                    let mut map = HashMap::new();
+                    for (k, v) in dict.iter() {
+                        if let (Ok(key), Ok(val)) = (k.extract::<String>(), v.extract::<String>()) {
+                            map.insert(key, val);
+                        }
+                    }
+                    if map.is_empty() {
+                        None
+                    } else {
+                        Some(map)
+                    }
+                });
+
+        // Convert data_schema to form fields (always returns a Vec, empty if None)
+        let data_schema = result
+            .get_item("data_schema")
+            .ok()
+            .and_then(|schema| {
+                if schema.is_none() {
+                    return None;
+                }
+                self.convert_schema_to_fields(&schema)
+            })
+            .unwrap_or_default();
+
+        let title = result
+            .get_item("title")
+            .ok()
+            .and_then(|t| t.extract::<String>().ok());
+
+        let reason = result
+            .get_item("reason")
+            .ok()
+            .and_then(|r| r.extract::<String>().ok());
+
+        // For create_entry, extract the data and create the entry
+        let entry_result = if result_type == "create_entry" {
+            // Get the data from the result
+            if let Ok(data) = result.get_item("data") {
+                if let Ok(dict) = data.downcast::<PyDict>() {
+                    let mut map = serde_json::Map::new();
+                    for (k, v) in dict.iter() {
+                        if let Ok(key) = k.extract::<String>() {
+                            let val = pyobject_to_json(py, &v);
+                            map.insert(key, val);
+                        }
+                    }
+                    Some(serde_json::Value::Object(map))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Extract last_step - controls whether frontend shows "Submit" or "Next" button
+        let last_step = result.get_item("last_step").ok().and_then(|v| {
+            if v.is_none() {
+                None
+            } else {
+                v.extract::<bool>().ok()
+            }
+        });
+
+        // Extract preview - component name for preview in frontend
+        let preview = result.get_item("preview").ok().and_then(|v| {
+            if v.is_none() {
+                None
+            } else {
+                v.extract::<String>().ok()
+            }
+        });
+
+        Ok(FlowResult {
+            flow_id: flow_id.to_string(),
+            handler: handler.to_string(),
+            result_type,
+            step_id,
+            data_schema,
+            errors,
+            description_placeholders,
+            title,
+            reason,
+            version: Some(1),
+            minor_version: Some(1),
+            result: entry_result,
+            last_step,
+            preview,
+        })
+    }
+
+    /// Convert a voluptuous schema to form fields
+    ///
+    /// Note: This is a simplified implementation. The full schema conversion
+    /// is complex because voluptuous uses various marker types (Required, Optional)
+    /// and validator types. For now, we extract basic field information.
+    fn convert_schema_to_fields(
+        &self,
+        schema: &pyo3::Bound<'_, pyo3::PyAny>,
+    ) -> Option<Vec<FormField>> {
+        // Get the schema dict from the vol.Schema object
+        let schema_dict = schema.getattr("schema").ok()?;
+
+        // Try to downcast to PyDict
+        let dict = schema_dict.downcast::<PyDict>().ok()?;
+
+        let mut fields = Vec::new();
+
+        for (key, _value) in dict.iter() {
+            // The key is usually vol.Required("name") or vol.Optional("name")
+            // Try to extract the field name from the marker
+            let field_name = if let Ok(schema_attr) = key.getattr("schema") {
+                schema_attr.extract::<String>().ok()
+            } else {
+                // Maybe it's just a string key
+                key.extract::<String>().ok()
+            };
+
+            if let Some(name) = field_name {
+                // Check if required by looking at the marker type name
+                let type_name = key
+                    .get_type()
+                    .name()
+                    .map(|n| n.to_string())
+                    .unwrap_or_default();
+                let required = type_name.contains("Required");
+
+                fields.push(FormField {
+                    name,
+                    field_type: "string".to_string(), // Default to string for now
+                    required: Some(required),
+                    default: None,
+                });
+            }
+        }
+
+        if fields.is_empty() {
+            None
+        } else {
+            Some(fields)
+        }
+    }
+}
+
+#[async_trait]
+impl ConfigFlowHandler for ConfigFlowManager {
+    async fn start_flow(
+        &self,
+        handler: &str,
+        show_advanced_options: bool,
+    ) -> Result<FlowResult, String> {
+        let flow_id = Ulid::new().to_string().to_lowercase();
+        info!(
+            "Starting config flow for {} with flow_id {}",
+            handler, flow_id
+        );
+
+        let hass = self.create_hass()?;
+
+        // Import and instantiate the Python config flow
+        let (flow_instance, result) = Python::with_gil(|py| {
+            self.create_flow_instance(py, handler, &flow_id, show_advanced_options, &hass)
+        })?;
+
+        // Store the active flow
+        {
+            let mut flows = self.flows.write().await;
+            flows.insert(
+                flow_id.clone(),
+                ActiveFlow {
+                    handler: handler.to_string(),
+                    flow_instance,
+                    current_step: result.step_id.clone().unwrap_or_else(|| "user".to_string()),
+                },
+            );
+        }
+
+        Ok(result)
+    }
+
+    async fn progress_flow(
+        &self,
+        flow_id: &str,
+        user_input: Option<serde_json::Value>,
+    ) -> Result<FlowResult, String> {
+        let (handler, flow_instance, current_step) = {
+            let flows = self.flows.read().await;
+            let flow = flows
+                .get(flow_id)
+                .ok_or_else(|| format!("Flow {} not found", flow_id))?;
+            (
+                flow.handler.clone(),
+                Python::with_gil(|py| flow.flow_instance.clone_ref(py)),
+                flow.current_step.clone(),
+            )
+        };
+
+        info!(
+            "Progressing flow {} for {} at step {}",
+            flow_id, handler, current_step
+        );
+
+        let hass = self.create_hass()?;
+
+        // Call the current step with user input
+        let result = Python::with_gil(|py| {
+            self.call_flow_step(
+                py,
+                &flow_instance,
+                &current_step,
+                user_input,
+                flow_id,
+                &handler,
+                &hass,
+            )
+        })?;
+
+        // Update flow state or clean up if done
+        if result.result_type == "create_entry" || result.result_type == "abort" {
+            let mut flows = self.flows.write().await;
+            flows.remove(flow_id);
+            info!(
+                "Flow {} completed with result type: {}",
+                flow_id, result.result_type
+            );
+        } else if let Some(step_id) = &result.step_id {
+            let mut flows = self.flows.write().await;
+            if let Some(flow) = flows.get_mut(flow_id) {
+                flow.current_step = step_id.clone();
+            }
+        }
+
+        Ok(result)
+    }
+
+    async fn list_flows(&self) -> Vec<serde_json::Value> {
+        let flows = self.flows.read().await;
+        flows
+            .iter()
+            .map(|(flow_id, flow)| {
+                serde_json::json!({
+                    "flow_id": flow_id,
+                    "handler": flow.handler,
+                    "step_id": flow.current_step,
+                    "context": {
+                        "source": "user"
+                    }
+                })
+            })
+            .collect()
+    }
+}
+
+/// Convert snake_case to PascalCase
+/// e.g., "lutron_caseta" -> "LutronCaseta"
+fn snake_to_pascal(s: &str) -> String {
+    s.split('_')
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(c) => c.to_uppercase().chain(chars).collect(),
+            }
+        })
+        .collect()
+}
+
+/// Convert JSON value to Python object
+fn json_to_pyobject(py: Python<'_>, value: &serde_json::Value) -> Option<PyObject> {
+    match value {
+        serde_json::Value::Null => Some(py.None()),
+        serde_json::Value::Bool(b) => Some(b.into_py(py)),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Some(i.into_py(py))
+            } else if let Some(f) = n.as_f64() {
+                Some(f.into_py(py))
+            } else {
+                None
+            }
+        }
+        serde_json::Value::String(s) => Some(s.into_py(py)),
+        serde_json::Value::Array(arr) => {
+            let list = pyo3::types::PyList::empty_bound(py);
+            for item in arr {
+                if let Some(py_item) = json_to_pyobject(py, item) {
+                    list.append(py_item).ok()?;
+                }
+            }
+            Some(list.into())
+        }
+        serde_json::Value::Object(obj) => {
+            let dict = PyDict::new_bound(py);
+            for (k, v) in obj {
+                if let Some(py_val) = json_to_pyobject(py, v) {
+                    dict.set_item(k, py_val).ok()?;
+                }
+            }
+            Some(dict.into())
+        }
+    }
+}
+
+/// Convert Python object to JSON value
+fn pyobject_to_json(py: Python<'_>, obj: &pyo3::Bound<'_, pyo3::PyAny>) -> serde_json::Value {
+    if obj.is_none() {
+        return serde_json::Value::Null;
+    }
+    if let Ok(b) = obj.extract::<bool>() {
+        return serde_json::Value::Bool(b);
+    }
+    if let Ok(i) = obj.extract::<i64>() {
+        return serde_json::Value::Number(i.into());
+    }
+    if let Ok(f) = obj.extract::<f64>() {
+        if let Some(n) = serde_json::Number::from_f64(f) {
+            return serde_json::Value::Number(n);
+        }
+    }
+    if let Ok(s) = obj.extract::<String>() {
+        return serde_json::Value::String(s);
+    }
+    if let Ok(list) = obj.downcast::<pyo3::types::PyList>() {
+        let arr: Vec<serde_json::Value> = list
+            .iter()
+            .map(|item| pyobject_to_json(py, &item))
+            .collect();
+        return serde_json::Value::Array(arr);
+    }
+    if let Ok(dict) = obj.downcast::<PyDict>() {
+        let mut map = serde_json::Map::new();
+        for (k, v) in dict.iter() {
+            if let Ok(key) = k.extract::<String>() {
+                map.insert(key, pyobject_to_json(py, &v));
+            }
+        }
+        return serde_json::Value::Object(map);
+    }
+    // Default to string representation
+    serde_json::Value::String(obj.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_snake_to_pascal() {
+        assert_eq!(snake_to_pascal("lutron_caseta"), "LutronCaseta");
+        assert_eq!(snake_to_pascal("sun"), "Sun");
+        assert_eq!(snake_to_pascal(""), "");
+        assert_eq!(snake_to_pascal("home_assistant_core"), "HomeAssistantCore");
+        assert_eq!(snake_to_pascal("homekit_controller"), "HomekitController");
+    }
+}

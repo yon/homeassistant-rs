@@ -204,9 +204,44 @@ pub enum IncomingMessage {
         #[serde(default)]
         type_filter: Option<Vec<String>>,
     },
+    #[serde(rename = "config_entries/flow")]
+    ConfigEntriesFlow {
+        id: u64,
+        /// Handler (integration domain) to start the flow for
+        handler: String,
+        /// Show advanced options (optional)
+        #[serde(default)]
+        show_advanced_options: bool,
+    },
+    #[serde(rename = "config_entries/flow/progress")]
+    ConfigEntriesFlowProgress {
+        id: u64,
+        /// The flow_id to continue (optional - if None, list all flows in progress)
+        #[serde(default)]
+        flow_id: Option<String>,
+        /// User input for this step (optional)
+        #[serde(default)]
+        user_input: Option<serde_json::Value>,
+    },
     #[serde(rename = "config_entries/flow/subscribe")]
     ConfigEntriesFlowSubscribe {
         id: u64,
+    },
+    #[serde(rename = "config_entries/delete")]
+    ConfigEntriesDelete {
+        id: u64,
+        entry_id: String,
+    },
+    #[serde(rename = "application_credentials/config_entry")]
+    ApplicationCredentialsConfigEntry {
+        id: u64,
+        config_entry_id: String,
+    },
+    #[serde(rename = "integration/descriptions")]
+    IntegrationDescriptions {
+        id: u64,
+        #[serde(default)]
+        integrations: Option<Vec<String>>,
     },
     #[serde(rename = "logger/log_info")]
     LoggerLogInfo {
@@ -513,7 +548,12 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     while let Some(result) = receiver.next().await {
         match result {
             Ok(Message::Text(text)) => {
-                debug!("Received: {}", text);
+                // Log all incoming messages at info level for debugging
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if let Some(msg_type) = json.get("type").and_then(|t| t.as_str()) {
+                        info!("WS RECV: type={}, full={}", msg_type, text);
+                    }
+                }
                 if let Err(e) = handle_message(&conn, &text, &tx).await {
                     error!("Error handling message: {}", e);
                 }
@@ -703,9 +743,44 @@ async fn handle_message(
             conn.validate_id(id).map_err(|e| e.to_string())?;
             handle_category_registry_list(conn, id, scope, tx).await
         }
+        IncomingMessage::ConfigEntriesFlow {
+            id,
+            handler,
+            show_advanced_options,
+        } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_config_entries_flow(conn, id, &handler, show_advanced_options, tx).await
+        }
+        IncomingMessage::ConfigEntriesFlowProgress {
+            id,
+            flow_id,
+            user_input,
+        } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            match flow_id {
+                Some(ref fid) => {
+                    handle_config_entries_flow_progress(conn, id, fid, user_input, tx).await
+                }
+                None => {
+                    // List all flows in progress (non-user initiated)
+                    handle_config_entries_flow_progress_list(id, tx).await
+                }
+            }
+        }
         IncomingMessage::ConfigEntriesFlowSubscribe { id } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
             handle_config_entries_flow_subscribe(conn, id, tx).await
+        }
+        IncomingMessage::ConfigEntriesDelete { id, entry_id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_config_entries_delete(conn, id, &entry_id, tx).await
+        }
+        IncomingMessage::ApplicationCredentialsConfigEntry {
+            id,
+            config_entry_id,
+        } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_application_credentials_config_entry(id, &config_entry_id, tx).await
         }
         IncomingMessage::ConfigEntriesGet {
             id,
@@ -842,6 +917,10 @@ async fn handle_message(
         IncomingMessage::LabsSubscribe { id } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
             handle_labs_subscribe(conn, id, tx).await
+        }
+        IncomingMessage::IntegrationDescriptions { id, integrations } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_integration_descriptions(conn, id, integrations, tx).await
         }
         IncomingMessage::LoggerLogInfo { id } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
@@ -2568,6 +2647,67 @@ async fn handle_config_entries_subscribe(
     tx.send(event).await.map_err(|e| e.to_string())
 }
 
+/// Handle application_credentials/config_entry command
+/// Returns credentials associated with a config entry (usually null for most integrations)
+async fn handle_application_credentials_config_entry(
+    id: u64,
+    _entry_id: &str,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Most integrations don't use application credentials
+    // Return null to indicate no credentials
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::Value::Null),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle config_entries/delete command
+async fn handle_config_entries_delete(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    entry_id: &str,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    info!("Deleting config entry: {}", entry_id);
+
+    // Remove the config entry
+    let config_entries = conn.state.config_entries.write().await;
+    match config_entries.remove(entry_id).await {
+        Ok(_entry) => {
+            info!("Config entry {} deleted successfully", entry_id);
+            let result = OutgoingMessage::Result(ResultMessage {
+                id,
+                msg_type: "result",
+                success: true,
+                result: Some(serde_json::json!({
+                    "require_restart": false
+                })),
+                error: None,
+            });
+            tx.send(result).await.map_err(|e| e.to_string())
+        }
+        Err(e) => {
+            warn!("Failed to delete config entry {}: {}", entry_id, e);
+            let result = OutgoingMessage::Result(ResultMessage {
+                id,
+                msg_type: "result",
+                success: false,
+                result: None,
+                error: Some(ErrorInfo {
+                    code: "not_found".to_string(),
+                    message: format!("Config entry {} not found", entry_id),
+                }),
+            });
+            tx.send(result).await.map_err(|e| e.to_string())
+        }
+    }
+}
+
 /// Handle config_entries/subentries/list command
 ///
 /// Returns list of subentries for a config entry. Most integrations don't have subentries,
@@ -2590,17 +2730,42 @@ async fn handle_config_entries_subentries_list(
     tx.send(result).await.map_err(|e| e.to_string())
 }
 
-/// Handle config_entries/flow/subscribe command
-async fn handle_config_entries_flow_subscribe(
-    _conn: &Arc<ActiveConnection>,
+/// Handle config_entries/flow/progress without flow_id - lists flows in progress
+///
+/// Returns flows that are in progress but not started by a user (e.g., discovered devices).
+async fn handle_config_entries_flow_progress_list(
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> Result<(), String> {
-    // Send initial empty flows state
+    // Return empty list since we don't have any auto-discovered flows yet
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::Value::Array(vec![])),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle config_entries/flow/subscribe command
+async fn handle_config_entries_flow_subscribe(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Get list of active flows if config flow manager is available
+    let flows = if let Some(cfm) = &conn.state.config_flow_handler {
+        cfm.list_flows().await
+    } else {
+        vec![]
+    };
+
+    // Send initial flows state
     let event = OutgoingMessage::Event(EventMessage {
         id,
         msg_type: "event",
-        event: serde_json::json!([]),
+        event: serde_json::json!(flows),
     });
     tx.send(event).await.map_err(|e| e.to_string())?;
 
@@ -2614,18 +2779,262 @@ async fn handle_config_entries_flow_subscribe(
     tx.send(result).await.map_err(|e| e.to_string())
 }
 
+/// Handle config_entries/flow command - start a new config flow
+async fn handle_config_entries_flow(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    handler: &str,
+    show_advanced_options: bool,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    info!("Starting config flow for handler: {}", handler);
+
+    let config_flow_handler = conn
+        .state
+        .config_flow_handler
+        .as_ref()
+        .ok_or_else(|| "Config flow manager not available".to_string())?;
+
+    match config_flow_handler
+        .start_flow(handler, show_advanced_options)
+        .await
+    {
+        Ok(flow_result) => {
+            let result = OutgoingMessage::Result(ResultMessage {
+                id,
+                msg_type: "result",
+                success: true,
+                result: Some(serde_json::to_value(&flow_result).unwrap_or_default()),
+                error: None,
+            });
+            tx.send(result).await.map_err(|e| e.to_string())
+        }
+        Err(e) => {
+            error!("Failed to start config flow: {}", e);
+            let result = OutgoingMessage::Result(ResultMessage {
+                id,
+                msg_type: "result",
+                success: false,
+                result: None,
+                error: Some(ErrorInfo {
+                    code: "flow_error".to_string(),
+                    message: e,
+                }),
+            });
+            tx.send(result).await.map_err(|e| e.to_string())
+        }
+    }
+}
+
+/// Handle config_entries/flow/progress command - continue a config flow
+async fn handle_config_entries_flow_progress(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    flow_id: &str,
+    user_input: Option<serde_json::Value>,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    info!("Progressing config flow: {}", flow_id);
+
+    let config_flow_handler = conn
+        .state
+        .config_flow_handler
+        .as_ref()
+        .ok_or_else(|| "Config flow manager not available".to_string())?;
+
+    match config_flow_handler.progress_flow(flow_id, user_input).await {
+        Ok(flow_result) => {
+            // If the flow created an entry, we need to save it
+            if flow_result.result_type == "create_entry" {
+                if let Some(ref result_data) = flow_result.result {
+                    // Create and save the config entry
+                    if let Err(e) = save_config_entry_from_flow(
+                        &conn.state,
+                        &flow_result.handler,
+                        flow_result.title.as_deref().unwrap_or(&flow_result.handler),
+                        result_data,
+                    )
+                    .await
+                    {
+                        warn!("Failed to save config entry: {}", e);
+                    }
+                }
+            }
+
+            let result = OutgoingMessage::Result(ResultMessage {
+                id,
+                msg_type: "result",
+                success: true,
+                result: Some(serde_json::to_value(&flow_result).unwrap_or_default()),
+                error: None,
+            });
+            tx.send(result).await.map_err(|e| e.to_string())
+        }
+        Err(e) => {
+            error!("Failed to progress config flow: {}", e);
+            let result = OutgoingMessage::Result(ResultMessage {
+                id,
+                msg_type: "result",
+                success: false,
+                result: None,
+                error: Some(ErrorInfo {
+                    code: "flow_error".to_string(),
+                    message: e,
+                }),
+            });
+            tx.send(result).await.map_err(|e| e.to_string())
+        }
+    }
+}
+
+/// Save a config entry created by a flow
+async fn save_config_entry_from_flow(
+    state: &AppState,
+    domain: &str,
+    title: &str,
+    data: &serde_json::Value,
+) -> Result<(), String> {
+    use ha_config_entries::ConfigEntry;
+
+    // Create entry using the constructor which handles all defaults
+    let mut entry = ConfigEntry::new(domain, title);
+
+    // Set the data from the flow
+    if let Some(obj) = data.as_object() {
+        for (k, v) in obj {
+            entry.data.insert(k.clone(), v.clone());
+        }
+    }
+
+    let entry_id = entry.entry_id.clone();
+
+    // Add to config entries
+    {
+        let config_entries = state.config_entries.write().await;
+        let _ = config_entries.add(entry).await;
+    }
+
+    // Save to disk
+    {
+        let config_entries = state.config_entries.read().await;
+        config_entries
+            .save()
+            .await
+            .map_err(|e| format!("Failed to save config entries: {}", e))?;
+    }
+
+    info!("Created config entry {} for {}", entry_id, domain);
+    Ok(())
+}
+
 /// Handle logger/log_info command
 async fn handle_logger_log_info(
     _conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> Result<(), String> {
-    // Return empty logger info
+    // Return empty array of logger info
+    // Format: [{"domain": "integration_name", "level": 20}, ...]
+    // Level values: DEBUG=10, INFO=20, WARNING=30, ERROR=40, CRITICAL=50
     let result = OutgoingMessage::Result(ResultMessage {
         id,
         msg_type: "result",
         success: true,
-        result: Some(serde_json::json!({})),
+        result: Some(serde_json::json!([])),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle integration/descriptions command
+///
+/// Returns descriptions of integrations for the "Add Integration" dialog.
+/// This provides the list of available integrations the user can configure.
+async fn handle_integration_descriptions(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    _integrations: Option<Vec<String>>,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Return a list of integrations that support config flows.
+    // For now, return a hardcoded list of common integrations.
+    // In a full implementation, this would scan vendor/ha-core/homeassistant/components/
+    // for integrations with config_flow: true in their manifest.json
+
+    let integrations = serde_json::json!({
+        "core": {
+            "integration": {
+                "apple_tv": {
+                    "config_flow": true,
+                    "integration_type": "device",
+                    "iot_class": "local_push",
+                    "name": "Apple TV",
+                    "single_config_entry": false
+                },
+                "esphome": {
+                    "config_flow": true,
+                    "integration_type": "hub",
+                    "iot_class": "local_push",
+                    "name": "ESPHome",
+                    "single_config_entry": false
+                },
+                "homekit_controller": {
+                    "config_flow": true,
+                    "integration_type": "hub",
+                    "iot_class": "local_push",
+                    "name": "HomeKit Controller",
+                    "single_config_entry": false
+                },
+                "hue": {
+                    "config_flow": true,
+                    "integration_type": "hub",
+                    "iot_class": "local_push",
+                    "name": "Philips Hue",
+                    "single_config_entry": false
+                },
+                "lutron_caseta": {
+                    "config_flow": true,
+                    "integration_type": "hub",
+                    "iot_class": "local_push",
+                    "name": "Lutron Caséta",
+                    "single_config_entry": false
+                },
+                "mobile_app": {
+                    "config_flow": true,
+                    "integration_type": "service",
+                    "iot_class": "local_push",
+                    "name": "Mobile App",
+                    "single_config_entry": false
+                },
+                "mqtt": {
+                    "config_flow": true,
+                    "integration_type": "service",
+                    "iot_class": "local_push",
+                    "name": "MQTT",
+                    "single_config_entry": false
+                },
+                "sun": {
+                    "config_flow": true,
+                    "integration_type": "service",
+                    "iot_class": "calculated",
+                    "name": "Sun",
+                    "single_config_entry": true
+                }
+            },
+            "helper": {},
+            "translated_name": []
+        },
+        "custom": {
+            "integration": {},
+            "helper": {}
+        }
+    });
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(integrations),
         error: None,
     });
     tx.send(result).await.map_err(|e| e.to_string())

@@ -5,7 +5,10 @@
 mod automation_engine;
 
 use anyhow::Result;
-use ha_api::{auth::AuthState, frontend::FrontendConfig, persistent_notification, AppState};
+use ha_api::{
+    auth::AuthState, config_flow::ConfigFlowHandler, frontend::FrontendConfig,
+    persistent_notification, AppState,
+};
 use ha_automation::AutomationConfig;
 use ha_components::{register_system_log_services, SystemLog};
 use ha_config::CoreConfig;
@@ -28,7 +31,8 @@ use tracing_subscriber::FmtSubscriber;
 
 #[cfg(feature = "python")]
 use ha_py_bridge::py_bridge::{
-    call_python_entity_service, get_python_entities, load_allowlist_from_config, PyBridge,
+    call_python_entity_service, get_python_entities, load_allowlist_from_config, ConfigFlowManager,
+    PyBridge,
 };
 
 /// The central Home Assistant instance
@@ -1708,6 +1712,19 @@ async fn main() -> Result<()> {
     // Register system_log services
     register_system_log_services(&hass.services, system_log.clone());
 
+    // Create config flow handler for Python integration setup (only with python feature)
+    #[cfg(feature = "python")]
+    let config_flow_handler: Option<Arc<dyn ConfigFlowHandler>> =
+        Some(Arc::new(ConfigFlowManager::new(
+            hass.bus.clone(),
+            hass.states.clone(),
+            hass.services.clone(),
+            hass.registries.clone(),
+            Some(config_dir.clone()),
+        )));
+    #[cfg(not(feature = "python"))]
+    let config_flow_handler: Option<Arc<dyn ConfigFlowHandler>> = None;
+
     // Create API state with auth (mark as onboarded for dev mode)
     let api_state = AppState {
         event_bus: hass.bus.clone(),
@@ -1723,6 +1740,7 @@ async fn main() -> Result<()> {
         events_cache,
         frontend_config,
         auth_state: AuthState::new_onboarded(),
+        config_flow_handler,
     };
 
     // Start API server

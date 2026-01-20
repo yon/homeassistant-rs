@@ -19,7 +19,9 @@ extension = ["dep:pyo3", "pyo3/extension-module"]
 py_bridge = ["dep:pyo3", "pyo3/auto-initialize"]
 
 [dependencies]
+async-trait = { workspace = true }
 chrono = { workspace = true }
+ha-api = { workspace = true }
 ha-automation = { workspace = true }
 ha-config-entries = { workspace = true }
 ha-core = { workspace = true }
@@ -36,6 +38,7 @@ serde_yaml = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+ulid = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -53,6 +53,11 @@ impl AsyncBridge {
                 .as_ref()
                 .ok_or_else(|| PyBridgeError::AsyncBridge("No event loop".to_string()))?;
 
+            // Ensure our event loop is set as the current loop before running
+            // This is critical for libraries that create Futures during setup
+            let asyncio = py.import_bound("asyncio")?;
+            asyncio.call_method1("set_event_loop", (event_loop,))?;
+
             let result = event_loop
                 .bind(py)
                 .call_method1("run_until_complete", (coro,))?;
@@ -68,6 +73,10 @@ impl AsyncBridge {
                 .event_loop
                 .as_ref()
                 .ok_or_else(|| PyBridgeError::AsyncBridge("No event loop".to_string()))?;
+
+            // Ensure our event loop is set as the current loop before running
+            let asyncio = py.import_bound("asyncio")?;
+            asyncio.call_method1("set_event_loop", (event_loop,))?;
 
             let result = event_loop
                 .bind(py)
@@ -121,6 +130,13 @@ impl AsyncBridge {
                 })
                 .unwrap_or(false)
         })
+    }
+
+    /// Get a reference to the event loop (cloned for Python use)
+    pub fn get_event_loop(&self, py: Python<'_>) -> Option<PyObject> {
+        self.event_loop
+            .as_ref()
+            .map(|loop_obj| loop_obj.clone_ref(py))
     }
 }
 

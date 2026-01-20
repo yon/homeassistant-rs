@@ -652,6 +652,25 @@ impl ConfigWrapper {
     fn unit_system(&self, py: Python<'_>) -> PyResult<Py<UnitSystemWrapper>> {
         Ok(self.units.clone_ref(py))
     }
+
+    /// Return path to the config directory or a path within it
+    ///
+    /// If called with no arguments, returns the config directory.
+    /// If called with a relative path, returns the joined path.
+    #[pyo3(signature = (*args))]
+    fn path(&self, args: &Bound<'_, PyTuple>) -> PyResult<String> {
+        if args.is_empty() {
+            Ok(self.config_dir.clone())
+        } else {
+            // Join all path segments
+            let mut path = std::path::PathBuf::from(&self.config_dir);
+            for arg in args.iter() {
+                let segment: String = arg.extract()?;
+                path.push(segment);
+            }
+            Ok(path.to_string_lossy().to_string())
+        }
+    }
 }
 
 // ============================================================================
@@ -1203,6 +1222,69 @@ impl HassWrapper {
     /// String representation
     fn __repr__(&self) -> String {
         format!("<HomeAssistant instance_id={}>", self.instance_id)
+    }
+
+    /// Run a blocking function in the executor thread pool
+    ///
+    /// This is the key method that config flows need to run blocking I/O
+    /// (like network requests, file operations, etc.) without blocking the event loop.
+    ///
+    /// # Arguments
+    /// * `func` - The blocking function to run
+    /// * `args` - Optional positional arguments to pass to the function
+    ///
+    /// # Returns
+    /// A coroutine that will return the result of the function when awaited.
+    #[pyo3(signature = (func, *args))]
+    fn async_add_executor_job<'py>(
+        &self,
+        py: Python<'py>,
+        func: PyObject,
+        args: &Bound<'py, PyTuple>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        // Create a coroutine that runs the function in the executor
+        let code = r#"
+import asyncio
+import concurrent.futures
+
+# Create a module-level executor if not already created
+if not hasattr(asyncio, '_ha_executor'):
+    asyncio._ha_executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+
+async def _run_in_executor(func, *args):
+    """Run a blocking function in the executor."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(asyncio._ha_executor, func, *args)
+"#;
+        let globals = pyo3::types::PyDict::new_bound(py);
+        py.run_bound(code, Some(&globals), None)?;
+
+        let run_fn = globals.get_item("_run_in_executor")?.unwrap();
+
+        // Build the argument tuple: (func, *args)
+        // Collect into a Vec first since chain() doesn't implement ExactSizeIterator
+        let call_args: Vec<_> = std::iter::once(func.bind(py).clone())
+            .chain(args.iter())
+            .collect();
+        let call_args = PyTuple::new_bound(py, call_args);
+
+        // Call the async function to get the coroutine
+        let coro = run_fn.call1(call_args)?;
+        Ok(coro)
+    }
+
+    /// Run a blocking function in the executor (alternate signature with target)
+    ///
+    /// Some code passes the function as target=func, so we support that too.
+    #[pyo3(signature = (target, *args))]
+    fn add_executor_job<'py>(
+        &self,
+        py: Python<'py>,
+        target: PyObject,
+        args: &Bound<'py, PyTuple>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        // Delegate to async_add_executor_job
+        self.async_add_executor_job(py, target, args)
     }
 }
 
