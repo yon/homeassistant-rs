@@ -121,3 +121,21 @@ async fn test_event_endpoints_comparison() {
     harness.print_summary();
     assert!(harness.all_passed());
 }
+
+/// Test registry WebSocket endpoints (device, entity, area, floor, label, config_entries)
+#[tokio::test]
+#[ignore]
+async fn test_registry_endpoints_comparison() {
+    let config = ComparisonConfig::from_env();
+    let mut harness = TestHarness::new(config);
+
+    harness
+        .wait_for_servers(Duration::from_secs(60))
+        .await
+        .expect("Servers did not become healthy");
+
+    TestSuites::run_registry_endpoints(&mut harness).await;
+
+    harness.print_summary();
+    assert!(harness.all_passed());
+}

@@ -2860,4 +2860,78 @@ mod tests {
         assert!(json.contains("\"id\":1"));
         assert!(json.contains("\"success\":true"));
     }
+
+    #[test]
+    fn test_parse_config_entries_subentries_list() {
+        let json = r#"{"type": "config_entries/subentries/list", "id": 42, "entry_id": "abc123"}"#;
+        let msg: IncomingMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            IncomingMessage::ConfigEntriesSubentriesList { id, entry_id } => {
+                assert_eq!(id, 42);
+                assert_eq!(entry_id, "abc123");
+            }
+            _ => panic!("Expected ConfigEntriesSubentriesList message"),
+        }
+    }
+
+    #[test]
+    fn test_parse_config_entries_get_with_domain() {
+        let json = r#"{"type": "config_entries/get", "id": 5, "domain": "sun"}"#;
+        let msg: IncomingMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            IncomingMessage::ConfigEntriesGet {
+                id,
+                entry_id,
+                domain,
+            } => {
+                assert_eq!(id, 5);
+                assert_eq!(entry_id, None);
+                assert_eq!(domain, Some("sun".to_string()));
+            }
+            _ => panic!("Expected ConfigEntriesGet message"),
+        }
+    }
+
+    #[test]
+    fn test_parse_config_entries_get_with_entry_id() {
+        let json = r#"{"type": "config_entries/get", "id": 6, "entry_id": "entry123"}"#;
+        let msg: IncomingMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            IncomingMessage::ConfigEntriesGet {
+                id,
+                entry_id,
+                domain,
+            } => {
+                assert_eq!(id, 6);
+                assert_eq!(entry_id, Some("entry123".to_string()));
+                assert_eq!(domain, None);
+            }
+            _ => panic!("Expected ConfigEntriesGet message"),
+        }
+    }
+
+    #[test]
+    fn test_parse_manifest_get() {
+        let json = r#"{"type": "manifest/get", "id": 7, "integration": "sun"}"#;
+        let msg: IncomingMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            IncomingMessage::ManifestGet { id, integration } => {
+                assert_eq!(id, 7);
+                assert_eq!(integration, "sun");
+            }
+            _ => panic!("Expected ManifestGet message"),
+        }
+    }
+
+    #[test]
+    fn test_parse_manifest_list() {
+        let json = r#"{"type": "manifest/list", "id": 8}"#;
+        let msg: IncomingMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            IncomingMessage::ManifestList { id } => {
+                assert_eq!(id, 8);
+            }
+            _ => panic!("Expected ManifestList message"),
+        }
+    }
 }

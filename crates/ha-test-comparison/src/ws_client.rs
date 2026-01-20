@@ -225,6 +225,141 @@ impl WsClient {
         }
     }
 
+    /// Run config/device_registry/list test
+    pub async fn test_device_registry_list(&self) -> WsTestResult {
+        match self
+            .run_command(
+                "device_registry_list",
+                json!({"type": "config/device_registry/list", "id": 1}),
+            )
+            .await
+        {
+            Ok((request, response)) => WsTestResult::success(
+                "device_registry_list",
+                vec![WsExchange { request, response }],
+            ),
+            Err(e) => WsTestResult::failure("device_registry_list", e),
+        }
+    }
+
+    /// Run config_entries/subentries/list test
+    pub async fn test_config_entries_subentries_list(&self) -> WsTestResult {
+        // We need an entry_id - test with empty string which should return empty array
+        match self
+            .run_command(
+                "config_entries_subentries_list",
+                json!({"type": "config_entries/subentries/list", "id": 1, "entry_id": "test_entry"}),
+            )
+            .await
+        {
+            Ok((request, response)) => WsTestResult::success(
+                "config_entries_subentries_list",
+                vec![WsExchange { request, response }],
+            ),
+            Err(e) => WsTestResult::failure("config_entries_subentries_list", e),
+        }
+    }
+
+    /// Run config_entries/get test
+    pub async fn test_config_entries_get(&self) -> WsTestResult {
+        match self
+            .run_command(
+                "config_entries_get",
+                json!({"type": "config_entries/get", "id": 1}),
+            )
+            .await
+        {
+            Ok((request, response)) => {
+                WsTestResult::success("config_entries_get", vec![WsExchange { request, response }])
+            }
+            Err(e) => WsTestResult::failure("config_entries_get", e),
+        }
+    }
+
+    /// Run config_entries/subscribe test
+    pub async fn test_config_entries_subscribe(&self) -> WsTestResult {
+        match self
+            .run_command(
+                "config_entries_subscribe",
+                json!({"type": "config_entries/subscribe", "id": 1}),
+            )
+            .await
+        {
+            Ok((request, response)) => WsTestResult::success(
+                "config_entries_subscribe",
+                vec![WsExchange { request, response }],
+            ),
+            Err(e) => WsTestResult::failure("config_entries_subscribe", e),
+        }
+    }
+
+    /// Run config/entity_registry/list test
+    pub async fn test_entity_registry_list(&self) -> WsTestResult {
+        match self
+            .run_command(
+                "entity_registry_list",
+                json!({"type": "config/entity_registry/list", "id": 1}),
+            )
+            .await
+        {
+            Ok((request, response)) => WsTestResult::success(
+                "entity_registry_list",
+                vec![WsExchange { request, response }],
+            ),
+            Err(e) => WsTestResult::failure("entity_registry_list", e),
+        }
+    }
+
+    /// Run config/area_registry/list test
+    pub async fn test_area_registry_list(&self) -> WsTestResult {
+        match self
+            .run_command(
+                "area_registry_list",
+                json!({"type": "config/area_registry/list", "id": 1}),
+            )
+            .await
+        {
+            Ok((request, response)) => {
+                WsTestResult::success("area_registry_list", vec![WsExchange { request, response }])
+            }
+            Err(e) => WsTestResult::failure("area_registry_list", e),
+        }
+    }
+
+    /// Run config/floor_registry/list test
+    pub async fn test_floor_registry_list(&self) -> WsTestResult {
+        match self
+            .run_command(
+                "floor_registry_list",
+                json!({"type": "config/floor_registry/list", "id": 1}),
+            )
+            .await
+        {
+            Ok((request, response)) => WsTestResult::success(
+                "floor_registry_list",
+                vec![WsExchange { request, response }],
+            ),
+            Err(e) => WsTestResult::failure("floor_registry_list", e),
+        }
+    }
+
+    /// Run config/label_registry/list test
+    pub async fn test_label_registry_list(&self) -> WsTestResult {
+        match self
+            .run_command(
+                "label_registry_list",
+                json!({"type": "config/label_registry/list", "id": 1}),
+            )
+            .await
+        {
+            Ok((request, response)) => WsTestResult::success(
+                "label_registry_list",
+                vec![WsExchange { request, response }],
+            ),
+            Err(e) => WsTestResult::failure("label_registry_list", e),
+        }
+    }
+
     /// Connect, authenticate, and run a single command
     async fn run_command(&self, name: &str, command: Value) -> Result<(Value, Value), String> {
         let ws_url = self.ws_url();

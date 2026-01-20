@@ -421,4 +421,89 @@ mod tests {
         assert!(!loader.is_loaded("demo"));
         assert!(loader.loaded_domains().is_empty());
     }
+
+    #[test]
+    fn test_rust_blocklist_contains_expected_components() {
+        // Verify that Rust-implemented components are in the blocklist
+        assert!(RUST_BLOCKLIST.contains("automation"));
+        assert!(RUST_BLOCKLIST.contains("homeassistant"));
+        assert!(RUST_BLOCKLIST.contains("input_boolean"));
+        assert!(RUST_BLOCKLIST.contains("input_number"));
+        assert!(RUST_BLOCKLIST.contains("persistent_notification"));
+        assert!(RUST_BLOCKLIST.contains("script"));
+        assert!(RUST_BLOCKLIST.contains("system_log"));
+
+        // Verify Python-only components are NOT in the blocklist
+        assert!(!RUST_BLOCKLIST.contains("hue"));
+        assert!(!RUST_BLOCKLIST.contains("sun"));
+        assert!(!RUST_BLOCKLIST.contains("homekit_controller"));
+    }
+
+    #[test]
+    fn test_is_allowed_empty_allowlist() {
+        let loader = IntegrationLoader::new();
+        // With empty allowlist, nothing should be allowed
+        assert!(!loader.is_allowed("sun"));
+        assert!(!loader.is_allowed("hue"));
+        assert!(!loader.is_allowed("homekit_controller"));
+    }
+
+    #[test]
+    fn test_is_allowed_rust_blocked_always() {
+        let loader = IntegrationLoader::new();
+        // Even with allowlist, Rust components should be blocked
+        loader.set_allowlist(vec![
+            "automation".to_string(),
+            "script".to_string(),
+            "system_log".to_string(),
+        ]);
+        assert!(!loader.is_allowed("automation"));
+        assert!(!loader.is_allowed("script"));
+        assert!(!loader.is_allowed("system_log"));
+    }
+
+    #[test]
+    fn test_is_allowed_with_allowlist() {
+        let loader = IntegrationLoader::new();
+        loader.set_allowlist(vec!["sun".to_string(), "hue".to_string()]);
+
+        // Allowed integrations should pass
+        assert!(loader.is_allowed("sun"));
+        assert!(loader.is_allowed("hue"));
+
+        // Non-allowed integrations should be blocked
+        assert!(!loader.is_allowed("homekit_controller"));
+        assert!(!loader.is_allowed("apple_tv"));
+    }
+
+    #[test]
+    fn test_get_allowlist() {
+        let loader = IntegrationLoader::new();
+        assert!(loader.get_allowlist().is_empty());
+
+        loader.set_allowlist(vec!["sun".to_string(), "hue".to_string()]);
+        let allowlist = loader.get_allowlist();
+        assert_eq!(allowlist.len(), 2);
+        assert!(allowlist.contains(&"sun".to_string()));
+        assert!(allowlist.contains(&"hue".to_string()));
+    }
+
+    #[test]
+    fn test_set_allowlist_filters_rust_components() {
+        let loader = IntegrationLoader::new();
+        // Trying to allowlist Rust components should be filtered out
+        loader.set_allowlist(vec![
+            "sun".to_string(),
+            "automation".to_string(), // Should be filtered
+            "hue".to_string(),
+            "script".to_string(), // Should be filtered
+        ]);
+
+        let allowlist = loader.get_allowlist();
+        assert_eq!(allowlist.len(), 2);
+        assert!(allowlist.contains(&"sun".to_string()));
+        assert!(allowlist.contains(&"hue".to_string()));
+        assert!(!allowlist.contains(&"automation".to_string()));
+        assert!(!allowlist.contains(&"script".to_string()));
+    }
 }

@@ -180,6 +180,10 @@ test-rust: ## Run all Rust tests
 	cargo test -p ha-automation --test compat_test
 	cargo test -p ha-script --test compat_test
 
+.PHONY: test-rust-server
+test-rust-server: build $(VENV_STAMP) ## Run WebSocket tests against Rust server (starts server automatically)
+	$(VENV_BIN)/pytest tests/rust_server/ -v
+
 ##@ Utilities
 
 .PHONY: audit
