@@ -179,6 +179,187 @@ impl StatesWrapper {
         future.call_method1("set_result", (list,))?;
         Ok(future)
     }
+
+    /// Check if an entity_id is available (not already in use)
+    ///
+    /// Returns True if the entity_id is available, False if already taken.
+    fn async_available(&self, entity_id: &str) -> bool {
+        self.states.get(entity_id).is_none()
+    }
+
+    /// Reserve an entity_id so nothing else can use it
+    ///
+    /// In HA, this sets the state to STATE_UNAVAILABLE to reserve the id.
+    fn async_reserve(&self, entity_id: &str) -> PyResult<()> {
+        let entity_id: EntityId = entity_id
+            .parse()
+            .map_err(|e| PyValueError::new_err(format!("Invalid entity_id: {}", e)))?;
+
+        // Reserve by setting to "unavailable"
+        let context = Context::new();
+        self.states
+            .set(entity_id, "unavailable", HashMap::new(), context);
+        Ok(())
+    }
+
+    /// Remove an entity's state
+    #[pyo3(signature = (entity_id, _context=None))]
+    fn async_remove<'py>(
+        &self,
+        py: Python<'py>,
+        entity_id: &str,
+        _context: Option<PyObject>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        // Try to remove the state (if it exists)
+        if let Ok(eid) = entity_id.parse() {
+            let context = Context::new();
+            self.states.remove(&eid, context);
+        }
+
+        // Return completed future
+        let asyncio = py.import_bound("asyncio")?;
+        let future = asyncio.call_method0("Future")?;
+        future.call_method1("set_result", (true,))?;
+        Ok(future)
+    }
+
+    /// Internal set method used by Entity._async_write_ha_state
+    ///
+    /// This is the method that entities call to write their state.
+    /// It has more parameters than async_set for internal use.
+    #[pyo3(signature = (entity_id, new_state, attributes=None, force_update=None, context=None, state_info=None, timestamp=None))]
+    fn async_set_internal<'py>(
+        &self,
+        py: Python<'py>,
+        entity_id: &str,
+        new_state: &str,
+        attributes: Option<&Bound<'py, PyDict>>,
+        force_update: Option<bool>,
+        context: Option<PyObject>,
+        state_info: Option<PyObject>,
+        timestamp: Option<f64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let _ = (state_info, timestamp); // Suppress unused warnings
+                                         // Just delegate to async_set - internal details handled by Rust
+        self.set(entity_id, new_state, attributes, force_update, context)?;
+
+        let asyncio = py.import_bound("asyncio")?;
+        let future = asyncio.call_method0("Future")?;
+        future.call_method1("set_result", (py.None(),))?;
+        Ok(future)
+    }
+
+    /// Get all states with optional domain filter
+    #[pyo3(signature = (domain_filter=None))]
+    fn async_all<'py>(
+        &self,
+        py: Python<'py>,
+        domain_filter: Option<&str>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let states: Vec<_> = if let Some(domain) = domain_filter {
+            self.states
+                .all()
+                .into_iter()
+                .filter(|s| s.entity_id.domain() == domain)
+                .collect()
+        } else {
+            self.states.all()
+        };
+
+        // Convert to list of dicts
+        let list = PyList::empty_bound(py);
+        for state in states {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("entity_id", state.entity_id.to_string())?;
+            dict.set_item("state", &state.state)?;
+
+            let attrs = PyDict::new_bound(py);
+            for (k, v) in &state.attributes {
+                attrs.set_item(k, json_to_py(py, v)?)?;
+            }
+            dict.set_item("attributes", attrs)?;
+            dict.set_item("last_changed", state.last_changed.to_rfc3339())?;
+            dict.set_item("last_updated", state.last_updated.to_rfc3339())?;
+
+            list.append(dict)?;
+        }
+
+        let asyncio = py.import_bound("asyncio")?;
+        let future = asyncio.call_method0("Future")?;
+        future.call_method1("set_result", (list,))?;
+        Ok(future)
+    }
+
+    /// Count entities with optional domain filter
+    fn async_entity_ids_count(&self, domain_filter: Option<&str>) -> usize {
+        if let Some(domain) = domain_filter {
+            self.states
+                .all()
+                .iter()
+                .filter(|s| s.entity_id.domain() == domain)
+                .count()
+        } else {
+            self.states.all().len()
+        }
+    }
+
+    /// Check if entity is in specific state
+    fn is_state(&self, entity_id: &str, state: &str) -> bool {
+        match self.states.get(entity_id) {
+            Some(s) => s.state == state,
+            None => false,
+        }
+    }
+
+    /// Sync version of entity_ids
+    fn entity_ids(&self, domain_filter: Option<&str>) -> Vec<String> {
+        if let Some(domain) = domain_filter {
+            self.states
+                .all()
+                .iter()
+                .filter(|s| s.entity_id.domain() == domain)
+                .map(|s| s.entity_id.to_string())
+                .collect()
+        } else {
+            self.states
+                .all()
+                .iter()
+                .map(|s| s.entity_id.to_string())
+                .collect()
+        }
+    }
+
+    /// Sync version of all
+    fn all<'py>(
+        &self,
+        py: Python<'py>,
+        domain_filter: Option<&str>,
+    ) -> PyResult<Bound<'py, PyList>> {
+        let states: Vec<_> = if let Some(domain) = domain_filter {
+            self.states
+                .all()
+                .into_iter()
+                .filter(|s| s.entity_id.domain() == domain)
+                .collect()
+        } else {
+            self.states.all()
+        };
+
+        let list = PyList::empty_bound(py);
+        for state in states {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("entity_id", state.entity_id.to_string())?;
+            dict.set_item("state", &state.state)?;
+
+            let attrs = PyDict::new_bound(py);
+            for (k, v) in &state.attributes {
+                attrs.set_item(k, json_to_py(py, v)?)?;
+            }
+            dict.set_item("attributes", attrs)?;
+            list.append(dict)?;
+        }
+        Ok(list)
+    }
 }
 
 // ============================================================================
@@ -557,6 +738,359 @@ impl RegistriesWrapper {
     /// Get entity count
     fn entity_count(&self) -> usize {
         self.registries.entities.len()
+    }
+}
+
+// ============================================================================
+// ConfigEntryWrapper - wraps Rust ConfigEntry for Python integrations
+// ============================================================================
+
+use std::sync::RwLock;
+
+/// Python wrapper for ConfigEntry
+///
+/// This provides a proper ConfigEntry-like object that supports:
+/// - All standard readonly properties (entry_id, domain, data, etc.)
+/// - runtime_data as a read/write property
+/// - async_on_unload() method for cleanup callbacks
+#[pyclass(name = "ConfigEntry")]
+pub struct ConfigEntryWrapper {
+    // Core fields
+    entry_id: String,
+    domain: String,
+    title: String,
+    version: u32,
+    minor_version: u32,
+    source: String,
+    unique_id: Option<String>,
+    state: String,
+    // Data as Python dicts (stored as PyObject for easy Python access)
+    data: PyObject,
+    options: PyObject,
+    discovery_keys: PyObject,
+    // Mutable fields
+    runtime_data: RwLock<PyObject>,
+    // Callbacks registered via async_on_unload
+    unload_callbacks: RwLock<Vec<PyObject>>,
+}
+
+impl ConfigEntryWrapper {
+    /// Create a new ConfigEntryWrapper from Rust ConfigEntry data
+    pub fn new(
+        py: Python<'_>,
+        entry_id: String,
+        domain: String,
+        title: String,
+        version: u32,
+        minor_version: u32,
+        source: String,
+        unique_id: Option<String>,
+        state: String,
+        data: &Bound<'_, PyDict>,
+        options: &Bound<'_, PyDict>,
+        discovery_keys: &Bound<'_, PyDict>,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            entry_id,
+            domain,
+            title,
+            version,
+            minor_version,
+            source,
+            unique_id,
+            state,
+            data: data.clone().unbind().into(),
+            options: options.clone().unbind().into(),
+            discovery_keys: discovery_keys.clone().unbind().into(),
+            runtime_data: RwLock::new(py.None()),
+            unload_callbacks: RwLock::new(Vec::new()),
+        })
+    }
+}
+
+#[pymethods]
+impl ConfigEntryWrapper {
+    /// Entry ID (readonly)
+    #[getter]
+    fn entry_id(&self) -> &str {
+        &self.entry_id
+    }
+
+    /// Domain (readonly)
+    #[getter]
+    fn domain(&self) -> &str {
+        &self.domain
+    }
+
+    /// Title (readonly)
+    #[getter]
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    /// Version (readonly)
+    #[getter]
+    fn version(&self) -> u32 {
+        self.version
+    }
+
+    /// Minor version (readonly)
+    #[getter]
+    fn minor_version(&self) -> u32 {
+        self.minor_version
+    }
+
+    /// Source (readonly)
+    #[getter]
+    fn source(&self) -> &str {
+        &self.source
+    }
+
+    /// Unique ID (readonly)
+    #[getter]
+    fn unique_id(&self) -> Option<&str> {
+        self.unique_id.as_deref()
+    }
+
+    /// State (readonly)
+    #[getter]
+    fn state(&self) -> &str {
+        &self.state
+    }
+
+    /// Data dict (readonly)
+    #[getter]
+    fn data(&self, py: Python<'_>) -> PyObject {
+        self.data.clone_ref(py)
+    }
+
+    /// Options dict (readonly)
+    #[getter]
+    fn options(&self, py: Python<'_>) -> PyObject {
+        self.options.clone_ref(py)
+    }
+
+    /// Discovery keys (readonly)
+    #[getter]
+    fn discovery_keys(&self, py: Python<'_>) -> PyObject {
+        self.discovery_keys.clone_ref(py)
+    }
+
+    /// Runtime data (read/write)
+    /// This is where integrations store their runtime state
+    #[getter]
+    fn runtime_data(&self, py: Python<'_>) -> PyObject {
+        let data = self.runtime_data.read().unwrap();
+        data.clone_ref(py)
+    }
+
+    #[setter]
+    fn set_runtime_data(&self, value: PyObject) {
+        let mut data = self.runtime_data.write().unwrap();
+        *data = value;
+    }
+
+    /// Register a callback to be called when the entry is unloaded
+    ///
+    /// Returns a function that can be called to remove the callback.
+    fn async_on_unload(&self, py: Python<'_>, callback: PyObject) -> PyResult<PyObject> {
+        {
+            let mut callbacks = self.unload_callbacks.write().unwrap();
+            callbacks.push(callback.clone_ref(py));
+        }
+
+        // Return a function that removes this callback
+        // For now, return None since the callback tracking is primarily for cleanup
+        Ok(py.None())
+    }
+
+    /// Get all registered unload callbacks (for internal use)
+    fn _get_unload_callbacks(&self, py: Python<'_>) -> Vec<PyObject> {
+        let callbacks = self.unload_callbacks.read().unwrap();
+        callbacks.iter().map(|cb| cb.clone_ref(py)).collect()
+    }
+
+    /// Call all unload callbacks (for cleanup)
+    fn _run_unload_callbacks(&self, py: Python<'_>) -> PyResult<()> {
+        let callbacks = self.unload_callbacks.read().unwrap();
+        for callback in callbacks.iter() {
+            // Try to call the callback
+            if let Err(e) = callback.call0(py) {
+                tracing::warn!("Unload callback failed: {}", e);
+            }
+        }
+        Ok(())
+    }
+
+    /// Hash based on entry_id (for dict keys)
+    fn __hash__(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.entry_id.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Equality based on entry_id
+    fn __eq__(&self, other: &ConfigEntryWrapper) -> bool {
+        self.entry_id == other.entry_id
+    }
+
+    /// String representation
+    fn __repr__(&self) -> String {
+        format!(
+            "<ConfigEntry entry_id={} domain={} title={}>",
+            self.entry_id, self.domain, self.title
+        )
+    }
+}
+
+// ============================================================================
+// HassWrapper - hashable Home Assistant object for Python integrations
+// ============================================================================
+
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static HASS_INSTANCE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Python wrapper for the Home Assistant object
+///
+/// This provides a hashable HomeAssistant-like object that can be used as
+/// a dictionary key or set element in Python code. SimpleNamespace isn't
+/// hashable, so we need this custom class.
+#[pyclass(name = "HomeAssistant")]
+pub struct HassWrapper {
+    /// Unique instance ID for hashing
+    instance_id: u64,
+    /// Event bus
+    #[pyo3(get)]
+    bus: Py<BusWrapper>,
+    /// State machine
+    #[pyo3(get)]
+    states: Py<StatesWrapper>,
+    /// Service registry
+    #[pyo3(get)]
+    services: Py<ServicesWrapper>,
+    /// Configuration
+    #[pyo3(get)]
+    config: Py<ConfigWrapper>,
+    /// Data storage dict
+    data: Py<PyDict>,
+    /// Config entries wrapper
+    config_entries: PyObject,
+    /// Helpers namespace
+    helpers: PyObject,
+    /// Event loop
+    loop_: PyObject,
+    /// Loop thread ID
+    loop_thread_id: PyObject,
+    /// async_create_task function
+    async_create_task: PyObject,
+    /// timeout context manager factory
+    timeout: PyObject,
+}
+
+impl HassWrapper {
+    pub fn new(
+        py: Python<'_>,
+        bus: Py<BusWrapper>,
+        states: Py<StatesWrapper>,
+        services: Py<ServicesWrapper>,
+        config: Py<ConfigWrapper>,
+        config_entries: PyObject,
+        helpers: PyObject,
+        loop_: PyObject,
+        loop_thread_id: PyObject,
+        async_create_task: PyObject,
+        timeout: PyObject,
+    ) -> PyResult<Self> {
+        let data = PyDict::new_bound(py);
+        // Add integrations dict that entities expect
+        let integrations = PyDict::new_bound(py);
+        data.set_item("integrations", &integrations)?;
+
+        Ok(Self {
+            instance_id: HASS_INSTANCE_COUNTER.fetch_add(1, Ordering::SeqCst),
+            bus,
+            states,
+            services,
+            config,
+            data: data.unbind(),
+            config_entries,
+            helpers,
+            loop_,
+            loop_thread_id,
+            async_create_task,
+            timeout,
+        })
+    }
+}
+
+#[pymethods]
+impl HassWrapper {
+    /// Get the data dict
+    #[getter]
+    fn data(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        Ok(self.data.clone_ref(py))
+    }
+
+    /// Get config_entries
+    #[getter]
+    fn config_entries(&self, py: Python<'_>) -> PyResult<PyObject> {
+        Ok(self.config_entries.clone_ref(py))
+    }
+
+    /// Get helpers
+    #[getter]
+    fn helpers(&self, py: Python<'_>) -> PyResult<PyObject> {
+        Ok(self.helpers.clone_ref(py))
+    }
+
+    /// Get the event loop
+    #[pyo3(name = "loop")]
+    #[getter]
+    fn get_loop(&self, py: Python<'_>) -> PyResult<PyObject> {
+        Ok(self.loop_.clone_ref(py))
+    }
+
+    /// Get the loop thread ID
+    #[getter]
+    fn get_loop_thread_id(&self, py: Python<'_>) -> PyResult<PyObject> {
+        Ok(self.loop_thread_id.clone_ref(py))
+    }
+
+    /// Get async_create_task
+    #[getter]
+    fn get_async_create_task(&self, py: Python<'_>) -> PyResult<PyObject> {
+        Ok(self.async_create_task.clone_ref(py))
+    }
+
+    /// Get timeout factory
+    #[getter]
+    fn get_timeout(&self, py: Python<'_>) -> PyResult<PyObject> {
+        Ok(self.timeout.clone_ref(py))
+    }
+
+    /// Verify we're running in the event loop thread
+    ///
+    /// In HA, this raises an error if called from wrong thread.
+    /// We just no-op since we're always in the same thread context.
+    fn verify_event_loop_thread(&self, _func_name: &str) {
+        // No-op - we're always running in the right thread context
+    }
+
+    /// Hash based on instance ID (identity-based hashing)
+    fn __hash__(&self) -> u64 {
+        self.instance_id
+    }
+
+    /// Equality based on instance ID (identity-based equality)
+    fn __eq__(&self, other: &HassWrapper) -> bool {
+        self.instance_id == other.instance_id
+    }
+
+    /// String representation
+    fn __repr__(&self) -> String {
+        format!("<HomeAssistant instance_id={}>", self.instance_id)
     }
 }
 

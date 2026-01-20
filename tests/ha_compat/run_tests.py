@@ -488,16 +488,112 @@ TEST_CATEGORIES = {
     ],
 
     # ==========================================================================
+    # Config Entries REST API (tests/components/config/) - ha-api crate
+    # Tests config entries REST endpoints
+    # ==========================================================================
+    "config_entries_rest": [
+        "components/config/test_config_entries.py::test_get_entries",
+        "components/config/test_config_entries.py::test_remove_entry",
+        "components/config/test_config_entries.py::test_reload_entry",
+        "components/config/test_config_entries.py::test_reload_invalid_entry",
+        "components/config/test_config_entries.py::test_remove_entry_unauth",
+        "components/config/test_config_entries.py::test_reload_entry_unauth",
+        "components/config/test_config_entries.py::test_reload_entry_in_failed_state",
+        "components/config/test_config_entries.py::test_reload_entry_in_setup_retry",
+    ],
+
+    # ==========================================================================
+    # Config Flow (tests/components/config/) - ha-api crate
+    # Tests config flow initialization, steps, and completion
+    # ==========================================================================
+    "config_flow": [
+        "components/config/test_config_entries.py::test_available_flows",
+        "components/config/test_config_entries.py::test_initialize_flow",
+        "components/config/test_config_entries.py::test_initialize_flow_unmet_dependency",
+        "components/config/test_config_entries.py::test_initialize_flow_unauth",
+        "components/config/test_config_entries.py::test_abort",
+        "components/config/test_config_entries.py::test_create_account",
+        "components/config/test_config_entries.py::test_two_step_flow",
+        "components/config/test_config_entries.py::test_continue_flow_unauth",
+        "components/config/test_config_entries.py::test_get_progress_index",
+        "components/config/test_config_entries.py::test_get_progress_index_unauth",
+        "components/config/test_config_entries.py::test_get_progress_flow",
+        "components/config/test_config_entries.py::test_get_progress_flow_unauth",
+        "components/config/test_config_entries.py::test_get_progress_subscribe",
+        "components/config/test_config_entries.py::test_get_progress_subscribe_create_entry",
+        "components/config/test_config_entries.py::test_get_progress_subscribe_in_progress",
+        "components/config/test_config_entries.py::test_get_progress_subscribe_in_progress_bad_flow",
+        "components/config/test_config_entries.py::test_get_progress_subscribe_unauth",
+        "components/config/test_config_entries.py::test_ignore_flow",
+        "components/config/test_config_entries.py::test_ignore_flow_nonexisting",
+        "components/config/test_config_entries.py::test_flow_with_multiple_schema_errors",
+        "components/config/test_config_entries.py::test_flow_with_multiple_schema_errors_base",
+        "components/config/test_config_entries.py::test_supports_reconfigure",
+        "components/config/test_config_entries.py::test_does_not_support_reconfigure",
+    ],
+
+    # ==========================================================================
+    # Options Flow (tests/components/config/) - ha-api crate
+    # Tests options flow for config entries
+    # ==========================================================================
+    "options_flow": [
+        "components/config/test_config_entries.py::test_options_flow",
+        "components/config/test_config_entries.py::test_options_flow_unauth",
+        "components/config/test_config_entries.py::test_two_step_options_flow",
+        "components/config/test_config_entries.py::test_options_flow_with_invalid_data",
+    ],
+
+    # ==========================================================================
+    # Subentry Flow (tests/components/config/) - ha-api crate
+    # Tests subentry config flow
+    # ==========================================================================
+    "subentry_flow": [
+        "components/config/test_config_entries.py::test_subentry_flow",
+        "components/config/test_config_entries.py::test_subentry_reconfigure_flow",
+        "components/config/test_config_entries.py::test_subentry_flow_abort_duplicate",
+        "components/config/test_config_entries.py::test_subentry_does_not_support_reconfigure",
+        "components/config/test_config_entries.py::test_subentry_flow_unauth",
+        "components/config/test_config_entries.py::test_two_step_subentry_flow",
+        "components/config/test_config_entries.py::test_subentry_flow_with_invalid_data",
+    ],
+
+    # ==========================================================================
     # Config Entries WebSocket API (tests/components/config/) - ha-api crate
     # Tests the config_entries/subscribe and related WebSocket commands
     # ==========================================================================
     "config_entries_ws": [
+        "components/config/test_config_entries.py::test_get_single",
+        "components/config/test_config_entries.py::test_update_prefrences",
+        "components/config/test_config_entries.py::test_update_entry",
+        "components/config/test_config_entries.py::test_update_entry_nonexisting",
+        "components/config/test_config_entries.py::test_disable_entry",
+        "components/config/test_config_entries.py::test_disable_entry_nonexisting",
+        "components/config/test_config_entries.py::test_get_matching_entries_ws",
         "components/config/test_config_entries.py::test_subscribe_entries_ws",
         "components/config/test_config_entries.py::test_subscribe_entries_ws_filtered",
-        "components/config/test_config_entries.py::test_get_matching_entries_ws",
-        "components/config/test_config_entries.py::test_get_single",
-        "components/config/test_config_entries.py::test_update_entry",
-        "components/config/test_config_entries.py::test_disable_entry",
+    ],
+
+    # ==========================================================================
+    # Config Entries Subentries WebSocket API (tests/components/config/) - ha-api crate
+    # Tests the config_entries/subentries/list and related WebSocket commands
+    # ==========================================================================
+    "config_entries_subentries_ws": [
+        "components/config/test_config_entries.py::test_list_subentries",
+        "components/config/test_config_entries.py::test_update_subentry",
+        "components/config/test_config_entries.py::test_delete_subentry",
+    ],
+
+    # ==========================================================================
+    # Device Registry WebSocket API (tests/components/config/) - ha-api crate
+    # Tests the config/device_registry/list and related WebSocket commands
+    # ==========================================================================
+    "device_registry_ws": [
+        "components/config/test_device_registry.py::test_list_devices",
+        "components/config/test_device_registry.py::test_update_device",
+        "components/config/test_device_registry.py::test_update_device_labels",
+        "components/config/test_device_registry.py::test_remove_config_entry_from_device",
+        "components/config/test_device_registry.py::test_remove_config_entry_from_device_fails",
+        "components/config/test_device_registry.py::test_remove_config_entry_from_device_if_integration_remove",
     ],
 
     # ==========================================================================

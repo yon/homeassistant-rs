@@ -216,6 +216,159 @@ impl TestHarness {
         self.ws_results.last().unwrap()
     }
 
+    /// Run WebSocket device_registry/list comparison
+    pub async fn compare_ws_device_registry_list(&mut self) -> &WsComparisonResult {
+        let options = CompareOptions::new()
+            // Timestamps may differ between instances
+            .ignore_field("created_at")
+            .ignore_field("modified_at")
+            // Sort by device ID for consistent comparison
+            .sort_arrays_by("id");
+
+        let python_result = self.python_ws.test_device_registry_list().await;
+        let rust_result = self.rust_ws.test_device_registry_list().await;
+
+        let result = compare_ws_results(
+            "device_registry_list",
+            &python_result,
+            &rust_result,
+            &options,
+        );
+        self.ws_results.push(result);
+        self.ws_results.last().unwrap()
+    }
+
+    /// Run WebSocket config_entries/subentries/list comparison
+    pub async fn compare_ws_config_entries_subentries_list(&mut self) -> &WsComparisonResult {
+        let options = CompareOptions::new();
+
+        let python_result = self.python_ws.test_config_entries_subentries_list().await;
+        let rust_result = self.rust_ws.test_config_entries_subentries_list().await;
+
+        let result = compare_ws_results(
+            "config_entries_subentries_list",
+            &python_result,
+            &rust_result,
+            &options,
+        );
+        self.ws_results.push(result);
+        self.ws_results.last().unwrap()
+    }
+
+    /// Run WebSocket config_entries/get comparison
+    pub async fn compare_ws_config_entries_get(&mut self) -> &WsComparisonResult {
+        let options = CompareOptions::new()
+            // Timestamps may differ
+            .ignore_field("created_at")
+            .ignore_field("modified_at")
+            // Sort by entry_id for consistent comparison
+            .sort_arrays_by("entry_id");
+
+        let python_result = self.python_ws.test_config_entries_get().await;
+        let rust_result = self.rust_ws.test_config_entries_get().await;
+
+        let result =
+            compare_ws_results("config_entries_get", &python_result, &rust_result, &options);
+        self.ws_results.push(result);
+        self.ws_results.last().unwrap()
+    }
+
+    /// Run WebSocket config_entries/subscribe comparison
+    pub async fn compare_ws_config_entries_subscribe(&mut self) -> &WsComparisonResult {
+        let options = CompareOptions::new()
+            .ignore_field("created_at")
+            .ignore_field("modified_at")
+            .sort_arrays_by("entry_id");
+
+        let python_result = self.python_ws.test_config_entries_subscribe().await;
+        let rust_result = self.rust_ws.test_config_entries_subscribe().await;
+
+        let result = compare_ws_results(
+            "config_entries_subscribe",
+            &python_result,
+            &rust_result,
+            &options,
+        );
+        self.ws_results.push(result);
+        self.ws_results.last().unwrap()
+    }
+
+    /// Run WebSocket entity_registry/list comparison
+    pub async fn compare_ws_entity_registry_list(&mut self) -> &WsComparisonResult {
+        let options = CompareOptions::new()
+            .ignore_field("created_at")
+            .ignore_field("modified_at")
+            .sort_arrays_by("entity_id");
+
+        let python_result = self.python_ws.test_entity_registry_list().await;
+        let rust_result = self.rust_ws.test_entity_registry_list().await;
+
+        let result = compare_ws_results(
+            "entity_registry_list",
+            &python_result,
+            &rust_result,
+            &options,
+        );
+        self.ws_results.push(result);
+        self.ws_results.last().unwrap()
+    }
+
+    /// Run WebSocket area_registry/list comparison
+    pub async fn compare_ws_area_registry_list(&mut self) -> &WsComparisonResult {
+        let options = CompareOptions::new()
+            .ignore_field("created_at")
+            .ignore_field("modified_at")
+            .sort_arrays_by("area_id");
+
+        let python_result = self.python_ws.test_area_registry_list().await;
+        let rust_result = self.rust_ws.test_area_registry_list().await;
+
+        let result =
+            compare_ws_results("area_registry_list", &python_result, &rust_result, &options);
+        self.ws_results.push(result);
+        self.ws_results.last().unwrap()
+    }
+
+    /// Run WebSocket floor_registry/list comparison
+    pub async fn compare_ws_floor_registry_list(&mut self) -> &WsComparisonResult {
+        let options = CompareOptions::new()
+            .ignore_field("created_at")
+            .ignore_field("modified_at")
+            .sort_arrays_by("floor_id");
+
+        let python_result = self.python_ws.test_floor_registry_list().await;
+        let rust_result = self.rust_ws.test_floor_registry_list().await;
+
+        let result = compare_ws_results(
+            "floor_registry_list",
+            &python_result,
+            &rust_result,
+            &options,
+        );
+        self.ws_results.push(result);
+        self.ws_results.last().unwrap()
+    }
+
+    /// Run WebSocket label_registry/list comparison
+    pub async fn compare_ws_label_registry_list(&mut self) -> &WsComparisonResult {
+        let options = CompareOptions::new()
+            .ignore_field("created_at")
+            .ignore_field("modified_at")
+            .sort_arrays_by("label_id");
+
+        let python_result = self.python_ws.test_label_registry_list().await;
+        let rust_result = self.rust_ws.test_label_registry_list().await;
+
+        let result = compare_ws_results(
+            "label_registry_list",
+            &python_result,
+            &rust_result,
+            &options,
+        );
+        self.ws_results.push(result);
+        self.ws_results.last().unwrap()
+    }
+
     /// Print summary of all results
     pub fn print_summary(&self) {
         println!("\n=== Comparison Test Summary ===");
@@ -459,5 +612,59 @@ impl TestSuites {
 
         // Call service
         harness.compare_ws_call_service().await.print_summary();
+
+        // Registry endpoints
+        Self::run_registry_endpoints(harness).await;
+    }
+
+    /// Test registry WebSocket endpoints
+    pub async fn run_registry_endpoints(harness: &mut TestHarness) {
+        println!("\n--- Registry WebSocket API ---");
+
+        // Device registry
+        harness
+            .compare_ws_device_registry_list()
+            .await
+            .print_summary();
+
+        // Entity registry
+        harness
+            .compare_ws_entity_registry_list()
+            .await
+            .print_summary();
+
+        // Area registry
+        harness
+            .compare_ws_area_registry_list()
+            .await
+            .print_summary();
+
+        // Floor registry
+        harness
+            .compare_ws_floor_registry_list()
+            .await
+            .print_summary();
+
+        // Label registry
+        harness
+            .compare_ws_label_registry_list()
+            .await
+            .print_summary();
+
+        // Config entries
+        harness
+            .compare_ws_config_entries_get()
+            .await
+            .print_summary();
+
+        harness
+            .compare_ws_config_entries_subscribe()
+            .await
+            .print_summary();
+
+        harness
+            .compare_ws_config_entries_subentries_list()
+            .await
+            .print_summary();
     }
 }

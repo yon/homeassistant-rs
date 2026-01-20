@@ -13,7 +13,7 @@ use std::sync::{Arc, OnceLock};
 
 use super::errors::PyBridgeResult;
 use super::pyclass_wrappers::{
-    BusWrapper, ConfigWrapper, RegistriesWrapper, ServicesWrapper, StatesWrapper,
+    BusWrapper, ConfigWrapper, HassWrapper, RegistriesWrapper, ServicesWrapper, StatesWrapper,
 };
 
 /// Persistent Python globals for config_entries module
@@ -330,67 +330,300 @@ pub fn create_hass_wrapper(
     states: Arc<StateMachine>,
     services: Arc<ServiceRegistry>,
     registries: Arc<Registries>,
+    config_dir: Option<&std::path::Path>,
 ) -> PyBridgeResult<PyObject> {
-    // Create a simple namespace object to hold our attributes
+    // Create SimpleNamespace for helpers (doesn't need to be hashable)
     let types = py.import_bound("types")?;
     let simple_namespace = types.getattr("SimpleNamespace")?;
-
-    // Create the hass object
-    let hass = simple_namespace.call0()?;
-
-    // Add data dict for integrations to store data
-    let data = PyDict::new_bound(py);
-    // Add integrations dict that entities expect
-    let integrations = PyDict::new_bound(py);
-    data.set_item("integrations", &integrations)?;
-    hass.setattr("data", data)?;
 
     // Create #[pyclass] wrapper objects for bus, states, services
     // These call directly into Rust code instead of using Python stubs
     let bus_wrapper = Py::new(py, BusWrapper::new(bus))?;
-    hass.setattr("bus", bus_wrapper)?;
-
     let states_wrapper = Py::new(py, StatesWrapper::new(states))?;
-    hass.setattr("states", states_wrapper)?;
-
     let services_wrapper = Py::new(py, ServicesWrapper::new(services))?;
-    hass.setattr("services", services_wrapper)?;
 
     // Config entries wrapper with platform setup methods
     // Also inject registries wrapper into the Python globals for device/entity registration
     let config_entries_wrapper = create_config_entries_wrapper(py, registries)?;
-    hass.setattr("config_entries", config_entries_wrapper)?;
 
     // Add config attribute with location and components using #[pyclass]
     let config = Py::new(py, ConfigWrapper::new(py)?)?;
-    hass.setattr("config", config)?;
 
     // Add loop attribute (get the running event loop or create one)
     let asyncio = py.import_bound("asyncio")?;
     let threading = py.import_bound("threading")?;
-    match asyncio.call_method0("get_running_loop") {
-        Ok(loop_) => hass.setattr("loop", loop_)?,
+    let loop_ = match asyncio.call_method0("get_running_loop") {
+        Ok(loop_) => loop_.unbind(),
         Err(_) => {
             // No running loop, create one
-            let loop_ = asyncio.call_method0("new_event_loop")?;
-            hass.setattr("loop", loop_)?;
+            asyncio.call_method0("new_event_loop")?.unbind()
         }
-    }
+    };
 
     // Add loop_thread_id (current thread id, used by entities)
     let current_thread = threading.call_method0("current_thread")?;
-    let thread_ident = current_thread.getattr("ident")?;
-    hass.setattr("loop_thread_id", thread_ident)?;
+    let thread_ident = current_thread.getattr("ident")?.unbind();
 
     // Add async_create_task method
     let async_create_task = create_async_create_task(py)?;
-    hass.setattr("async_create_task", async_create_task)?;
 
-    // Add helpers attribute for helper utilities
-    let helpers = simple_namespace.call0()?;
-    hass.setattr("helpers", helpers)?;
+    // Add helpers attribute for helper utilities (SimpleNamespace is fine here)
+    let helpers = simple_namespace.call0()?.unbind();
 
-    Ok(hass.unbind())
+    // Create timeout factory function
+    let timeout = create_timeout_factory(py)?;
+
+    // Create the hashable HassWrapper #[pyclass]
+    let hass = Py::new(
+        py,
+        HassWrapper::new(
+            py,
+            bus_wrapper,
+            states_wrapper,
+            services_wrapper,
+            config,
+            config_entries_wrapper,
+            helpers,
+            loop_,
+            thread_ident,
+            async_create_task,
+            timeout,
+        )?,
+    )?;
+
+    // Initialize HA Python registries so EntityComponent can use them
+    // This needs to be done AFTER hass is created since registries need hass reference
+    // Pass config_dir so it can load entity registry from disk
+    initialize_ha_registries(py, &hass, config_dir)?;
+
+    Ok(hass.into_any())
+}
+
+/// Initialize HA Python registries so EntityComponent can use them
+///
+/// This creates the entity_registry and device_registry instances that
+/// HA's EntityComponent expects to find. If config_dir is provided,
+/// loads the registries from disk so that existing entity_ids are preserved.
+fn initialize_ha_registries(
+    py: Python<'_>,
+    hass: &Py<HassWrapper>,
+    config_dir: Option<&std::path::Path>,
+) -> PyResult<()> {
+    let code = r#"
+import logging
+import json
+import os
+
+_LOGGER = logging.getLogger(__name__)
+
+def _init_registries(hass, config_dir):
+    """Initialize HA Python registries, loading from disk if available.
+
+    This sets up the entity_registry and device_registry so that
+    EntityComponent and other HA code can use them. If config_dir is
+    provided, loads saved registry data so entity_ids are preserved.
+    """
+    try:
+        from homeassistant.helpers import entity_registry as er
+        from homeassistant.helpers import device_registry as dr
+
+        # Get or create entity registry
+        entity_reg = er.EntityRegistry(hass)
+
+        # Initialize the entities container
+        entity_reg.entities = er.EntityRegistryItems()
+        entity_reg.deleted_entities = {}
+
+        # Try to load entity registry from disk
+        if config_dir:
+            entity_registry_path = os.path.join(config_dir, '.storage', 'core.entity_registry')
+            if os.path.exists(entity_registry_path):
+                try:
+                    with open(entity_registry_path, 'r') as f:
+                        data = json.load(f)
+
+                    entities_data = data.get('data', {}).get('entities', [])
+                    _LOGGER.info(f"Loading {len(entities_data)} entities from Python registry file")
+
+                    for entry_data in entities_data:
+                        try:
+                            # Create RegistryEntry from saved data
+                            entry = er.RegistryEntry(
+                                entity_id=entry_data.get('entity_id'),
+                                unique_id=entry_data.get('unique_id'),
+                                platform=entry_data.get('platform'),
+                                config_entry_id=entry_data.get('config_entry_id'),
+                                config_subentry_id=entry_data.get('config_subentry_id'),
+                                device_id=entry_data.get('device_id'),
+                                area_id=entry_data.get('area_id'),
+                                disabled_by=er.RegistryEntryDisabler(entry_data['disabled_by']) if entry_data.get('disabled_by') else None,
+                                hidden_by=er.RegistryEntryHider(entry_data['hidden_by']) if entry_data.get('hidden_by') else None,
+                                entity_category=entry_data.get('entity_category'),
+                                capabilities=entry_data.get('capabilities'),
+                                original_device_class=entry_data.get('original_device_class'),
+                                original_icon=entry_data.get('original_icon'),
+                                original_name=entry_data.get('original_name'),
+                                name=entry_data.get('name'),
+                                icon=entry_data.get('icon'),
+                                aliases=set(entry_data.get('aliases', [])),
+                                id=entry_data.get('id'),
+                                has_entity_name=entry_data.get('has_entity_name', False),
+                                options=entry_data.get('options'),
+                                translation_key=entry_data.get('translation_key'),
+                                categories=entry_data.get('categories', {}),
+                                labels=set(entry_data.get('labels', [])),
+                                created_at=entry_data.get('created_at', 0),
+                                modified_at=entry_data.get('modified_at', 0),
+                                suggested_object_id=entry_data.get('suggested_object_id'),
+                                supported_features=entry_data.get('supported_features', 0),
+                                unit_of_measurement=entry_data.get('unit_of_measurement'),
+                            )
+                            entity_reg.entities[entry.entity_id] = entry
+                        except Exception as e:
+                            _LOGGER.debug(f"Could not load entity entry: {e}")
+
+                    _LOGGER.info(f"Loaded {len(entity_reg.entities)} entities into Python registry")
+                except Exception as e:
+                    _LOGGER.warning(f"Could not load entity registry from disk: {e}")
+
+        entity_reg._entities_data = entity_reg.entities.data
+
+        # Store in hass.data with the expected key
+        hass.data[er.DATA_REGISTRY] = entity_reg
+        _LOGGER.debug("Initialized entity registry in hass.data")
+
+        # Get or create device registry
+        device_reg = dr.DeviceRegistry(hass)
+
+        # Initialize the devices container
+        device_reg.devices = dr.ActiveDeviceRegistryItems()
+        device_reg.deleted_devices = {}
+
+        # Try to load device registry from disk
+        if config_dir:
+            device_registry_path = os.path.join(config_dir, '.storage', 'core.device_registry')
+            if os.path.exists(device_registry_path):
+                try:
+                    with open(device_registry_path, 'r') as f:
+                        data = json.load(f)
+
+                    devices_data = data.get('data', {}).get('devices', [])
+                    _LOGGER.info(f"Loading {len(devices_data)} devices from registry")
+
+                    for dev_data in devices_data:
+                        try:
+                            # Parse identifiers and connections
+                            identifiers = set()
+                            for id_tuple in dev_data.get('identifiers', []):
+                                if isinstance(id_tuple, (list, tuple)) and len(id_tuple) >= 2:
+                                    identifiers.add((str(id_tuple[0]), str(id_tuple[1])))
+
+                            connections = set()
+                            for conn in dev_data.get('connections', []):
+                                if isinstance(conn, (list, tuple)) and len(conn) >= 2:
+                                    connections.add((str(conn[0]), str(conn[1])))
+
+                            entry = dr.DeviceEntry(
+                                area_id=dev_data.get('area_id'),
+                                config_entries=set(dev_data.get('config_entries', [])),
+                                connections=connections,
+                                disabled_by=dr.DeviceEntryDisabler(dev_data['disabled_by']) if dev_data.get('disabled_by') else None,
+                                hw_version=dev_data.get('hw_version'),
+                                id=dev_data.get('id'),
+                                identifiers=identifiers,
+                                labels=set(dev_data.get('labels', [])),
+                                manufacturer=dev_data.get('manufacturer'),
+                                model=dev_data.get('model'),
+                                model_id=dev_data.get('model_id'),
+                                name=dev_data.get('name'),
+                                name_by_user=dev_data.get('name_by_user'),
+                                serial_number=dev_data.get('serial_number'),
+                                sw_version=dev_data.get('sw_version'),
+                                via_device_id=dev_data.get('via_device_id'),
+                            )
+                            device_reg.devices[entry.id] = entry
+                        except Exception as e:
+                            _LOGGER.debug(f"Could not load device entry: {e}")
+
+                    _LOGGER.info(f"Loaded {len(device_reg.devices)} devices from disk")
+                except Exception as e:
+                    _LOGGER.warning(f"Could not load device registry from disk: {e}")
+
+        device_reg._device_data = device_reg.devices.data
+
+        # Store in hass.data with the expected key
+        hass.data[dr.DATA_REGISTRY] = device_reg
+        _LOGGER.debug("Initialized device registry in hass.data")
+
+        return True
+    except Exception as e:
+        _LOGGER.warning(f"Could not initialize HA registries: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+"#;
+
+    let globals = PyDict::new_bound(py);
+    py.run_bound(code, Some(&globals), None)?;
+
+    let init_fn = globals.get_item("_init_registries")?.unwrap();
+    let config_dir_str = config_dir.map(|p| p.to_string_lossy().to_string());
+    let _ = init_fn.call1((hass, config_dir_str))?;
+
+    Ok(())
+}
+
+/// Create a TimeoutManager instance
+///
+/// This provides `hass.timeout` as a `TimeoutManager` instance with
+/// `async_timeout(seconds, zone_name, cool_down, cancel_message)` method.
+fn create_timeout_factory(py: Python<'_>) -> PyResult<PyObject> {
+    let code = r#"
+from homeassistant.util.timeout import TimeoutManager
+
+# Create a TimeoutManager instance
+# This needs to be created when an event loop is running
+def _create_timeout_manager():
+    """Create a TimeoutManager instance.
+
+    TimeoutManager needs a running event loop, so we wrap the creation
+    to be called lazily when actually used.
+    """
+    import asyncio
+    try:
+        asyncio.get_running_loop()
+        return TimeoutManager()
+    except RuntimeError:
+        # No running loop yet - create a dummy that will work later
+        # Return a class that delays TimeoutManager creation until first use
+        class LazyTimeoutManager:
+            _instance = None
+
+            def async_timeout(self, timeout, zone_name="global", cool_down=0, cancel_message=None):
+                if self._instance is None:
+                    self._instance = TimeoutManager()
+                return self._instance.async_timeout(timeout, zone_name, cool_down, cancel_message)
+
+            def async_freeze(self, zone_name="global"):
+                if self._instance is None:
+                    self._instance = TimeoutManager()
+                return self._instance.async_freeze(zone_name)
+
+            def freeze(self, zone_name="global"):
+                if self._instance is None:
+                    self._instance = TimeoutManager()
+                return self._instance.freeze(zone_name)
+
+        return LazyTimeoutManager()
+
+timeout_manager = _create_timeout_manager()
+"#;
+
+    let globals = PyDict::new_bound(py);
+    py.run_bound(code, Some(&globals), None)?;
+
+    let timeout_manager = globals.get_item("timeout_manager")?.unwrap();
+    Ok(timeout_manager.unbind())
 }
 
 /// Create a config_entries wrapper with platform setup methods
@@ -413,6 +646,31 @@ import logging
 import asyncio
 import importlib
 from datetime import datetime, timezone
+
+# Import UNDEFINED sentinel to filter out undefined values
+try:
+    from homeassistant.const import UNDEFINED
+    _UNDEFINED = UNDEFINED
+except ImportError:
+    # Fallback for older HA versions
+    try:
+        from homeassistant.helpers.typing import UNDEFINED
+        _UNDEFINED = UNDEFINED
+    except ImportError:
+        _UNDEFINED = None
+
+def _is_undefined(value):
+    """Check if a value is the UNDEFINED sentinel."""
+    if _UNDEFINED is None:
+        # Check by string representation as fallback
+        return 'UndefinedType' in str(type(value)) or str(value) == 'UndefinedType._singleton'
+    return value is _UNDEFINED
+
+def _get_value_or_none(value):
+    """Return the value if it's not UNDEFINED, otherwise return None."""
+    if _is_undefined(value):
+        return None
+    return value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -569,13 +827,178 @@ def _register_domain_services(hass, domain):
 
 def _generate_entity_id(domain, platform, suggested_id, existing_ids):
     """Generate a unique entity ID."""
-    base_id = f"{domain}.{suggested_id}" if suggested_id else f"{domain}.{platform}_entity"
+    import re
+
+    if suggested_id:
+        # Clean up the suggested_id - strip config entry ID prefix if present
+        # Config entry IDs look like: 64da23b80e7c7deaf579d5b3f5e9e201
+        # Pattern: hex string (32 chars) followed by underscore
+        clean_id = re.sub(r'^[a-f0-9]{32}_', '', suggested_id)
+
+        # If we stripped something, use the cleaner version
+        # Otherwise use the original
+        final_id = clean_id if clean_id != suggested_id else suggested_id
+
+        # Replace device-specific prefixes that are too long
+        # e.g., "my_integration_device_name_temperature" -> "temperature"
+        # Keep it reasonable for sun which has "solar_rising", "next_dawn", etc.
+        base_id = f"{domain}.{final_id}"
+    else:
+        base_id = f"{domain}.{platform}_entity"
+
     entity_id = base_id
     counter = 1
     while entity_id in existing_ids:
         entity_id = f"{base_id}_{counter}"
         counter += 1
     return entity_id
+
+async def _call_entity_lifecycle(hass, entity, entity_id):
+    """Call async_added_to_hass and update state after it completes."""
+    try:
+        if hasattr(entity, 'async_added_to_hass'):
+            await entity.async_added_to_hass()
+            _LOGGER.debug(f" async_added_to_hass completed for {entity_id}")
+
+            # After lifecycle method completes, re-read and update state
+            _update_entity_state_after_lifecycle(hass, entity, entity_id)
+    except Exception as e:
+        _LOGGER.debug(f" Error in entity lifecycle for {entity_id}: {e}")
+        import traceback
+        traceback.print_exc()
+
+def _update_entity_state_after_lifecycle(hass, entity, entity_id):
+    """Update entity state in state machine after lifecycle methods complete."""
+    domain = entity_id.split('.')[0]
+
+    # Get state - entities may have computed values now
+    state = None
+    if hasattr(entity, 'state'):
+        try:
+            state = entity.state
+            if state is not None:
+                state = str(state)
+        except Exception:
+            pass
+
+    if state is None:
+        if hasattr(entity, '_attr_native_value'):
+            val = entity._attr_native_value
+            state = str(val) if val is not None else 'unknown'
+        elif hasattr(entity, 'native_value'):
+            try:
+                val = entity.native_value
+                state = str(val) if val is not None else 'unknown'
+            except Exception:
+                state = 'unknown'
+        elif hasattr(entity, '_attr_is_on'):
+            state = 'on' if entity._attr_is_on else 'off'
+        elif hasattr(entity, 'is_on'):
+            try:
+                state = 'on' if entity.is_on else 'off'
+            except Exception:
+                state = 'unknown'
+        else:
+            state = 'unknown'
+
+    # Get attributes
+    attributes = {}
+
+    # Get extra_state_attributes if available (e.g., Sun entity has sunrise/sunset times)
+    if hasattr(entity, 'extra_state_attributes'):
+        try:
+            extra = entity.extra_state_attributes
+            if extra:
+                for k, v in extra.items():
+                    if v is not None and not _is_undefined(v):
+                        # Convert datetime to ISO string
+                        if hasattr(v, 'isoformat'):
+                            attributes[k] = v.isoformat()
+                        else:
+                            attributes[k] = v
+        except Exception as e:
+            _LOGGER.debug(f"Error getting extra_state_attributes: {e}")
+
+    # Get friendly name - follows HA's _friendly_name_internal() logic
+    # For has_entity_name=True: friendly_name = "{device_name} {entity_name}"
+    friendly_name = None
+
+    # Try to get original_name from entity registry
+    if hass and hasattr(hass, 'data'):
+        try:
+            from homeassistant.helpers import entity_registry as er
+            if er.DATA_REGISTRY in hass.data:
+                entity_reg = hass.data[er.DATA_REGISTRY]
+                if entity_id in entity_reg.entities:
+                    reg_entry = entity_reg.entities[entity_id]
+                    entity_name = reg_entry.original_name
+                    if entity_name:
+                        # For has_entity_name=True, combine device name + entity name
+                        if reg_entry.has_entity_name:
+                            device_info = getattr(entity, '_attr_device_info', None)
+                            if device_info is None:
+                                try:
+                                    device_info = getattr(entity, 'device_info', None)
+                                except:
+                                    pass
+                            if device_info:
+                                dev_name = None
+                                if hasattr(device_info, 'get'):
+                                    dev_name = _get_value_or_none(device_info.get('name'))
+                                elif hasattr(device_info, 'name'):
+                                    dev_name = _get_value_or_none(device_info.name)
+                                if dev_name:
+                                    friendly_name = f"{dev_name} {entity_name}"
+                                else:
+                                    friendly_name = entity_name
+                        else:
+                            friendly_name = entity_name
+        except Exception as e:
+            pass  # Fall back to entity attribute
+
+    # Fall back to entity's name attribute
+    if not friendly_name:
+        name = _get_value_or_none(getattr(entity, '_attr_name', None))
+        if name is None:
+            try:
+                name = _get_value_or_none(getattr(entity, 'name', None))
+            except Exception:
+                pass
+        if name and not _is_undefined(name):
+            friendly_name = str(name)
+
+    if friendly_name:
+        attributes['friendly_name'] = friendly_name
+
+    # Get device class
+    device_class = _get_value_or_none(getattr(entity, '_attr_device_class', None))
+    if device_class is None:
+        try:
+            device_class = _get_value_or_none(getattr(entity, 'device_class', None))
+        except Exception:
+            pass
+    if device_class and not _is_undefined(device_class):
+        if hasattr(device_class, 'value'):
+            device_class = device_class.value
+        attributes['device_class'] = str(device_class)
+
+    # Get unit of measurement
+    unit = _get_value_or_none(getattr(entity, '_attr_native_unit_of_measurement', None))
+    if unit is None:
+        try:
+            unit = _get_value_or_none(getattr(entity, 'native_unit_of_measurement', None))
+        except Exception:
+            pass
+    if unit and not _is_undefined(unit):
+        attributes['unit_of_measurement'] = str(unit)
+
+    # Update state in state machine
+    _LOGGER.debug(f" Updating state after lifecycle: {entity_id} = {state}")
+    if hasattr(hass, 'states') and hasattr(hass.states, 'set'):
+        try:
+            hass.states.set(entity_id, state, attributes)
+        except Exception as e:
+            _LOGGER.debug(f" Error setting state: {e}")
 
 def _create_add_entities_callback(hass, entry, platform_name):
     """Create the async_add_entities callback for a platform.
@@ -587,6 +1010,9 @@ def _create_add_entities_callback(hass, entry, platform_name):
 
     # Import PlatformData to set on entities before accessing properties
     from homeassistant.helpers.entity_platform import PlatformData
+
+    # List to track entities that need lifecycle calls
+    _pending_lifecycle = []
 
     def add_entities(entities, update_before_add=False, config_subentry_id=None):
         """Add entities to Home Assistant."""
@@ -641,14 +1067,36 @@ def _create_add_entities_callback(hass, entry, platform_name):
                     except Exception as e:
                         _LOGGER.debug(f"Could not set platform_data: {e}")
 
-                # Get entity unique_id and generate entity_id
+                # Get entity unique_id and try to look up existing entity_id from registry
                 unique_id = getattr(entity, '_attr_unique_id', None) or getattr(entity, 'unique_id', None)
-                suggested_id = unique_id or getattr(entity, '_attr_name', None) or getattr(entity, 'name', 'entity')
-                # Clean the suggested_id
-                if suggested_id:
-                    suggested_id = str(suggested_id).lower().replace(' ', '_').replace('-', '_')
 
-                entity_id = _generate_entity_id(domain, platform_name, suggested_id, existing_ids)
+                # Get the integration domain from the config entry
+                integration_domain = entry.get("domain") if isinstance(entry, dict) else getattr(entry, "domain", None)
+
+                # First, try to find existing entity_id from loaded entity registry
+                entity_id = None
+                if unique_id and hass and hasattr(hass, 'data'):
+                    try:
+                        from homeassistant.helpers import entity_registry as er
+                        if er.DATA_REGISTRY in hass.data:
+                            entity_reg = hass.data[er.DATA_REGISTRY]
+                            # Look up by unique_id and platform (platform in registry is integration domain, not entity type)
+                            for reg_entry in entity_reg.entities.values():
+                                if reg_entry.unique_id == unique_id and reg_entry.platform == integration_domain:
+                                    entity_id = reg_entry.entity_id
+                                    _LOGGER.debug(f"Found existing entity_id from registry: {entity_id} (unique_id={unique_id})")
+                                    break
+                    except Exception as e:
+                        _LOGGER.debug(f"Could not look up entity in registry: {e}")
+
+                # If not found in registry, generate a new entity_id
+                if entity_id is None:
+                    suggested_id = unique_id or getattr(entity, '_attr_name', None) or getattr(entity, 'name', 'entity')
+                    # Clean the suggested_id
+                    if suggested_id:
+                        suggested_id = str(suggested_id).lower().replace(' ', '_').replace('-', '_')
+                    entity_id = _generate_entity_id(domain, platform_name, suggested_id, existing_ids)
+
                 existing_ids.add(entity_id)
 
                 # Store the entity_id on the entity for future reference
@@ -751,10 +1199,10 @@ def _create_add_entities_callback(hass, entry, platform_name):
                 if _registries is not None:
                     try:
                         config_entry_id = entry.get("entry_id") if isinstance(entry, dict) else getattr(entry, "entry_id", None)
-                        entity_name = getattr(entity, '_attr_name', None)
+                        entity_name = _get_value_or_none(getattr(entity, '_attr_name', None))
                         if entity_name is None:
                             try:
-                                entity_name = getattr(entity, 'name', None)
+                                entity_name = _get_value_or_none(getattr(entity, 'name', None))
                             except:
                                 pass
                         _registries.register_entity(
@@ -763,7 +1211,7 @@ def _create_add_entities_callback(hass, entry, platform_name):
                             unique_id=unique_id,
                             config_entry_id=config_entry_id,
                             device_id=device_id,
-                            name=str(entity_name) if entity_name else None,
+                            name=str(entity_name) if entity_name and not _is_undefined(entity_name) else None,
                         )
                     except Exception as e:
                         _LOGGER.error(f"Failed to register entity in Rust: {e}")
@@ -816,56 +1264,96 @@ def _create_add_entities_callback(hass, entry, platform_name):
                 # Build attributes dict
                 attributes = {}
 
-                # Get friendly name - try _attr_name first, then property
-                name = getattr(entity, '_attr_name', None)
-                if name is None:
+                # Get friendly name - follows HA's _friendly_name_internal() logic
+                # For has_entity_name=True: friendly_name = "{device_name} {entity_name}"
+                # For has_entity_name=False: friendly_name = entity.name
+                friendly_name = None
+
+                # Try to get original_name from the entity registry
+                if hass and hasattr(hass, 'data'):
                     try:
-                        name = getattr(entity, 'name', None)
-                    except (ValueError, AttributeError):
-                        pass  # name property might require platform_data
-                if name:
-                    attributes['friendly_name'] = str(name)
-                elif hasattr(entity, '_attr_device_info'):
-                    device_info = entity._attr_device_info
-                    if device_info and hasattr(device_info, 'get'):
-                        attributes['friendly_name'] = device_info.get('name', suggested_id)
-                    elif hasattr(device_info, 'name'):
-                        attributes['friendly_name'] = device_info.name
+                        from homeassistant.helpers import entity_registry as er
+                        if er.DATA_REGISTRY in hass.data:
+                            entity_reg = hass.data[er.DATA_REGISTRY]
+                            if entity_id in entity_reg.entities:
+                                reg_entry = entity_reg.entities[entity_id]
+                                entity_name = reg_entry.original_name
+                                if entity_name:
+                                    # For has_entity_name=True, combine device name + entity name
+                                    # This matches HA's _friendly_name_internal() behavior
+                                    if reg_entry.has_entity_name and device_info:
+                                        dev_name = None
+                                        if hasattr(device_info, 'get'):
+                                            dev_name = _get_value_or_none(device_info.get('name'))
+                                        elif hasattr(device_info, 'name'):
+                                            dev_name = _get_value_or_none(device_info.name)
+                                        if dev_name:
+                                            friendly_name = f"{dev_name} {entity_name}"
+                                        else:
+                                            friendly_name = entity_name
+                                    else:
+                                        friendly_name = entity_name
+                    except Exception as e:
+                        _LOGGER.debug(f"Could not get friendly_name from registry: {e}")
+
+                # Fall back to entity's name attribute
+                if not friendly_name:
+                    name = _get_value_or_none(getattr(entity, '_attr_name', None))
+                    if name is None:
+                        try:
+                            name = _get_value_or_none(getattr(entity, 'name', None))
+                        except (ValueError, AttributeError):
+                            pass  # name property might require platform_data
+                    if name and not _is_undefined(name):
+                        friendly_name = str(name)
+                    elif hasattr(entity, '_attr_device_info'):
+                        device_info_attr = entity._attr_device_info
+                        if device_info_attr and hasattr(device_info_attr, 'get'):
+                            dev_name = _get_value_or_none(device_info_attr.get('name'))
+                            if dev_name:
+                                friendly_name = str(dev_name)
+                        elif hasattr(device_info_attr, 'name'):
+                            dev_name = _get_value_or_none(device_info_attr.name)
+                            if dev_name:
+                                friendly_name = str(dev_name)
+
+                if friendly_name:
+                    attributes['friendly_name'] = friendly_name
 
                 # Get device class - try _attr_ first, then property
-                device_class = getattr(entity, '_attr_device_class', None)
+                device_class = _get_value_or_none(getattr(entity, '_attr_device_class', None))
                 if device_class is None:
                     try:
-                        device_class = getattr(entity, 'device_class', None)
+                        device_class = _get_value_or_none(getattr(entity, 'device_class', None))
                     except (ValueError, AttributeError):
                         pass
-                if device_class:
+                if device_class and not _is_undefined(device_class):
                     # Handle enums
                     if hasattr(device_class, 'value'):
                         device_class = device_class.value
                     attributes['device_class'] = str(device_class)
 
                 # Get unit of measurement - try _attr_ attributes first, then properties
-                unit = getattr(entity, '_attr_native_unit_of_measurement', None) or \
-                       getattr(entity, '_attr_unit_of_measurement', None)
+                unit = _get_value_or_none(getattr(entity, '_attr_native_unit_of_measurement', None)) or \
+                       _get_value_or_none(getattr(entity, '_attr_unit_of_measurement', None))
                 if unit is None:
                     # Try properties (might raise ValueError if platform_data not set)
                     try:
-                        unit = getattr(entity, 'native_unit_of_measurement', None) or \
-                               getattr(entity, 'unit_of_measurement', None)
+                        unit = _get_value_or_none(getattr(entity, 'native_unit_of_measurement', None)) or \
+                               _get_value_or_none(getattr(entity, 'unit_of_measurement', None))
                     except (ValueError, AttributeError):
                         pass  # Properties require platform_data, skip if not available
-                if unit:
+                if unit and not _is_undefined(unit):
                     attributes['unit_of_measurement'] = str(unit)
 
                 # Get icon - try _attr_ first, then property
-                icon = getattr(entity, '_attr_icon', None)
+                icon = _get_value_or_none(getattr(entity, '_attr_icon', None))
                 if icon is None:
                     try:
-                        icon = getattr(entity, 'icon', None)
+                        icon = _get_value_or_none(getattr(entity, 'icon', None))
                     except (ValueError, AttributeError):
                         pass
-                if icon:
+                if icon and not _is_undefined(icon):
                     attributes['icon'] = str(icon)
 
                 # Light-specific attributes
@@ -913,21 +1401,31 @@ def _create_add_entities_callback(hass, entry, platform_name):
                     attributes['supported_features'] = int(features)
 
                 # Set the state in hass.states
-                _LOGGER.info(f"Adding entity: {entity_id} = {state} (attrs: {list(attributes.keys())})")
+                # Use print for debugging since Python logging might not be configured
+                _LOGGER.debug(f" Adding entity: {entity_id} = {state} (attrs: {list(attributes.keys())})")
 
-                if hasattr(hass, 'states') and hasattr(hass.states, 'async_set'):
-                    # Use async_set (need to schedule it since we're in sync context)
-                    async def _set_state():
-                        await hass.states.async_set(entity_id, state, attributes)
-                    asyncio.create_task(_set_state())
-                elif hasattr(hass, 'states') and hasattr(hass.states, 'set'):
-                    # Use sync set
-                    hass.states.set(entity_id, state, attributes)
+                # Use synchronous set method - our StatesWrapper supports this
+                if hasattr(hass, 'states') and hasattr(hass.states, 'set'):
+                    try:
+                        hass.states.set(entity_id, state, attributes)
+                        _LOGGER.debug(f" Successfully set state for {entity_id}")
+                    except Exception as e:
+                        _LOGGER.debug(f" Error setting state for {entity_id}: {e}")
                 else:
-                    _LOGGER.warning(f"Cannot set state for {entity_id}: hass.states not available")
+                    _LOGGER.debug(f" Cannot set state for {entity_id}: hass.states.set not available")
+
+                # Track entity for lifecycle call
+                _pending_lifecycle.append((entity, entity_id))
 
             except Exception as e:
                 _LOGGER.error(f"Error adding entity: {e}", exc_info=True)
+
+        # Schedule lifecycle calls for all entities
+        # We do this after all entities are added to ensure they can find each other if needed
+        for entity, entity_id in _pending_lifecycle:
+            asyncio.create_task(_call_entity_lifecycle(hass, entity, entity_id))
+
+        _pending_lifecycle.clear()
 
     return add_entities
 
@@ -1138,7 +1636,7 @@ mod tests {
             let services = Arc::new(ServiceRegistry::new());
             let registries = Arc::new(Registries::new(temp_dir.path()));
 
-            let result = create_hass_wrapper(py, bus, states, services, registries);
+            let result = create_hass_wrapper(py, bus, states, services, registries, None);
             assert!(result.is_ok());
 
             let hass = result.unwrap();

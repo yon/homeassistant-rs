@@ -2,13 +2,10 @@
 #
 # Run `make help` to see all available targets.
 
-CARGO := cargo
-CLIPPY := cargo clippy
-RUSTFMT := rustfmt
-
 # Python virtual environment
-# Prefer Homebrew Python 3.13, fall back to python3
-PYTHON_BIN := $(shell command -v /opt/homebrew/opt/python@3.13/bin/python3.13 2>/dev/null || command -v python3)
+# PYTHON_BIN: System Python used to create the venv
+# PYTHON: Python inside the venv (used after venv exists)
+PYTHON_BIN := $(shell command -v python3.13 2>/dev/null || command -v python3)
 VENV := .venv
 VENV_BIN := $(VENV)/bin
 PYTHON := $(VENV_BIN)/python
@@ -20,7 +17,7 @@ CONFIG_DIR ?=
 
 # Common environment for run targets
 SITE_PACKAGES = $(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])")
-RUN_ENV = PYTHONPATH=$(CURDIR)/crates/ha-py-bridge/python:$(SITE_PACKAGES) \
+RUN_ENV = PYTHONPATH=$(CURDIR)/crates/ha-py-bridge/python:$(CURDIR)/vendor/ha-core:$(SITE_PACKAGES) \
 	HA_FRONTEND_PATH=$(SITE_PACKAGES)/hass_frontend \
 	PYO3_PYTHON=$(CURDIR)/$(PYTHON) \
 	$(if $(CONFIG_DIR),HA_CONFIG_DIR=$(CONFIG_DIR))
@@ -32,11 +29,11 @@ RUN_ENV = PYTHONPATH=$(CURDIR)/crates/ha-py-bridge/python:$(SITE_PACKAGES) \
 
 .PHONY: build
 build: ## Build all crates in debug mode
-	$(CARGO) build --workspace
+	cargo build --workspace
 
 .PHONY: build-release
 build-release: ## Build all crates in release mode
-	$(CARGO) build --workspace --release
+	cargo build --workspace --release
 
 .PHONY: build-wheel
 build-wheel: $(VENV_STAMP) ## Build Python wheel (Mode 1: extension)
@@ -50,19 +47,19 @@ build-wheel-debug: $(VENV_STAMP) ## Build Python wheel in debug mode
 
 .PHONY: check
 check: ## Check all crates for errors without building
-	$(CARGO) check --workspace
+	cargo check --workspace
 
 .PHONY: clippy
 clippy: ## Run clippy linter on all crates
-	$(CLIPPY) --workspace --all-targets -- -D warnings
+	cargo clippy --workspace --all-targets -- -D warnings
 
 .PHONY: fmt
 fmt: ## Format all code with rustfmt
-	$(CARGO) fmt --all
+	cargo fmt --all
 
 .PHONY: fmt-check
 fmt-check: ## Check if code is formatted correctly
-	$(CARGO) fmt --all -- --check
+	cargo fmt --all -- --check
 
 .PHONY: lint
 lint: fmt-check clippy lint-makefile ## Run all linters
@@ -79,7 +76,7 @@ lint-makefile: ## Check Makefile targets are alphabetized within sections
 
 .PHONY: clean
 clean: ## Remove build artifacts
-	$(CARGO) clean
+	cargo clean
 
 .PHONY: clean-all
 clean-all: clean ## Remove build artifacts and Python venv
@@ -94,15 +91,15 @@ install-dev: $(VENV_STAMP) ## Install Python extension in development mode
 
 .PHONY: run
 run: $(VENV_STAMP) ## Run the Home Assistant server (strict mode - no native fallback)
-	$(RUN_ENV) $(CARGO) run --bin homeassistant --features python
+	$(RUN_ENV) cargo run --bin homeassistant --features python
 
 .PHONY: run-fallback
 run-fallback: $(VENV_STAMP) ## Run with native HA fallback enabled (development only)
-	ALLOW_HA_NATIVE_FALLBACK=1 $(RUN_ENV) $(CARGO) run --bin homeassistant --features python
+	ALLOW_HA_NATIVE_FALLBACK=1 $(RUN_ENV) cargo run --bin homeassistant --features python
 
 .PHONY: run-release
 run-release: $(VENV_STAMP) ## Run the Home Assistant server in release mode (strict)
-	$(RUN_ENV) $(CARGO) run --bin homeassistant --features python --release
+	$(RUN_ENV) cargo run --bin homeassistant --features python --release
 
 .PHONY: setup
 setup: $(VENV_STAMP) ## Setup development environment (git hooks, venv)
@@ -111,17 +108,17 @@ setup: $(VENV_STAMP) ## Setup development environment (git hooks, venv)
 
 .PHONY: watch
 watch: ## Watch for changes and rebuild (requires cargo-watch)
-	$(CARGO) watch -x 'build --workspace'
+	cargo watch -x 'build --workspace'
 
 ##@ Documentation
 
 .PHONY: doc
 doc: ## Generate documentation for all crates
-	$(CARGO) doc --workspace --no-deps
+	cargo doc --workspace --no-deps
 
 .PHONY: doc-open
 doc-open: ## Generate and open documentation in browser
-	$(CARGO) doc --workspace --no-deps --open
+	cargo doc --workspace --no-deps --open
 
 ##@ Help
 
@@ -181,27 +178,31 @@ test-python: install-dev ## Run all Python tests (shim + PyO3 extension)
 
 .PHONY: test-rust
 test-rust: ## Run all Rust tests
-	$(CARGO) test --workspace --exclude ha-py-bridge
-	$(CARGO) test -p ha-automation --test compat_test
-	$(CARGO) test -p ha-script --test compat_test
+	cargo test --workspace --exclude ha-py-bridge
+	cargo test -p ha-automation --test compat_test
+	cargo test -p ha-script --test compat_test
+
+.PHONY: test-rust-server
+test-rust-server: build $(VENV_STAMP) ## Run WebSocket tests against Rust server (starts server automatically)
+	$(VENV_BIN)/pytest tests/rust_server/ -v
 
 ##@ Utilities
 
 .PHONY: audit
 audit: ## Run security audit (requires cargo-audit)
-	$(CARGO) audit
+	cargo audit
 
 .PHONY: deps
 deps: ## Check for outdated dependencies (requires cargo-outdated)
-	$(CARGO) outdated --workspace
+	cargo outdated --workspace
 
 .PHONY: tree
 tree: ## Display dependency tree
-	$(CARGO) tree --workspace
+	cargo tree --workspace
 
 .PHONY: update
 update: ## Update dependencies
-	$(CARGO) update
+	cargo update
 
 # Internal targets (not shown in help)
 

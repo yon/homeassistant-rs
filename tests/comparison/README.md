@@ -86,6 +86,77 @@ When a new HA version is released:
 3. Run comparison tests to check for regressions
 4. Fix any API incompatibilities
 
+## Keeping Up-to-Date Workflow
+
+The comparison tests are the **source of truth** for API compatibility. They compare
+live responses from Python HA against our Rust implementation, eliminating the need
+for manually maintained schemas.
+
+### When HA Updates Their API
+
+| Scenario | What Happens | Action Required |
+|----------|--------------|-----------------|
+| New HA version released | Update `ha-versions.toml`, run `make test-compare` | Fix any failures |
+| Response format changes | Tests fail with `VALUE` or `STRUCTURE` diffs | Update Rust implementation |
+| New fields added | Tests show `MISSING` (field in Python, not in Rust) | Add field to Rust response |
+| Fields removed | Tests show `EXTRA` (field in Rust, not in Python) | Remove field from Rust |
+| Field types change | Tests show `VALUE` differences | Update Rust field types |
+
+### Comparison Output
+
+```
+--- Registry WebSocket API ---
+✅ ws:device_registry_list - PASS
+✅ ws:entity_registry_list - PASS
+❌ ws:area_registry_list - FAIL (2 differences)
+   [  MISSING] result[0].new_field : Python="value" Rust="(missing)"
+   [    VALUE] result[0].old_field : Python="new_format" Rust="old_format"
+```
+
+### CI Integration
+
+For automated compatibility checking, add to `.github/workflows/`:
+
+```yaml
+name: HA Compatibility Check
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Nightly
+  push:
+    branches: [main]
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start Python HA
+        run: make ha-start
+      - name: Build Rust HA
+        run: cargo build -p ha-server
+      - name: Start Rust HA
+        run: HA_PORT=18124 ./target/debug/homeassistant &
+      - name: Run comparison tests
+        run: make test-compare
+      - name: Stop servers
+        run: make ha-stop
+```
+
+### Running Specific Comparison Tests
+
+```bash
+# All comparisons
+make test-compare
+
+# Just registry endpoints (device, entity, area, floor, label, config_entries)
+PYTHON_HA_URL=http://localhost:18123 RUST_HA_URL=http://localhost:18124 \
+  cargo test -p ha-test-comparison test_registry_endpoints -- --ignored --nocapture
+
+# Just basic endpoints
+PYTHON_HA_URL=http://localhost:18123 RUST_HA_URL=http://localhost:18124 \
+  cargo test -p ha-test-comparison test_basic_endpoints -- --ignored --nocapture
+```
+
 ## Makefile Targets
 
 | Target | Description |

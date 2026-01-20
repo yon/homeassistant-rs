@@ -7,8 +7,22 @@ use super::errors::{PyBridgeError, PyBridgeResult};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::collections::{HashMap, HashSet};
-use std::sync::RwLock;
+use std::sync::{LazyLock, RwLock};
 use tracing::{debug, info, warn};
+
+/// Components implemented in Rust - NEVER load from Python
+/// These would conflict with or duplicate Rust implementations.
+static RUST_BLOCKLIST: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+    HashSet::from([
+        "automation",
+        "homeassistant",
+        "input_boolean",
+        "input_number",
+        "persistent_notification",
+        "script",
+        "system_log",
+    ])
+});
 
 /// Tracks which components are implemented in Rust vs Python
 pub struct ComponentRegistry {
@@ -68,19 +82,76 @@ pub struct IntegrationLoader {
     loaded: RwLock<HashMap<String, PyObject>>,
     /// Component registry
     components: ComponentRegistry,
+    /// Whitelist of allowed Python integrations (empty = none allowed)
+    allowlist: RwLock<HashSet<String>>,
 }
 
 impl IntegrationLoader {
-    /// Create a new integration loader
+    /// Create a new integration loader with an empty allowlist
     pub fn new() -> Self {
         Self {
             loaded: RwLock::new(HashMap::new()),
             components: ComponentRegistry::new(),
+            allowlist: RwLock::new(HashSet::new()),
         }
+    }
+
+    /// Set the allowlist of allowed Python integrations
+    ///
+    /// Only integrations in this list (and not in RUST_BLOCKLIST) can be loaded.
+    pub fn set_allowlist(&self, domains: Vec<String>) {
+        let filtered: Vec<String> = domains
+            .into_iter()
+            .filter(|d| {
+                if RUST_BLOCKLIST.contains(d.as_str()) {
+                    warn!("Cannot allowlist '{}' - implemented in Rust, ignoring", d);
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect();
+
+        info!("Setting Python allowlist: {:?}", filtered);
+        let mut allowlist = self.allowlist.write().unwrap();
+        *allowlist = filtered.into_iter().collect();
+    }
+
+    /// Check if an integration is allowed to load via Python
+    ///
+    /// Returns false if:
+    /// - The integration is in the RUST_BLOCKLIST (implemented in Rust)
+    /// - The allowlist is empty (no Python integrations allowed)
+    /// - The integration is not in the allowlist
+    pub fn is_allowed(&self, domain: &str) -> bool {
+        // Always block Rust-implemented components
+        if RUST_BLOCKLIST.contains(domain) {
+            debug!("Integration '{}' blocked - implemented in Rust", domain);
+            return false;
+        }
+
+        // Check allowlist (empty = none allowed, must be explicitly listed)
+        let allowlist = self.allowlist.read().unwrap();
+        let allowed = !allowlist.is_empty() && allowlist.contains(domain);
+        if !allowed {
+            debug!("Integration '{}' blocked - not in allowlist", domain);
+        }
+        allowed
+    }
+
+    /// Get the current allowlist
+    pub fn get_allowlist(&self) -> Vec<String> {
+        let allowlist = self.allowlist.read().unwrap();
+        allowlist.iter().cloned().collect()
     }
 
     /// Load an integration by domain
     pub fn load(&self, domain: &str) -> PyBridgeResult<()> {
+        // Check if integration is allowed
+        if !self.is_allowed(domain) {
+            return Err(PyBridgeError::IntegrationNotAllowed(domain.to_string()));
+        }
+
         // Check if already loaded
         {
             let loaded = self.loaded.read().unwrap();
@@ -349,5 +420,90 @@ mod tests {
         let loader = IntegrationLoader::new();
         assert!(!loader.is_loaded("demo"));
         assert!(loader.loaded_domains().is_empty());
+    }
+
+    #[test]
+    fn test_rust_blocklist_contains_expected_components() {
+        // Verify that Rust-implemented components are in the blocklist
+        assert!(RUST_BLOCKLIST.contains("automation"));
+        assert!(RUST_BLOCKLIST.contains("homeassistant"));
+        assert!(RUST_BLOCKLIST.contains("input_boolean"));
+        assert!(RUST_BLOCKLIST.contains("input_number"));
+        assert!(RUST_BLOCKLIST.contains("persistent_notification"));
+        assert!(RUST_BLOCKLIST.contains("script"));
+        assert!(RUST_BLOCKLIST.contains("system_log"));
+
+        // Verify Python-only components are NOT in the blocklist
+        assert!(!RUST_BLOCKLIST.contains("hue"));
+        assert!(!RUST_BLOCKLIST.contains("sun"));
+        assert!(!RUST_BLOCKLIST.contains("homekit_controller"));
+    }
+
+    #[test]
+    fn test_is_allowed_empty_allowlist() {
+        let loader = IntegrationLoader::new();
+        // With empty allowlist, nothing should be allowed
+        assert!(!loader.is_allowed("sun"));
+        assert!(!loader.is_allowed("hue"));
+        assert!(!loader.is_allowed("homekit_controller"));
+    }
+
+    #[test]
+    fn test_is_allowed_rust_blocked_always() {
+        let loader = IntegrationLoader::new();
+        // Even with allowlist, Rust components should be blocked
+        loader.set_allowlist(vec![
+            "automation".to_string(),
+            "script".to_string(),
+            "system_log".to_string(),
+        ]);
+        assert!(!loader.is_allowed("automation"));
+        assert!(!loader.is_allowed("script"));
+        assert!(!loader.is_allowed("system_log"));
+    }
+
+    #[test]
+    fn test_is_allowed_with_allowlist() {
+        let loader = IntegrationLoader::new();
+        loader.set_allowlist(vec!["sun".to_string(), "hue".to_string()]);
+
+        // Allowed integrations should pass
+        assert!(loader.is_allowed("sun"));
+        assert!(loader.is_allowed("hue"));
+
+        // Non-allowed integrations should be blocked
+        assert!(!loader.is_allowed("homekit_controller"));
+        assert!(!loader.is_allowed("apple_tv"));
+    }
+
+    #[test]
+    fn test_get_allowlist() {
+        let loader = IntegrationLoader::new();
+        assert!(loader.get_allowlist().is_empty());
+
+        loader.set_allowlist(vec!["sun".to_string(), "hue".to_string()]);
+        let allowlist = loader.get_allowlist();
+        assert_eq!(allowlist.len(), 2);
+        assert!(allowlist.contains(&"sun".to_string()));
+        assert!(allowlist.contains(&"hue".to_string()));
+    }
+
+    #[test]
+    fn test_set_allowlist_filters_rust_components() {
+        let loader = IntegrationLoader::new();
+        // Trying to allowlist Rust components should be filtered out
+        loader.set_allowlist(vec![
+            "sun".to_string(),
+            "automation".to_string(), // Should be filtered
+            "hue".to_string(),
+            "script".to_string(), // Should be filtered
+        ]);
+
+        let allowlist = loader.get_allowlist();
+        assert_eq!(allowlist.len(), 2);
+        assert!(allowlist.contains(&"sun".to_string()));
+        assert!(allowlist.contains(&"hue".to_string()));
+        assert!(!allowlist.contains(&"automation".to_string()));
+        assert!(!allowlist.contains(&"script".to_string()));
     }
 }
