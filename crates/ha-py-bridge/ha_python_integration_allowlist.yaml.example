@@ -15,10 +15,11 @@
 # - Start with simple integrations that have few dependencies
 
 integrations:
-  # Simple integrations (good for initial testing):
-  # - sun              # No external deps
+  # Tested integrations (verified working):
+  - sun              # No external deps
+  - uptime           # No external deps
 
-  # Common integrations:
+  # Common integrations (untested):
   # - homekit_controller
   # - apple_tv
   # - esphome
