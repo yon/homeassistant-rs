@@ -243,6 +243,10 @@ pub enum IncomingMessage {
         id: u64,
         entity_id: String,
     },
+    #[serde(rename = "system_log/list")]
+    SystemLogList {
+        id: u64,
+    },
     SubscribeEntities {
         id: u64,
         #[serde(default)]
@@ -880,6 +884,10 @@ async fn handle_message(
             });
             tx.send(result).await.map_err(|e| e.to_string())?;
             Ok(())
+        }
+        IncomingMessage::SystemLogList { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_system_log_list(conn, id, tx).await
         }
         IncomingMessage::UnsubscribeEvents { id, subscription } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
@@ -1584,6 +1592,23 @@ async fn handle_script_config(
             tx.send(result).await.map_err(|e| e.to_string())
         }
     }
+}
+
+/// Handle system_log/list command
+async fn handle_system_log_list(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    let entries = conn.state.system_log.list();
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::json!(entries)),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
 }
 
 /// Handle render_template command

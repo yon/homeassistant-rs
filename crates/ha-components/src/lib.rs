@@ -4,8 +4,10 @@
 //! (integrations) that don't require Python.
 
 mod input_helpers;
+pub mod system_log;
 
 pub use input_helpers::{
     load_input_booleans, load_input_numbers, register_input_boolean_services,
     register_input_number_services, InputBooleanConfig, InputNumberConfig,
 };
+pub use system_log::{register_services as register_system_log_services, SystemLog};
