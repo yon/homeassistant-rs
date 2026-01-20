@@ -16,6 +16,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use ha_components::SystemLog;
 use ha_config::CoreConfig;
 use ha_config_entries::ConfigEntries;
 use ha_core::{Context, EntityId, Event};
@@ -45,6 +46,8 @@ pub struct AppState {
     pub registries: Arc<Registries>,
     /// Persistent notification manager
     pub notifications: Arc<persistent_notification::PersistentNotificationManager>,
+    /// System log manager
+    pub system_log: Arc<SystemLog>,
     /// Cached services response (loaded from JSON for comparison testing)
     pub services_cache: Option<Arc<serde_json::Value>>,
     /// Cached events response (loaded from JSON for comparison testing)
@@ -558,6 +561,7 @@ mod tests {
         let storage = Arc::new(Storage::new(&temp_dir));
         let config_entries = Arc::new(RwLock::new(ConfigEntries::new(storage)));
         let notifications = persistent_notification::create_manager();
+        let system_log = Arc::new(SystemLog::with_defaults());
         AppState {
             event_bus,
             state_machine,
@@ -567,6 +571,7 @@ mod tests {
             config_entries,
             registries,
             notifications,
+            system_log,
             services_cache: None,
             events_cache: None,
             frontend_config: None,

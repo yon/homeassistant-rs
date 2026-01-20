@@ -7,6 +7,7 @@ mod automation_engine;
 use anyhow::Result;
 use ha_api::{auth::AuthState, frontend::FrontendConfig, persistent_notification, AppState};
 use ha_automation::AutomationConfig;
+use ha_components::{register_system_log_services, SystemLog};
 use ha_config::CoreConfig;
 use ha_config_entries::ConfigEntries;
 #[cfg(feature = "python")]
@@ -1690,6 +1691,12 @@ async fn main() -> Result<()> {
     // Register persistent_notification services
     register_persistent_notification_services(&hass.services, notifications.clone());
 
+    // Create system log manager
+    let system_log = Arc::new(SystemLog::with_defaults());
+
+    // Register system_log services
+    register_system_log_services(&hass.services, system_log.clone());
+
     // Create API state with auth (mark as onboarded for dev mode)
     let api_state = AppState {
         event_bus: hass.bus.clone(),
@@ -1700,6 +1707,7 @@ async fn main() -> Result<()> {
         config_entries: hass.config_entries.clone(),
         registries: hass.registries.clone(),
         notifications,
+        system_log,
         services_cache,
         events_cache,
         frontend_config,

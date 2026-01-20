@@ -7,6 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+ha-components = { workspace = true }
 ha-config = { workspace = true }
 ha-config-entries = { workspace = true }
 ha-core = { workspace = true }

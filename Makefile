@@ -15,6 +15,16 @@ PYTHON := $(VENV_BIN)/python
 MATURIN := $(VENV_BIN)/maturin
 VENV_STAMP := $(VENV)/.stamp
 
+# Configuration directory (optional, uses server default if not set)
+CONFIG_DIR ?=
+
+# Common environment for run targets
+SITE_PACKAGES = $(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])")
+RUN_ENV = PYTHONPATH=$(CURDIR)/crates/ha-py-bridge/python:$(SITE_PACKAGES) \
+	HA_FRONTEND_PATH=$(SITE_PACKAGES)/hass_frontend \
+	PYO3_PYTHON=$(CURDIR)/$(PYTHON) \
+	$(if $(CONFIG_DIR),HA_CONFIG_DIR=$(CONFIG_DIR))
+
 # Default target
 .DEFAULT_GOAL := help
 
@@ -84,25 +94,15 @@ install-dev: $(VENV_STAMP) ## Install Python extension in development mode
 
 .PHONY: run
 run: $(VENV_STAMP) ## Run the Home Assistant server (strict mode - no native fallback)
-	PYTHONPATH=$(CURDIR)/crates/ha-py-bridge/python:$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])") \
-	HA_FRONTEND_PATH=$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])")/hass_frontend \
-	PYO3_PYTHON=$(CURDIR)/$(PYTHON) \
-	$(CARGO) run --bin homeassistant --features python
+	$(RUN_ENV) $(CARGO) run --bin homeassistant --features python
 
 .PHONY: run-fallback
 run-fallback: $(VENV_STAMP) ## Run with native HA fallback enabled (development only)
-	ALLOW_HA_NATIVE_FALLBACK=1 \
-	PYTHONPATH=$(CURDIR)/crates/ha-py-bridge/python:$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])") \
-	HA_FRONTEND_PATH=$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])")/hass_frontend \
-	PYO3_PYTHON=$(CURDIR)/$(PYTHON) \
-	$(CARGO) run --bin homeassistant --features python
+	ALLOW_HA_NATIVE_FALLBACK=1 $(RUN_ENV) $(CARGO) run --bin homeassistant --features python
 
 .PHONY: run-release
 run-release: $(VENV_STAMP) ## Run the Home Assistant server in release mode (strict)
-	PYTHONPATH=$(CURDIR)/crates/ha-py-bridge/python:$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])") \
-	HA_FRONTEND_PATH=$(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])")/hass_frontend \
-	PYO3_PYTHON=$(CURDIR)/$(PYTHON) \
-	$(CARGO) run --bin homeassistant --features python --release
+	$(RUN_ENV) $(CARGO) run --bin homeassistant --features python --release
 
 .PHONY: setup
 setup: $(VENV_STAMP) ## Setup development environment (git hooks, venv)
@@ -137,8 +137,13 @@ setup-venv: $(VENV_STAMP) ## Create Python virtual environment with tools
 ##@ HA Test Environment
 # Setup and manage HA test instances
 
+.PHONY: ha-install-deps
+ha-install-deps: $(VENV_STAMP) ## Install Home Assistant Python dependencies
+	$(VENV_BIN)/pip install -c vendor/ha-core/homeassistant/package_constraints.txt \
+		-r vendor/ha-core/requirements_all.txt
+
 .PHONY: ha-setup
-ha-setup: $(VENV_STAMP) ## Setup HA compatibility test environment
+ha-setup: ha-install-deps ## Setup HA compatibility test environment
 	./tests/ha_compat/setup.sh
 
 .PHONY: ha-start

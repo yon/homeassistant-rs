@@ -7,6 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+chrono = { workspace = true }
 ha-core = { workspace = true }
 ha-service-registry = { workspace = true }
 ha-state-machine = { workspace = true }

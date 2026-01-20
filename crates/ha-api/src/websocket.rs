@@ -188,7 +188,8 @@ pub enum IncomingMessage {
     #[serde(rename = "config_entries/get")]
     ConfigEntriesGet {
         id: u64,
-        entry_id: String,
+        #[serde(default)]
+        entry_id: Option<String>,
     },
     #[serde(rename = "config_entries/subscribe")]
     ConfigEntriesSubscribe {
@@ -241,6 +242,10 @@ pub enum IncomingMessage {
     ScriptConfig {
         id: u64,
         entity_id: String,
+    },
+    #[serde(rename = "system_log/list")]
+    SystemLogList {
+        id: u64,
     },
     SubscribeEntities {
         id: u64,
@@ -682,7 +687,7 @@ async fn handle_message(
         }
         IncomingMessage::ConfigEntriesGet { id, entry_id } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
-            handle_config_entries_get(conn, id, &entry_id, tx).await
+            handle_config_entries_get(conn, id, entry_id.as_deref(), tx).await
         }
         IncomingMessage::ConfigEntriesSubscribe { id, type_filter } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
@@ -879,6 +884,10 @@ async fn handle_message(
             });
             tx.send(result).await.map_err(|e| e.to_string())?;
             Ok(())
+        }
+        IncomingMessage::SystemLogList { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handle_system_log_list(conn, id, tx).await
         }
         IncomingMessage::UnsubscribeEvents { id, subscription } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
@@ -1425,6 +1434,7 @@ fn entity_entry_to_json(entry: &ha_registries::EntityEntry) -> serde_json::Value
         "has_entity_name": entry.has_entity_name,
         "aliases": entry.aliases,
         "labels": entry.labels,
+        "categories": entry.categories,
         "capabilities": entry.capabilities,
         "device_class": entry.device_class,
         "original_device_class": entry.original_device_class,
@@ -1582,6 +1592,23 @@ async fn handle_script_config(
             tx.send(result).await.map_err(|e| e.to_string())
         }
     }
+}
+
+/// Handle system_log/list command
+async fn handle_system_log_list(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    let entries = conn.state.system_log.list();
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::json!(entries)),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
 }
 
 /// Handle render_template command
@@ -2382,38 +2409,48 @@ fn config_entry_to_json(entry: &ha_config_entries::ConfigEntry) -> serde_json::V
 async fn handle_config_entries_get(
     conn: &Arc<ActiveConnection>,
     id: u64,
-    entry_id: &str,
+    entry_id: Option<&str>,
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> Result<(), String> {
     // Get the config entry from state
     let config_entries = conn.state.config_entries.read().await;
 
-    let entry_json = if let Some(entry) = config_entries.get(entry_id) {
-        config_entry_to_json(&entry)
+    let result_json = if let Some(entry_id) = entry_id {
+        // Get single entry by ID
+        if let Some(entry) = config_entries.get(entry_id) {
+            config_entry_to_json(&entry)
+        } else {
+            // Return a stub entry if not found to prevent frontend errors
+            serde_json::json!({
+                "entry_id": entry_id,
+                "domain": "unknown",
+                "title": "Unknown",
+                "source": "user",
+                "state": "not_loaded",
+                "supports_options": false,
+                "supports_remove_device": false,
+                "supports_unload": true,
+                "supports_reconfigure": false,
+                "pref_disable_new_entities": false,
+                "pref_disable_polling": false,
+                "disabled_by": null,
+                "reason": null,
+            })
+        }
     } else {
-        // Return a stub entry if not found to prevent frontend errors
-        serde_json::json!({
-            "entry_id": entry_id,
-            "domain": "unknown",
-            "title": "Unknown",
-            "source": "user",
-            "state": "not_loaded",
-            "supports_options": false,
-            "supports_remove_device": false,
-            "supports_unload": true,
-            "supports_reconfigure": false,
-            "pref_disable_new_entities": false,
-            "pref_disable_polling": false,
-            "disabled_by": null,
-            "reason": null,
-        })
+        // Return all entries when no entry_id specified
+        let entries: Vec<serde_json::Value> = config_entries
+            .iter()
+            .map(|entry| config_entry_to_json(&entry))
+            .collect();
+        serde_json::Value::Array(entries)
     };
 
     let result = OutgoingMessage::Result(ResultMessage {
         id,
         msg_type: "result",
         success: true,
-        result: Some(entry_json),
+        result: Some(result_json),
         error: None,
     });
     tx.send(result).await.map_err(|e| e.to_string())
