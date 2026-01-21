@@ -17,7 +17,7 @@ CONFIG_DIR ?=
 
 # Common environment for run targets
 SITE_PACKAGES = $(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])")
-RUN_ENV = PYTHONPATH=$(CURDIR)/crates/ha-py-bridge/python:$(CURDIR)/vendor/ha-core:$(SITE_PACKAGES) \
+RUN_ENV = PYTHONPATH=$(CURDIR)/crates/ha-py-bridge/python:$(SITE_PACKAGES) \
 	HA_FRONTEND_PATH=$(SITE_PACKAGES)/hass_frontend \
 	PYO3_PYTHON=$(CURDIR)/$(PYTHON) \
 	$(if $(CONFIG_DIR),HA_CONFIG_DIR=$(CONFIG_DIR))

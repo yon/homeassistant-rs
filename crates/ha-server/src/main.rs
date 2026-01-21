@@ -1256,7 +1256,6 @@ fn load_input_helpers(config_dir: &Path, states: &StateStore) {
 #[cfg(feature = "python")]
 async fn setup_config_entries(hass: &HomeAssistant) {
     use ha_config_entries::{SetupContext, WILDCARD_DOMAIN};
-
     // Load config entries from storage
     {
         let manager = hass.config_entries.write().await;
@@ -1309,7 +1308,7 @@ async fn setup_config_entries(hass: &HomeAssistant) {
     for entry_id in entry_ids {
         if let Err(e) = manager.setup(&entry_id).await {
             // Errors are logged by the manager, but we can add context
-            debug!("Setup result for {}: {:?}", entry_id, e);
+            warn!("Failed to setup entry {}: {:?}", entry_id, e);
         }
     }
 }
@@ -1716,6 +1715,7 @@ async fn main() -> Result<()> {
                     Some(config_dir.clone()),
                     bridge.async_bridge.clone(),
                     application_credentials.clone(),
+                    bridge.requirements.clone(),
                 ))
             });
     #[cfg(not(feature = "python"))]

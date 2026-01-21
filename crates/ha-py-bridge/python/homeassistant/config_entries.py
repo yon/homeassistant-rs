@@ -128,6 +128,9 @@ SetupPhases = _native.SetupPhases
 STORAGE_KEY = getattr(_native, "STORAGE_KEY", "core.config_entries")
 STORAGE_VERSION = getattr(_native, "STORAGE_VERSION", 1)
 
+# Registry for config flow handlers (maps domain to ConfigFlow class)
+HANDLERS = _native.HANDLERS
+
 # Build __all__ list with all exported names
 __all__ = [
     # Rust-backed types
@@ -195,6 +198,7 @@ __all__ = [
     "SetupPhases",
     "STORAGE_KEY",
     "STORAGE_VERSION",
+    "HANDLERS",
 ]
 
 # For debugging: indicate which implementation is being used
