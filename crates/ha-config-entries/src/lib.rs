@@ -25,8 +25,9 @@ pub use entry::{
 };
 
 pub use manager::{
-    ConfigEntries, ConfigEntriesData, ConfigEntriesError, ConfigEntriesResult, SetupHandler,
-    STORAGE_KEY, STORAGE_MINOR_VERSION, STORAGE_VERSION,
+    ConfigEntries, ConfigEntriesData, ConfigEntriesError, ConfigEntriesResult, SetupContext,
+    SetupHandler, SetupResult, UnloadHandler, UnloadResult, STORAGE_KEY, STORAGE_MINOR_VERSION,
+    STORAGE_VERSION, WILDCARD_DOMAIN,
 };
 
 pub use state_machine::{calculate_retry_delay, InvalidTransition};

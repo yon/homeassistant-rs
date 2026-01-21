@@ -13,8 +13,6 @@ use ha_automation::AutomationConfig;
 use ha_components::{register_system_log_services, SystemLog};
 use ha_config::CoreConfig;
 use ha_config_entries::ConfigEntries;
-#[cfg(feature = "python")]
-use ha_config_entries::ConfigEntryState;
 use ha_core::{Context, EntityId, ServiceCall, SupportsResponse};
 use ha_event_bus::EventBus;
 use ha_registries::{Registries, Storage};
@@ -53,7 +51,7 @@ pub struct HomeAssistant {
     pub template_engine: Arc<TemplateEngine>,
     /// Python bridge for running Python integrations
     #[cfg(feature = "python")]
-    pub python_bridge: Option<PyBridge>,
+    pub python_bridge: Option<Arc<PyBridge>>,
 }
 
 impl HomeAssistant {
@@ -112,7 +110,7 @@ impl HomeAssistant {
                 let allowlist = load_allowlist_from_config(config_dir);
                 bridge.set_allowlist(allowlist);
 
-                Some(bridge)
+                Some(Arc::new(bridge))
             }
             Err(e) => {
                 warn!(
@@ -1254,9 +1252,11 @@ fn load_input_helpers(config_dir: &Path, states: &StateStore) {
 /// Load and setup config entries
 ///
 /// Loads config entries from storage and sets up each one.
-/// If Python bridge is available, calls the integration's async_setup_entry.
+/// If Python bridge is available, registers it as the setup handler for all domains.
 #[cfg(feature = "python")]
 async fn setup_config_entries(hass: &HomeAssistant) {
+    use ha_config_entries::{SetupContext, WILDCARD_DOMAIN};
+
     // Load config entries from storage
     {
         let manager = hass.config_entries.write().await;
@@ -1266,64 +1266,51 @@ async fn setup_config_entries(hass: &HomeAssistant) {
         }
     }
 
-    // Get entries to setup
-    let entries: Vec<_> = {
+    // Set up context and register Python bridge handlers
+    {
         let manager = hass.config_entries.read().await;
-        manager.iter().collect()
+
+        // Set context for setup/unload operations
+        let context = SetupContext {
+            bus: hass.bus.clone(),
+            states: hass.states.clone(),
+            services: hass.services.clone(),
+        };
+        manager.set_context(context).await;
+
+        // Register Python bridge as wildcard handler if available
+        if let Some(ref bridge) = hass.python_bridge {
+            manager.register_setup_handler(
+                WILDCARD_DOMAIN,
+                PyBridge::create_setup_handler(bridge.clone()),
+            );
+            manager.register_unload_handler(
+                WILDCARD_DOMAIN,
+                PyBridge::create_unload_handler(bridge.clone()),
+            );
+        }
+    }
+
+    // Get entry IDs to setup
+    let entry_ids: Vec<String> = {
+        let manager = hass.config_entries.read().await;
+        manager.entry_ids()
     };
 
-    if entries.is_empty() {
+    if entry_ids.is_empty() {
         debug!("No config entries to setup");
         return;
     }
 
-    info!("Setting up {} config entries", entries.len());
+    info!("Setting up {} config entries", entry_ids.len());
 
-    // Setup each entry using the Python bridge
-    if let Some(ref bridge) = hass.python_bridge {
-        for entry in entries {
-            let domain = entry.domain.clone();
-            let entry_id = entry.entry_id.clone();
-
-            // Skip already loaded entries
-            if entry.state == ConfigEntryState::Loaded {
-                debug!("Config entry {} already loaded", entry_id);
-                continue;
-            }
-
-            // Set state to SetupInProgress
-            {
-                let manager = hass.config_entries.read().await;
-                manager.set_state(&entry_id, ConfigEntryState::SetupInProgress, None);
-            }
-
-            // Call setup_config_entry via the bridge (handles all Python work internally)
-            let result = bridge.setup_config_entry(
-                &entry,
-                hass.bus.clone(),
-                hass.states.clone(),
-                hass.services.clone(),
-            );
-
-            // Update state based on result
-            let manager = hass.config_entries.read().await;
-            match result {
-                Ok(true) => {
-                    info!("Setup config entry: {} ({})", domain, entry_id);
-                    manager.set_state(&entry_id, ConfigEntryState::Loaded, None);
-                }
-                Ok(false) => {
-                    debug!("Integration {} doesn't support config entries", domain);
-                    manager.set_state(&entry_id, ConfigEntryState::NotLoaded, None);
-                }
-                Err(e) => {
-                    warn!("Failed to setup {}: {}", domain, e);
-                    manager.set_state(&entry_id, ConfigEntryState::SetupError, Some(e.to_string()));
-                }
-            }
+    // Setup each entry - FSM and handler dispatch handled by ConfigEntries
+    let manager = hass.config_entries.read().await;
+    for entry_id in entry_ids {
+        if let Err(e) = manager.setup(&entry_id).await {
+            // Errors are logged by the manager, but we can add context
+            debug!("Setup result for {}: {:?}", entry_id, e);
         }
-    } else {
-        debug!("Python bridge not available, skipping config entry setup");
     }
 }
 
