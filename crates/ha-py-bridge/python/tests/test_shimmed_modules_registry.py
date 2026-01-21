@@ -1,8 +1,9 @@
-"""Tests for the SHIMMED_MODULES registry.
+"""Tests for the module registry.
 
 These tests ensure that:
-1. SHIMMED_MODULES is auto-discovered from shim files on disk
-2. After importing homeassistant, no shimmed module is loaded from vendor
+1. ModuleRegistry correctly discovers shim modules
+2. ModuleSource enum correctly categorizes modules
+3. After importing homeassistant, no shimmed module is loaded from vendor
 """
 
 import importlib
@@ -10,18 +11,15 @@ import sys
 
 import pytest
 
-from homeassistant._native_loader import (
-    SHIMMED_MODULES,
-    get_shim_path,
-)
+from homeassistant._module_registry import ModuleInfo, ModuleSource, registry
 
 
-class TestShimmedModulesDiscovery:
-    """Test that SHIMMED_MODULES is correctly auto-discovered."""
+class TestModuleRegistry:
+    """Test ModuleRegistry class."""
 
-    def test_shimmed_modules_not_empty(self):
-        """SHIMMED_MODULES should contain discovered shim modules."""
-        assert len(SHIMMED_MODULES) > 0, "No shimmed modules discovered"
+    def test_shim_modules_not_empty(self):
+        """Registry should contain discovered shim modules."""
+        assert len(registry.shim_modules) > 0, "No shimmed modules discovered"
 
     def test_core_modules_discovered(self):
         """Core shim modules should be discovered."""
@@ -32,29 +30,74 @@ class TestShimmedModulesDiscovery:
             "homeassistant.helpers",
             "homeassistant.helpers.entity",
         }
-        missing = expected - SHIMMED_MODULES
+        missing = expected - registry.shim_modules
         assert not missing, f"Expected shim modules not discovered: {missing}"
 
     def test_private_modules_excluded(self):
-        """Private modules (starting with _) should not be in SHIMMED_MODULES."""
-        private_modules = [m for m in SHIMMED_MODULES if m.split(".")[-1].startswith("_")]
-        assert not private_modules, f"Private modules should be excluded: {private_modules}"
+        """Private modules (starting with _) should not be in registry."""
+        private = [m for m in registry.shim_modules if m.split(".")[-1].startswith("_")]
+        assert not private, f"Private modules should be excluded: {private}"
+
+
+class TestModuleSource:
+    """Test ModuleSource enum and source() method."""
+
+    def test_shim_module_returns_shim(self):
+        """Shim modules should return ModuleSource.SHIM."""
+        assert registry.source("homeassistant.const") == ModuleSource.SHIM
+        assert registry.source("homeassistant.helpers.entity") == ModuleSource.SHIM
+
+    def test_vendor_module_returns_vendor(self):
+        """Non-shim modules should return ModuleSource.VENDOR."""
+        assert registry.source("homeassistant.helpers.json") == ModuleSource.VENDOR
+        assert registry.source("homeassistant.util.dt") == ModuleSource.VENDOR
+
+    def test_is_shim_method(self):
+        """is_shim() should return True for shim modules."""
+        assert registry.is_shim("homeassistant.const") is True
+        assert registry.is_shim("homeassistant.helpers.json") is False
+
+    def test_is_vendor_method(self):
+        """is_vendor() should return True for vendor modules."""
+        assert registry.is_vendor("homeassistant.const") is False
+        assert registry.is_vendor("homeassistant.helpers.json") is True
+
+
+class TestModuleInfo:
+    """Test ModuleInfo dataclass."""
+
+    def test_info_returns_correct_source(self):
+        """info() should return ModuleInfo with correct source."""
+        info = registry.info("homeassistant.const")
+        assert info.name == "homeassistant.const"
+        assert info.source == ModuleSource.SHIM
+        assert info.is_shim is True
+        assert info.is_vendor is False
+
+    def test_info_for_vendor_module(self):
+        """info() for vendor module should have VENDOR source."""
+        info = registry.info("homeassistant.helpers.json")
+        assert info.name == "homeassistant.helpers.json"
+        assert info.source == ModuleSource.VENDOR
+        assert info.is_shim is False
+        assert info.is_vendor is True
+
+    def test_iter_shim_modules(self):
+        """iter_shim_modules() should yield ModuleInfo for all shims."""
+        infos = list(registry.iter_shim_modules())
+        assert len(infos) == len(registry.shim_modules)
+        assert all(info.is_shim for info in infos)
 
 
 @pytest.fixture(autouse=True)
 def clean_homeassistant_modules():
     """Remove all homeassistant modules and configure sys.path for shim."""
-    shim_path = get_shim_path()
+    shim_path = registry.shim_path
 
     # Save original state
     original_path = sys.path.copy()
     original_path_hooks = sys.path_hooks.copy()
     original_path_importer_cache = sys.path_importer_cache.copy()
-    original_modules = {
-        k: v
-        for k, v in sys.modules.items()
-        if k == "homeassistant" or k.startswith("homeassistant.")
-    }
 
     def clear_modules():
         to_remove = [
@@ -107,7 +150,7 @@ class TestNoShimmedModuleFromVendor:
 
         vendor_loaded = []
 
-        for module_name in SHIMMED_MODULES:
+        for module_name in registry.shim_modules:
             if module_name in sys.modules:
                 mod = sys.modules[module_name]
                 origin = getattr(mod, "__file__", None)
@@ -124,7 +167,7 @@ class TestNoShimmedModuleFromVendor:
         """After explicitly importing shimmed modules, they should be from shim."""
         import homeassistant  # noqa: F401
 
-        shim_path = str(get_shim_path())
+        shim_path = str(registry.shim_path)
         wrong_source = []
 
         # Import a sampling of shimmed modules explicitly
@@ -148,3 +191,21 @@ class TestNoShimmedModuleFromVendor:
             f"These shimmed modules were not loaded from shim:\n"
             f"  {chr(10).join(wrong_source)}"
         )
+
+    def test_verify_loaded_module_catches_wrong_source(self):
+        """verify_loaded_module() should raise if module is from wrong source."""
+        import homeassistant.const  # noqa: F401
+
+        # This should succeed - const is a shim and should be loaded from shim
+        info = registry.verify_loaded_module("homeassistant.const")
+        assert info is not None
+        assert info.is_shim
+
+    def test_verify_loaded_module_returns_none_for_unloaded(self):
+        """verify_loaded_module() should return None for unloaded modules."""
+        # Make sure module isn't loaded
+        if "homeassistant.components.binary_sensor" in sys.modules:
+            del sys.modules["homeassistant.components.binary_sensor"]
+
+        info = registry.verify_loaded_module("homeassistant.components.binary_sensor")
+        assert info is None
