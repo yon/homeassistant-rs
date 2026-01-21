@@ -123,56 +123,6 @@ pub fn config_entry_to_python(py: Python<'_>, entry: &ConfigEntry) -> PyBridgeRe
     Ok(py_wrapper.into_any())
 }
 
-/// Convert a Rust ConfigEntry to a Python dict (legacy, for backward compat)
-///
-/// This creates a dict with all the fields that Python integrations expect.
-/// Use config_entry_to_python() instead for proper runtime_data support.
-pub fn config_entry_to_dict(py: Python<'_>, entry: &ConfigEntry) -> PyBridgeResult<PyObject> {
-    let dict = PyDict::new_bound(py);
-
-    // Required fields
-    dict.set_item("entry_id", &entry.entry_id)?;
-    dict.set_item("domain", &entry.domain)?;
-    dict.set_item("title", &entry.title)?;
-    dict.set_item("data", hashmap_to_py(py, &entry.data)?)?;
-    dict.set_item("options", hashmap_to_py(py, &entry.options)?)?;
-
-    // Version info
-    dict.set_item("version", entry.version)?;
-    dict.set_item("minor_version", entry.minor_version)?;
-
-    // Optional unique_id
-    match &entry.unique_id {
-        Some(uid) => dict.set_item("unique_id", uid)?,
-        None => dict.set_item("unique_id", py.None())?,
-    }
-
-    // Source and state
-    dict.set_item("source", source_to_str(&entry.source))?;
-    dict.set_item("state", state_to_str(entry.state))?;
-
-    // Reason for failed states
-    match &entry.reason {
-        Some(reason) => dict.set_item("reason", reason)?,
-        None => dict.set_item("reason", py.None())?,
-    }
-
-    // Preferences
-    dict.set_item("pref_disable_new_entities", entry.pref_disable_new_entities)?;
-    dict.set_item("pref_disable_polling", entry.pref_disable_polling)?;
-
-    // Disabled by
-    match &entry.disabled_by {
-        Some(_) => dict.set_item("disabled_by", "user")?,
-        None => dict.set_item("disabled_by", py.None())?,
-    }
-
-    // Discovery keys (convert to dict)
-    dict.set_item("discovery_keys", hashmap_to_py(py, &entry.discovery_keys)?)?;
-
-    Ok(dict.into_any().unbind())
-}
-
 /// Create a mock Python ConfigEntry class instance
 ///
 /// Some integrations may expect an actual ConfigEntry class instance
