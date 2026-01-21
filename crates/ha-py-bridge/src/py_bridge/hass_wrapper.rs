@@ -1773,6 +1773,22 @@ def async_entries(domain=None, include_ignore=True, include_disabled=True):
     """
     # For now, return empty list - integrations will proceed as if no entries exist
     return []
+
+def async_entry_for_domain_unique_id(domain, unique_id):
+    """Get entry by domain and unique_id.
+
+    This is a stub that returns None since we don't track config entries here.
+    Used by config flows to check if an entry already exists.
+
+    Args:
+        domain: The integration domain.
+        unique_id: The unique ID to look up.
+
+    Returns:
+        None - indicates no existing entry found.
+    """
+    _LOGGER.debug(f"async_entry_for_domain_unique_id({domain}, {unique_id}) -> None")
+    return None
 "#;
 
     // Use persistent globals so entity/device registries survive across calls
@@ -1824,6 +1840,15 @@ def async_entries(domain=None, include_ignore=True, include_disabled=True):
     let async_entries = globals.get_item("async_entries")?.unwrap();
     wrapper.setattr("async_entries", async_entries)?;
 
+    // Add async_entry_for_domain_unique_id method for checking existing entries by unique_id
+    let async_entry_for_domain_unique_id = globals
+        .get_item("async_entry_for_domain_unique_id")?
+        .unwrap();
+    wrapper.setattr(
+        "async_entry_for_domain_unique_id",
+        async_entry_for_domain_unique_id,
+    )?;
+
     // Create the flow sub-object
     let flow = create_config_flow_wrapper(py)?;
     wrapper.setattr("flow", flow)?;
@@ -1852,6 +1877,22 @@ async def async_init(domain, *, context=None, data=None):
     _LOGGER.info(f"Config flow init for {domain}, context={context}")
     await asyncio.sleep(0)
     return {"flow_id": f"{domain}_flow_1", "type": "form"}
+
+def async_progress_by_handler(handler, match_context=None, include_uninitialized=False):
+    """Return the flows in progress by handler.
+
+    Returns list of flow progress dicts for the given handler (domain).
+    For now, returns empty list - no flows in progress tracked.
+    """
+    _LOGGER.debug(f"async_progress_by_handler({handler}, match_context={match_context})")
+    return []
+
+def async_progress(include_uninitialized=False):
+    """Return all flows in progress.
+
+    For now, returns empty list - no flows in progress tracked.
+    """
+    return []
 "#;
 
     let globals = PyDict::new_bound(py);
@@ -1859,6 +1900,12 @@ async def async_init(domain, *, context=None, data=None):
 
     let async_init = globals.get_item("async_init")?.unwrap();
     flow.setattr("async_init", async_init)?;
+
+    let async_progress_by_handler = globals.get_item("async_progress_by_handler")?.unwrap();
+    flow.setattr("async_progress_by_handler", async_progress_by_handler)?;
+
+    let async_progress = globals.get_item("async_progress")?.unwrap();
+    flow.setattr("async_progress", async_progress)?;
 
     Ok(flow.unbind())
 }
