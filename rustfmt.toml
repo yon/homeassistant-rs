@@ -1,0 +1,32 @@
+# Rust formatting configuration
+# https://rust-lang.github.io/rustfmt/
+
+# Edition (affects parsing)
+edition = "2021"
+
+# Group imports by crate origin: std, external, local (nightly-only)
+group_imports = "StdExternalCrate"
+
+# Use spaces, not tabs
+hard_tabs = false
+
+# Maximum line width
+max_width = 100
+
+# Use Unix line endings for cross-platform consistency
+newline_style = "Unix"
+
+# Alphabetically sort imports within groups
+reorder_imports = true
+
+# Alphabetically sort mod declarations
+reorder_modules = true
+
+# Number of spaces per tab
+tab_spaces = 4
+
+# Use field init shorthand where possible: Foo { x } instead of Foo { x: x }
+use_field_init_shorthand = true
+
+# Use try! shorthand where possible: ? instead of try!
+use_try_shorthand = true
