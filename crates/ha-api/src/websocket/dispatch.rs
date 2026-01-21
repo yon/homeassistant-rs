@@ -111,12 +111,54 @@ pub async fn handle_message(
             conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_config_entries_delete(conn, id, &entry_id, tx).await
         }
+        IncomingMessage::ApplicationCredentialsConfig { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handlers::handle_application_credentials_config(id, tx).await
+        }
         IncomingMessage::ApplicationCredentialsConfigEntry {
             id,
             config_entry_id,
         } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_application_credentials_config_entry(id, &config_entry_id, tx).await
+        }
+        IncomingMessage::ApplicationCredentialsList { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handlers::handle_application_credentials_list(conn, id, tx).await
+        }
+        IncomingMessage::ApplicationCredentialsCreate {
+            id,
+            domain,
+            client_id,
+            client_secret,
+            auth_domain,
+            name,
+        } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handlers::handle_application_credentials_create(
+                conn,
+                id,
+                &domain,
+                &client_id,
+                &client_secret,
+                auth_domain.as_deref(),
+                name.as_deref(),
+                tx,
+            )
+            .await
+        }
+        IncomingMessage::ApplicationCredentialsDelete {
+            id,
+            application_credentials_id,
+        } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handlers::handle_application_credentials_delete(
+                conn,
+                id,
+                &application_credentials_id,
+                tx,
+            )
+            .await
         }
         IncomingMessage::ConfigEntriesGet {
             id,

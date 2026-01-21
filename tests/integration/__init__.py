@@ -1,1 +1,1 @@
-# Integration tests for the Rust Home Assistant implementation
+# Tests that run against our Rust HA server

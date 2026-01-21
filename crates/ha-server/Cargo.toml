@@ -13,7 +13,7 @@ path = "src/main.rs"
 [features]
 default = []
 # Enable Python bridge for running Python integrations
-python = ["dep:ha-py-bridge", "dep:pyo3-build-config"]
+python = ["dep:ha-py-bridge", "dep:pyo3-build-config", "ha-api/python"]
 
 [dependencies]
 anyhow = { workspace = true }

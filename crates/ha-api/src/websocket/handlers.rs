@@ -1786,6 +1786,66 @@ pub async fn handle_config_entries_subscribe(
     tx.send(event).await.map_err(|e| e.to_string())
 }
 
+/// Handle application_credentials/config command
+/// Returns list of domains that support application credentials and their config
+pub async fn handle_application_credentials_config(
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Get domains that support application credentials from Python
+    #[cfg(feature = "python")]
+    let (domains, integrations) = {
+        use pyo3::prelude::*;
+
+        Python::with_gil(|py| {
+            // Get domains from homeassistant.loader.async_get_application_credentials
+            // For now, return common OAuth2 integrations
+            let domains: Vec<String> =
+                match py.import_bound("homeassistant.generated.application_credentials") {
+                    Ok(module) => match module.getattr("APPLICATION_CREDENTIALS") {
+                        Ok(app_creds) => app_creds.extract::<Vec<String>>().unwrap_or_default(),
+                        Err(_) => vec![],
+                    },
+                    Err(_) => {
+                        // Fallback to common OAuth2 integrations
+                        vec![
+                            "google".to_string(),
+                            "spotify".to_string(),
+                            "nest".to_string(),
+                        ]
+                    }
+                };
+
+            // Build integrations config (description_placeholders for each domain)
+            let mut integrations = serde_json::Map::new();
+            for domain in &domains {
+                integrations.insert(domain.clone(), serde_json::json!({}));
+            }
+
+            (domains, integrations)
+        })
+    };
+
+    #[cfg(not(feature = "python"))]
+    let (domains, integrations) = {
+        let domains: Vec<String> = vec![];
+        let integrations = serde_json::Map::new();
+        (domains, integrations)
+    };
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::json!({
+            "domains": domains,
+            "integrations": serde_json::Value::Object(integrations)
+        })),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
 /// Handle application_credentials/config_entry command
 /// Returns credentials associated with a config entry (usually null for most integrations)
 pub async fn handle_application_credentials_config_entry(
@@ -1803,6 +1863,156 @@ pub async fn handle_application_credentials_config_entry(
         error: None,
     });
     tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle application_credentials/list command
+/// Returns list of stored application credentials
+pub async fn handle_application_credentials_list(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Get all credentials from storage
+    let credentials: Vec<serde_json::Value> = conn
+        .state
+        .application_credentials
+        .iter()
+        .map(|entry| {
+            let cred = entry.value();
+            let mut obj = serde_json::json!({
+                "id": cred.id,
+                "domain": cred.domain,
+                "client_id": cred.client_id,
+                "client_secret": cred.client_secret,
+            });
+            // Include optional fields if present
+            if let Some(ref name) = cred.name {
+                obj["name"] = serde_json::Value::String(name.clone());
+            }
+            if let Some(ref auth_domain) = cred.auth_domain {
+                obj["auth_domain"] = serde_json::Value::String(auth_domain.clone());
+            }
+            obj
+        })
+        .collect();
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::json!(credentials)),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle application_credentials/create command
+/// Creates a new application credential (OAuth2 client credentials)
+#[allow(clippy::too_many_arguments)]
+pub async fn handle_application_credentials_create(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    domain: &str,
+    client_id: &str,
+    client_secret: &str,
+    auth_domain: Option<&str>,
+    name: Option<&str>,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    use crate::ApplicationCredential;
+
+    // Strip whitespace from credentials (HA does this)
+    let client_id = client_id.trim();
+    let client_secret = client_secret.trim();
+
+    // Generate credential ID (matches HA format: domain_client_id with underscores)
+    let credential_id = format!("{}_{}", domain, client_id.replace('-', "_"));
+
+    info!(
+        "Creating application credential for domain: {}, client_id: {}",
+        domain, client_id
+    );
+
+    // Create credential object
+    let credential = ApplicationCredential {
+        id: credential_id.clone(),
+        domain: domain.to_string(),
+        client_id: client_id.to_string(),
+        client_secret: client_secret.to_string(),
+        auth_domain: auth_domain.map(|s| s.to_string()),
+        name: name.map(|s| s.to_string()),
+    };
+
+    // Store the credential
+    conn.state
+        .application_credentials
+        .insert(credential_id.clone(), credential);
+
+    // Build response with optional fields
+    let mut result_obj = serde_json::json!({
+        "id": credential_id,
+        "domain": domain,
+        "client_id": client_id,
+        "client_secret": client_secret,
+    });
+    if let Some(n) = name {
+        result_obj["name"] = serde_json::Value::String(n.to_string());
+    }
+    if let Some(ad) = auth_domain {
+        result_obj["auth_domain"] = serde_json::Value::String(ad.to_string());
+    }
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(result_obj),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle application_credentials/delete command
+/// Deletes an application credential
+pub async fn handle_application_credentials_delete(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    credential_id: &str,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    info!("Deleting application credential: {}", credential_id);
+
+    // Try to remove the credential
+    if conn
+        .state
+        .application_credentials
+        .remove(credential_id)
+        .is_some()
+    {
+        let result = OutgoingMessage::Result(ResultMessage {
+            id,
+            msg_type: "result",
+            success: true,
+            result: Some(serde_json::Value::Null),
+            error: None,
+        });
+        tx.send(result).await.map_err(|e| e.to_string())
+    } else {
+        let result = OutgoingMessage::Result(ResultMessage {
+            id,
+            msg_type: "result",
+            success: false,
+            result: None,
+            error: Some(ErrorInfo {
+                code: "not_found".to_string(),
+                message: format!(
+                    "Unable to find application_credentials_id {}",
+                    credential_id
+                ),
+            }),
+        });
+        tx.send(result).await.map_err(|e| e.to_string())
+    }
 }
 
 /// Handle config_entries/delete command
@@ -2084,79 +2294,8 @@ pub async fn handle_integration_descriptions(
     _integrations: Option<Vec<String>>,
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> Result<(), String> {
-    // Return a list of integrations that support config flows.
-    // For now, return a hardcoded list of common integrations.
-    // In a full implementation, this would scan vendor/ha-core/homeassistant/components/
-    // for integrations with config_flow: true in their manifest.json
-
-    let integrations = serde_json::json!({
-        "core": {
-            "integration": {
-                "apple_tv": {
-                    "config_flow": true,
-                    "integration_type": "device",
-                    "iot_class": "local_push",
-                    "name": "Apple TV",
-                    "single_config_entry": false
-                },
-                "esphome": {
-                    "config_flow": true,
-                    "integration_type": "hub",
-                    "iot_class": "local_push",
-                    "name": "ESPHome",
-                    "single_config_entry": false
-                },
-                "homekit_controller": {
-                    "config_flow": true,
-                    "integration_type": "hub",
-                    "iot_class": "local_push",
-                    "name": "HomeKit Controller",
-                    "single_config_entry": false
-                },
-                "hue": {
-                    "config_flow": true,
-                    "integration_type": "hub",
-                    "iot_class": "local_push",
-                    "name": "Philips Hue",
-                    "single_config_entry": false
-                },
-                "lutron_caseta": {
-                    "config_flow": true,
-                    "integration_type": "hub",
-                    "iot_class": "local_push",
-                    "name": "Lutron Caséta",
-                    "single_config_entry": false
-                },
-                "mobile_app": {
-                    "config_flow": true,
-                    "integration_type": "service",
-                    "iot_class": "local_push",
-                    "name": "Mobile App",
-                    "single_config_entry": false
-                },
-                "mqtt": {
-                    "config_flow": true,
-                    "integration_type": "service",
-                    "iot_class": "local_push",
-                    "name": "MQTT",
-                    "single_config_entry": false
-                },
-                "sun": {
-                    "config_flow": true,
-                    "integration_type": "service",
-                    "iot_class": "calculated",
-                    "name": "Sun",
-                    "single_config_entry": true
-                }
-            },
-            "helper": {},
-            "translated_name": []
-        },
-        "custom": {
-            "integration": {},
-            "helper": {}
-        }
-    });
+    // Load integration descriptions from manifest files
+    let integrations = crate::manifest::build_integration_descriptions();
 
     let result = OutgoingMessage::Result(ResultMessage {
         id,
@@ -2174,12 +2313,13 @@ pub async fn handle_manifest_list(
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> Result<(), String> {
-    // Return empty manifest list
+    let manifests = crate::manifest::build_manifest_list();
+
     let result = OutgoingMessage::Result(ResultMessage {
         id,
         msg_type: "result",
         success: true,
-        result: Some(serde_json::Value::Array(vec![])),
+        result: Some(manifests),
         error: None,
     });
     tx.send(result).await.map_err(|e| e.to_string())
@@ -2192,19 +2332,20 @@ pub async fn handle_manifest_get(
     integration: &str,
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> Result<(), String> {
-    // Return manifest for the requested integration
-    // For now, return a basic manifest structure
-    let manifest = serde_json::json!({
-        "domain": integration,
-        "name": capitalize_first(integration),
-        "config_flow": true,
-        "documentation": format!("https://www.home-assistant.io/integrations/{}/", integration),
-        "codeowners": [],
-        "requirements": [],
-        "dependencies": [],
-        "iot_class": "calculated",
-        "integration_type": "service",
-        "is_built_in": true,
+    let manifest = crate::manifest::build_manifest_response(integration).unwrap_or_else(|| {
+        // Fallback for unknown integrations
+        serde_json::json!({
+            "domain": integration,
+            "name": capitalize_first(integration),
+            "config_flow": true,
+            "documentation": format!("https://www.home-assistant.io/integrations/{}/", integration),
+            "codeowners": [],
+            "requirements": [],
+            "dependencies": [],
+            "iot_class": "calculated",
+            "integration_type": "service",
+            "is_built_in": false,
+        })
     });
 
     let result = OutgoingMessage::Result(ResultMessage {

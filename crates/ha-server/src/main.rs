@@ -1712,6 +1712,9 @@ async fn main() -> Result<()> {
     // Register system_log services
     register_system_log_services(&hass.services, system_log.clone());
 
+    // Create application credentials store (shared between API and config flow handler)
+    let application_credentials = ha_api::new_application_credentials_store();
+
     // Create config flow handler for Python integration setup (only with python feature)
     #[cfg(feature = "python")]
     let config_flow_handler: Option<Arc<dyn ConfigFlowHandler>> =
@@ -1725,6 +1728,7 @@ async fn main() -> Result<()> {
                     hass.registries.clone(),
                     Some(config_dir.clone()),
                     bridge.async_bridge.clone(),
+                    application_credentials.clone(),
                 ))
             });
     #[cfg(not(feature = "python"))]
@@ -1746,6 +1750,7 @@ async fn main() -> Result<()> {
         frontend_config,
         auth_state: AuthState::new_onboarded(),
         config_flow_handler,
+        application_credentials,
     };
 
     // Start API server

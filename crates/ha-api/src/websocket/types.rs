@@ -216,10 +216,34 @@ pub enum IncomingMessage {
         id: u64,
         entry_id: String,
     },
+    #[serde(rename = "application_credentials/config")]
+    ApplicationCredentialsConfig {
+        id: u64,
+    },
     #[serde(rename = "application_credentials/config_entry")]
     ApplicationCredentialsConfigEntry {
         id: u64,
         config_entry_id: String,
+    },
+    #[serde(rename = "application_credentials/list")]
+    ApplicationCredentialsList {
+        id: u64,
+    },
+    #[serde(rename = "application_credentials/create")]
+    ApplicationCredentialsCreate {
+        id: u64,
+        domain: String,
+        client_id: String,
+        client_secret: String,
+        #[serde(default)]
+        auth_domain: Option<String>,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    #[serde(rename = "application_credentials/delete")]
+    ApplicationCredentialsDelete {
+        id: u64,
+        application_credentials_id: String,
     },
     #[serde(rename = "integration/descriptions")]
     IntegrationDescriptions {
