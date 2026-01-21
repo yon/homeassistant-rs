@@ -14,6 +14,7 @@ use tracing::{debug, info};
 use ulid::Ulid;
 
 use ha_api::config_flow::{ConfigFlowHandler, FlowResult, FormField};
+use ha_api::ApplicationCredentialsStore;
 use ha_event_bus::EventBus;
 use ha_registries::Registries;
 use ha_service_registry::ServiceRegistry;
@@ -304,6 +305,8 @@ pub struct ConfigFlowManager {
     config_dir: Option<PathBuf>,
     /// Async bridge for running Python coroutines
     async_bridge: Arc<AsyncBridge>,
+    /// Application credentials store for OAuth integrations
+    application_credentials: ApplicationCredentialsStore,
 }
 
 impl ConfigFlowManager {
@@ -315,6 +318,7 @@ impl ConfigFlowManager {
         registries: Arc<Registries>,
         config_dir: Option<PathBuf>,
         async_bridge: Arc<AsyncBridge>,
+        application_credentials: ApplicationCredentialsStore,
     ) -> Self {
         Self {
             flows: RwLock::new(HashMap::new()),
@@ -324,6 +328,7 @@ impl ConfigFlowManager {
             registries,
             config_dir,
             async_bridge,
+            application_credentials,
         }
     }
 
@@ -337,6 +342,7 @@ impl ConfigFlowManager {
                 self.service_registry.clone(),
                 self.registries.clone(),
                 self.config_dir.as_deref(),
+                self.application_credentials.clone(),
             )
             .map_err(|e| format!("Failed to create hass wrapper: {}", e))
         })
@@ -399,50 +405,48 @@ impl ConfigFlowManager {
         Ok((flow_instance.unbind(), result))
     }
 
-    /// Find the ConfigFlow class in the module
+    /// Find the ConfigFlow class for the given handler/domain
+    ///
+    /// Native HA uses a registry-based approach:
+    /// 1. Config flow classes use `class MyFlow(ConfigFlow, domain="mydomain")`
+    /// 2. When the module is imported, `ConfigFlow.__init_subclass__` registers the class
+    /// 3. The class is stored in `homeassistant.config_entries.HANDLERS`
+    ///
+    /// We replicate this by importing the module (which triggers registration) and then
+    /// looking up the handler from the HANDLERS registry.
     fn find_flow_class<'py>(
         &self,
-        _py: Python<'py>,
-        module: &pyo3::Bound<'py, pyo3::types::PyModule>,
+        py: Python<'py>,
+        _module: &pyo3::Bound<'py, pyo3::types::PyModule>,
         handler: &str,
     ) -> Result<pyo3::Bound<'py, pyo3::PyAny>, String> {
-        // Common naming patterns for config flow classes
-        // Convert snake_case handler name to PascalCase for class name lookup
-        let pascal_name = snake_to_pascal(handler);
-        let class_names = [
-            format!("{}FlowHandler", pascal_name),
-            format!("{}ConfigFlow", pascal_name),
-        ];
+        debug!("Looking up config flow handler for domain: {}", handler);
 
-        for class_name in &class_names {
-            if let Ok(cls) = module.getattr(class_name.as_str()) {
-                debug!("Found config flow class: {}", class_name);
-                return Ok(cls);
-            }
+        // The module import already happened, which triggered __init_subclass__
+        // and registered the handler in the HANDLERS registry.
+        // Now we just need to look it up from the registry.
+        let config_entries = py
+            .import_bound("homeassistant.config_entries")
+            .map_err(|e| format!("Failed to import homeassistant.config_entries: {}", e))?;
+
+        let handlers = config_entries
+            .getattr("HANDLERS")
+            .map_err(|e| format!("Failed to get HANDLERS registry: {}", e))?;
+
+        // HANDLERS.get(domain) returns the registered class or None
+        let handler_class = handlers
+            .call_method1("get", (handler,))
+            .map_err(|e| format!("Failed to call HANDLERS.get: {}", e))?;
+
+        if handler_class.is_none() {
+            return Err(format!(
+                "No config flow handler registered for domain '{}'",
+                handler
+            ));
         }
 
-        // Try to find any class that has "FlowHandler" or "ConfigFlow" in the name
-        let dir = module.dir();
-        for name in dir.iter() {
-            if let Ok(name_str) = name.extract::<String>() {
-                if name_str.contains("FlowHandler") || name_str.contains("ConfigFlow") {
-                    if let Ok(cls) = module.getattr(name_str.as_str()) {
-                        if cls.is_callable() {
-                            debug!("Found config flow class by pattern: {}", name_str);
-                            return Ok(cls);
-                        }
-                    }
-                }
-            }
-        }
-
-        Err(format!(
-            "Could not find ConfigFlow class in {}",
-            module
-                .name()
-                .map(|n| n.to_string())
-                .unwrap_or_else(|_| "unknown".to_string())
-        ))
+        info!("Found registered config flow handler for {}", handler);
+        Ok(handler_class)
     }
 
     /// Call a flow step and convert the result
@@ -830,20 +834,6 @@ impl ConfigFlowHandler for ConfigFlowManager {
     }
 }
 
-/// Convert snake_case to PascalCase
-/// e.g., "lutron_caseta" -> "LutronCaseta"
-fn snake_to_pascal(s: &str) -> String {
-    s.split('_')
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(c) => c.to_uppercase().chain(chars).collect(),
-            }
-        })
-        .collect()
-}
-
 /// Convert JSON value to Python object
 fn json_to_pyobject(py: Python<'_>, value: &serde_json::Value) -> Option<PyObject> {
     match value {
@@ -917,18 +907,4 @@ fn pyobject_to_json(py: Python<'_>, obj: &pyo3::Bound<'_, pyo3::PyAny>) -> serde
     }
     // Default to string representation
     serde_json::Value::String(obj.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_snake_to_pascal() {
-        assert_eq!(snake_to_pascal("lutron_caseta"), "LutronCaseta");
-        assert_eq!(snake_to_pascal("sun"), "Sun");
-        assert_eq!(snake_to_pascal(""), "");
-        assert_eq!(snake_to_pascal("home_assistant_core"), "HomeAssistantCore");
-        assert_eq!(snake_to_pascal("homekit_controller"), "HomekitController");
-    }
 }

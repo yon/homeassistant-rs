@@ -42,5 +42,12 @@ tracing = { workspace = true }
 dashmap = { workspace = true }
 ulid = { workspace = true }
 
+# Python bridge (optional)
+pyo3 = { workspace = true, optional = true }
+
+[features]
+default = []
+python = ["pyo3"]
+
 [dev-dependencies]
 tempfile = "3"

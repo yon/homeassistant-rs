@@ -23,6 +23,10 @@ pub struct ConfigWrapper {
     pub internal_url: Option<String>,
     #[pyo3(get)]
     pub external_url: Option<String>,
+    #[pyo3(get)]
+    pub recovery_mode: bool,
+    #[pyo3(get)]
+    pub safe_mode: bool,
     components: Py<PySet>,
     units: Py<UnitSystemWrapper>,
 }
@@ -39,6 +43,8 @@ impl ConfigWrapper {
             location_name: "Home".to_string(),
             internal_url: None,
             external_url: None,
+            recovery_mode: false,
+            safe_mode: false,
             components: PySet::empty_bound(py)?.unbind(),
             units,
         })

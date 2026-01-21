@@ -626,6 +626,48 @@ TEST_CATEGORIES = {
         "test_exceptions.py::test_template_message",
         "test_exceptions.py::test_home_assistant_error",
     ],
+
+    # ==========================================================================
+    # Application Credentials (tests/components/application_credentials/) - ha-api crate
+    # Tests OAuth2 client credential management and storage
+    # ==========================================================================
+    "application_credentials": [
+        # Basic WebSocket commands
+        "components/application_credentials/test_init.py::test_websocket_list_empty",
+        "components/application_credentials/test_init.py::test_websocket_create",
+        "components/application_credentials/test_init.py::test_websocket_create_invalid_domain",
+        "components/application_credentials/test_init.py::test_websocket_update_not_supported",
+        "components/application_credentials/test_init.py::test_websocket_delete",
+        "components/application_credentials/test_init.py::test_websocket_delete_item_not_found",
+        "components/application_credentials/test_init.py::test_websocket_integration_list",
+        "components/application_credentials/test_init.py::test_websocket_create_strips_whitespace",
+    ],
+
+    # ==========================================================================
+    # Manifest WebSocket API (tests/components/websocket_api/) - ha-api crate
+    # Tests manifest/list and manifest/get WebSocket commands
+    # ==========================================================================
+    "manifest_ws": [
+        "components/websocket_api/test_commands.py::test_manifest_list",
+        "components/websocket_api/test_commands.py::test_manifest_list_specific_integrations",
+        "components/websocket_api/test_commands.py::test_manifest_get",
+    ],
+
+    # ==========================================================================
+    # Entity Source WebSocket API (tests/components/websocket_api/) - ha-api crate
+    # Tests entity/source WebSocket command
+    # ==========================================================================
+    "entity_source_ws": [
+        "components/websocket_api/test_commands.py::test_entity_source_admin",
+    ],
+
+    # ==========================================================================
+    # Integration Descriptions WebSocket API (tests/components/websocket_api/) - ha-api crate
+    # Tests integration/descriptions WebSocket command
+    # ==========================================================================
+    "integration_descriptions_ws": [
+        "components/websocket_api/test_commands.py::test_integration_descriptions",
+    ],
 }
 
 def get_repo_root() -> Path:

@@ -169,7 +169,7 @@ test-ha-compat: install-dev ## Run HA test suite with Rust extension
 	$(PYTHON) tests/ha_compat/run_tests.py --all -v
 
 .PHONY: test-integration
-test-integration: build $(VENV_STAMP) ## Run WebSocket API integration tests
+test-integration: build $(VENV_STAMP) ## Run WebSocket API integration tests (starts Rust server automatically)
 	$(VENV_BIN)/pytest tests/integration/ -v
 
 .PHONY: test-python
@@ -181,10 +181,6 @@ test-rust: $(VENV_STAMP) ## Run all Rust tests
 	$(RUN_ENV) cargo test --workspace --exclude ha-py-bridge
 	$(RUN_ENV) cargo test -p ha-automation --test compat_test
 	$(RUN_ENV) cargo test -p ha-script --test compat_test
-
-.PHONY: test-rust-server
-test-rust-server: build $(VENV_STAMP) ## Run WebSocket tests against Rust server (starts server automatically)
-	$(VENV_BIN)/pytest tests/rust_server/ -v
 
 ##@ Utilities
 

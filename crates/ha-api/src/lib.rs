@@ -7,16 +7,18 @@
 pub mod auth;
 pub mod config_flow;
 pub mod frontend;
+pub mod manifest;
 pub mod persistent_notification;
 mod websocket;
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{delete, get, post},
     Json, Router,
 };
+use dashmap::DashMap;
 use ha_components::SystemLog;
 use ha_config::CoreConfig;
 use ha_config_entries::ConfigEntries;
@@ -32,6 +34,27 @@ use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::info;
+
+/// Application credential for OAuth2 integrations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApplicationCredential {
+    pub id: String,
+    pub domain: String,
+    pub client_id: String,
+    pub client_secret: String,
+    #[serde(default)]
+    pub auth_domain: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// Application credentials storage
+pub type ApplicationCredentialsStore = Arc<DashMap<String, ApplicationCredential>>;
+
+/// Create a new empty application credentials store
+pub fn new_application_credentials_store() -> ApplicationCredentialsStore {
+    Arc::new(DashMap::new())
+}
 
 /// Shared application state
 #[derive(Clone)]
@@ -59,6 +82,8 @@ pub struct AppState {
     pub auth_state: auth::AuthState,
     /// Config flow handler for integration setup
     pub config_flow_handler: Option<Arc<dyn config_flow::ConfigFlowHandler>>,
+    /// Application credentials for OAuth2 integrations
+    pub application_credentials: ApplicationCredentialsStore,
 }
 
 /// API status response
@@ -232,6 +257,10 @@ pub fn create_router(state: AppState) -> Router {
             delete(delete_config_entry),
         )
         // Config flow routes
+        .route(
+            "/api/config/config_entries/flow_handlers",
+            get(get_config_flow_handlers),
+        )
         .route("/api/config/config_entries/flow", post(start_config_flow))
         .route(
             "/api/config/config_entries/flow/:flow_id",
@@ -589,6 +618,95 @@ async fn delete_config_entry(
     }
 }
 
+/// GET /api/config/config_entries/flow_handlers - List available config flow handlers
+///
+/// This endpoint returns a list of integration domains that have config flows.
+/// The frontend uses this to populate the "Add Integration" dialog.
+///
+/// Native HA uses homeassistant.generated.config_flows.FLOWS which contains
+/// all integrations with config flows, categorized by type.
+async fn get_config_flow_handlers(
+    State(_state): State<AppState>,
+    Query(params): Query<FlowHandlersQuery>,
+) -> impl IntoResponse {
+    // Query the Python FLOWS dict to get all available integrations
+    // This matches native HA behavior
+    let handlers = get_flows_from_python(params.type_filter.as_deref());
+    Json(handlers)
+}
+
+/// Get available config flows from Python's FLOWS dict
+#[cfg(feature = "python")]
+fn get_flows_from_python(type_filter: Option<&str>) -> Vec<String> {
+    use pyo3::prelude::*;
+    use pyo3::types::PyDict;
+
+    Python::with_gil(|py| {
+        // Import the generated config_flows module
+        let config_flows = match py.import_bound("homeassistant.generated.config_flows") {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!("Failed to import config_flows: {}", e);
+                return Vec::new();
+            }
+        };
+
+        // Get the FLOWS dict
+        let flows = match config_flows.getattr("FLOWS") {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::warn!("Failed to get FLOWS: {}", e);
+                return Vec::new();
+            }
+        };
+
+        let mut result: Vec<String> = Vec::new();
+
+        // If type filter specified, only get that category
+        if let Some(filter) = type_filter {
+            // Map frontend filter names to HA categories
+            let category = match filter {
+                "helper" => "helper",
+                "integration" => "integration",
+                "device" => "integration", // HA uses "integration" for devices
+                "hub" => "integration",
+                "service" => "integration",
+                _ => filter,
+            };
+
+            if let Ok(category_flows) = flows.get_item(category) {
+                if let Ok(list) = category_flows.extract::<Vec<String>>() {
+                    result.extend(list);
+                }
+            }
+        } else {
+            // Get all categories
+            if let Ok(dict) = flows.downcast::<PyDict>() {
+                for (_, value) in dict.iter() {
+                    if let Ok(list) = value.extract::<Vec<String>>() {
+                        result.extend(list);
+                    }
+                }
+            }
+        }
+
+        result
+    })
+}
+
+/// Fallback when Python is not available
+#[cfg(not(feature = "python"))]
+fn get_flows_from_python(_type_filter: Option<&str>) -> Vec<String> {
+    Vec::new()
+}
+
+/// Query parameters for flow_handlers endpoint
+#[derive(Deserialize)]
+struct FlowHandlersQuery {
+    #[serde(rename = "type")]
+    type_filter: Option<String>,
+}
+
 /// Request to start a config flow
 #[derive(Deserialize)]
 pub struct StartFlowRequest {
@@ -807,6 +925,7 @@ mod tests {
             frontend_config: None,
             auth_state: auth::AuthState::new_onboarded(),
             config_flow_handler: None,
+            application_credentials: new_application_credentials_store(),
         }
     }
 

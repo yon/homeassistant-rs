@@ -213,4 +213,26 @@ async def _run_in_executor(func, *args):
         // Delegate to async_add_executor_job
         self.async_add_executor_job(py, target, args)
     }
+
+    /// Run an import in the executor
+    ///
+    /// This is used by HA's loader to import Python modules in a thread pool.
+    /// It's identical to async_add_executor_job but named specifically for imports.
+    ///
+    /// # Arguments
+    /// * `func` - The import function to run (typically importlib.import_module)
+    /// * `args` - Arguments to pass to the function
+    ///
+    /// # Returns
+    /// A coroutine that will return the imported module when awaited.
+    #[pyo3(signature = (func, *args))]
+    fn async_add_import_executor_job<'py>(
+        &self,
+        py: Python<'py>,
+        func: PyObject,
+        args: &Bound<'py, PyTuple>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        // Delegate to async_add_executor_job - imports are just another blocking operation
+        self.async_add_executor_job(py, func, args)
+    }
 }
