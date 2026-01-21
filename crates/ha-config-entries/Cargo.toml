@@ -7,7 +7,10 @@ license.workspace = true
 
 [dependencies]
 ha-core = { workspace = true }
+ha-event-bus = { workspace = true }
 ha-registries = { workspace = true }
+ha-service-registry = { workspace = true }
+ha-state-store = { workspace = true }
 
 # Serialization
 serde = { workspace = true }

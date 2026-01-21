@@ -7,9 +7,13 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use dashmap::DashMap;
+use ha_event_bus::EventBus;
 use ha_registries::{Storable, Storage, StorageFile, StorageResult};
+use ha_service_registry::ServiceRegistry;
+use ha_state_store::StateStore;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use crate::entry::{ConfigEntry, ConfigEntryState, ConfigEntryUpdate};
@@ -88,11 +92,34 @@ impl Storable for ConfigEntriesData {
     const MINOR_VERSION: u32 = STORAGE_MINOR_VERSION;
 }
 
+/// Context provided to setup/unload handlers
+///
+/// Contains references to core Home Assistant components needed
+/// by integrations during setup/unload.
+#[derive(Clone)]
+pub struct SetupContext {
+    /// Event bus for firing/listening to events
+    pub bus: Arc<EventBus>,
+    /// State store for entity states
+    pub states: Arc<StateStore>,
+    /// Service registry for calling/registering services
+    pub services: Arc<ServiceRegistry>,
+}
+
+/// Wildcard domain for handlers that apply to all integrations
+pub const WILDCARD_DOMAIN: &str = "*";
+
 /// Setup handler function type
-pub type SetupHandler = Arc<dyn Fn(&ConfigEntry) -> SetupResult + Send + Sync + 'static>;
+///
+/// Receives the config entry and setup context, returns the result.
+pub type SetupHandler =
+    Arc<dyn Fn(&ConfigEntry, &SetupContext) -> SetupResult + Send + Sync + 'static>;
 
 /// Unload handler function type
-pub type UnloadHandler = Arc<dyn Fn(&ConfigEntry) -> UnloadResult + Send + Sync + 'static>;
+///
+/// Receives the config entry and setup context, returns the result.
+pub type UnloadHandler =
+    Arc<dyn Fn(&ConfigEntry, &SetupContext) -> UnloadResult + Send + Sync + 'static>;
 
 /// Config Entries Manager
 ///
@@ -116,11 +143,14 @@ pub struct ConfigEntries {
     /// Index: (domain, unique_id) -> entry_id
     by_unique_id: DashMap<(String, String), String>,
 
-    /// Setup handlers by domain
+    /// Setup handlers by domain (use WILDCARD_DOMAIN for catch-all)
     setup_handlers: DashMap<String, SetupHandler>,
 
-    /// Unload handlers by domain
+    /// Unload handlers by domain (use WILDCARD_DOMAIN for catch-all)
     unload_handlers: DashMap<String, UnloadHandler>,
+
+    /// Setup context (bus, states, services) - set via set_context()
+    context: RwLock<Option<SetupContext>>,
 }
 
 impl ConfigEntries {
@@ -133,7 +163,20 @@ impl ConfigEntries {
             by_unique_id: DashMap::new(),
             setup_handlers: DashMap::new(),
             unload_handlers: DashMap::new(),
+            context: RwLock::new(None),
         }
+    }
+
+    /// Set the setup context (bus, states, services)
+    ///
+    /// Must be called before setup() or unload() can work.
+    pub async fn set_context(&self, context: SetupContext) {
+        *self.context.write().await = Some(context);
+    }
+
+    /// Get the setup context, if set
+    pub async fn context(&self) -> Option<SetupContext> {
+        self.context.read().await.clone()
     }
 
     /// Load entries from storage
@@ -321,10 +364,10 @@ impl ConfigEntries {
         Ok(entry)
     }
 
-    /// Transition entry state with FSM validation
+    /// Set entry state with FSM validation
     ///
     /// Returns an error if the transition is invalid.
-    fn transition_state(
+    pub fn set_state(
         &self,
         entry_id: &str,
         new_state: ConfigEntryState,
@@ -355,6 +398,8 @@ impl ConfigEntries {
     ///
     /// Uses per-entry locking to allow concurrent setup of different entries
     /// while preventing concurrent setup/unload of the same entry.
+    ///
+    /// Requires context to be set via `set_context()` before calling.
     pub async fn setup(&self, entry_id: &str) -> ConfigEntriesResult<()> {
         // Get the entry and its setup_lock
         let entry = self
@@ -366,15 +411,27 @@ impl ConfigEntries {
             return Ok(());
         }
 
+        // Get context - required for setup
+        let context =
+            self.context.read().await.clone().ok_or_else(|| {
+                ConfigEntriesError::SetupFailed("Setup context not set".to_string())
+            })?;
+
         // Acquire per-entry lock
         let _lock = entry.setup_lock.lock().await;
 
         // Transition to SetupInProgress (validates we're in NotLoaded or error state)
-        self.transition_state(entry_id, ConfigEntryState::SetupInProgress, None)?;
+        self.set_state(entry_id, ConfigEntryState::SetupInProgress, None)?;
+
+        // Look up handler: first by domain, then wildcard
+        let handler = self
+            .setup_handlers
+            .get(&entry.domain)
+            .or_else(|| self.setup_handlers.get(WILDCARD_DOMAIN));
 
         // Call setup handler if registered
-        let result = if let Some(handler) = self.setup_handlers.get(&entry.domain) {
-            handler(&entry)
+        let result = if let Some(handler) = handler {
+            handler(&entry, &context)
         } else {
             // No handler, treat as success
             SetupResult::Success
@@ -382,26 +439,18 @@ impl ConfigEntries {
 
         match result {
             SetupResult::AuthFailed(reason) => {
-                self.transition_state(
-                    entry_id,
-                    ConfigEntryState::SetupError,
-                    Some(reason.clone()),
-                )?;
+                self.set_state(entry_id, ConfigEntryState::SetupError, Some(reason.clone()))?;
                 warn!("Auth failed for entry {}: {}", entry_id, reason);
                 // TODO: Trigger reauth flow
                 Err(ConfigEntriesError::SetupFailed(reason))
             }
             SetupResult::Failed(reason) => {
-                self.transition_state(
-                    entry_id,
-                    ConfigEntryState::SetupError,
-                    Some(reason.clone()),
-                )?;
+                self.set_state(entry_id, ConfigEntryState::SetupError, Some(reason.clone()))?;
                 warn!("Setup failed for entry {}: {}", entry_id, reason);
                 Err(ConfigEntriesError::SetupFailed(reason))
             }
             SetupResult::MigrationFailed => {
-                self.transition_state(entry_id, ConfigEntryState::MigrationError, None)?;
+                self.set_state(entry_id, ConfigEntryState::MigrationError, None)?;
                 warn!("Migration failed for entry {}", entry_id);
                 Err(ConfigEntriesError::SetupFailed(
                     "Migration failed".to_string(),
@@ -412,17 +461,13 @@ impl ConfigEntries {
                 if let Some(mut entry) = self.entries.get_mut(entry_id) {
                     entry.increment_tries();
                 }
-                self.transition_state(
-                    entry_id,
-                    ConfigEntryState::SetupRetry,
-                    Some(reason.clone()),
-                )?;
+                self.set_state(entry_id, ConfigEntryState::SetupRetry, Some(reason.clone()))?;
                 info!("Entry {} not ready, will retry: {}", entry_id, reason);
                 // TODO: Schedule retry with exponential backoff using calculate_retry_delay
                 Ok(())
             }
             SetupResult::Success => {
-                self.transition_state(entry_id, ConfigEntryState::Loaded, None)?;
+                self.set_state(entry_id, ConfigEntryState::Loaded, None)?;
                 info!("Setup completed for entry: {} ({})", entry.title, entry_id);
                 Ok(())
             }
@@ -432,6 +477,8 @@ impl ConfigEntries {
     /// Unload an entry
     ///
     /// Uses per-entry locking to allow concurrent unload of different entries.
+    ///
+    /// Requires context to be set via `set_context()` before calling.
     pub async fn unload(&self, entry_id: &str) -> ConfigEntriesResult<()> {
         // Get the entry and its setup_lock
         let entry = self
@@ -442,6 +489,12 @@ impl ConfigEntries {
         if !entry.state.is_recoverable() {
             return Err(ConfigEntriesError::CannotUnload(entry.state));
         }
+
+        // Get context - required for unload
+        let context =
+            self.context.read().await.clone().ok_or_else(|| {
+                ConfigEntriesError::UnloadFailed("Setup context not set".to_string())
+            })?;
 
         // Acquire per-entry lock
         let _lock = entry.setup_lock.lock().await;
@@ -454,8 +507,8 @@ impl ConfigEntries {
                 | ConfigEntryState::NotLoaded
         ) {
             if entry.state != ConfigEntryState::NotLoaded {
-                self.transition_state(entry_id, ConfigEntryState::UnloadInProgress, None)?;
-                self.transition_state(entry_id, ConfigEntryState::NotLoaded, None)?;
+                self.set_state(entry_id, ConfigEntryState::UnloadInProgress, None)?;
+                self.set_state(entry_id, ConfigEntryState::NotLoaded, None)?;
             }
             info!(
                 "Unloaded entry from error state: {} ({})",
@@ -465,11 +518,17 @@ impl ConfigEntries {
         }
 
         // Transition to UnloadInProgress
-        self.transition_state(entry_id, ConfigEntryState::UnloadInProgress, None)?;
+        self.set_state(entry_id, ConfigEntryState::UnloadInProgress, None)?;
+
+        // Look up handler: first by domain, then wildcard
+        let handler = self
+            .unload_handlers
+            .get(&entry.domain)
+            .or_else(|| self.unload_handlers.get(WILDCARD_DOMAIN));
 
         // Call unload handler if registered
-        let result = if let Some(handler) = self.unload_handlers.get(&entry.domain) {
-            handler(&entry)
+        let result = if let Some(handler) = handler {
+            handler(&entry, &context)
         } else {
             // No handler, treat as success
             UnloadResult::Success
@@ -477,7 +536,7 @@ impl ConfigEntries {
 
         match result {
             UnloadResult::Failed(reason) => {
-                self.transition_state(
+                self.set_state(
                     entry_id,
                     ConfigEntryState::FailedUnload,
                     Some(reason.clone()),
@@ -486,7 +545,7 @@ impl ConfigEntries {
                 Err(ConfigEntriesError::UnloadFailed(reason))
             }
             UnloadResult::NotSupported => {
-                self.transition_state(
+                self.set_state(
                     entry_id,
                     ConfigEntryState::FailedUnload,
                     Some("Unload not supported".to_string()),
@@ -497,7 +556,7 @@ impl ConfigEntries {
                 ))
             }
             UnloadResult::Success => {
-                self.transition_state(entry_id, ConfigEntryState::NotLoaded, None)?;
+                self.set_state(entry_id, ConfigEntryState::NotLoaded, None)?;
                 info!("Unloaded entry: {} ({})", entry.title, entry_id);
                 Ok(())
             }
@@ -554,6 +613,25 @@ mod tests {
     use crate::entry::ConfigEntrySource;
 
     use tempfile::TempDir;
+
+    fn create_test_context() -> SetupContext {
+        let bus = Arc::new(EventBus::new());
+        let states = Arc::new(StateStore::new(bus.clone()));
+        let services = Arc::new(ServiceRegistry::new());
+        SetupContext {
+            bus,
+            states,
+            services,
+        }
+    }
+
+    async fn create_test_manager_with_context() -> (TempDir, ConfigEntries) {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = Arc::new(Storage::new(temp_dir.path()));
+        let manager = ConfigEntries::new(storage);
+        manager.set_context(create_test_context()).await;
+        (temp_dir, manager)
+    }
 
     fn create_test_manager() -> (TempDir, ConfigEntries) {
         let temp_dir = TempDir::new().unwrap();
@@ -636,7 +714,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_setup_and_unload() {
-        let (_dir, manager) = create_test_manager();
+        let (_dir, manager) = create_test_manager_with_context().await;
 
         let entry = manager.add(ConfigEntry::new("hue", "Test")).await.unwrap();
         assert_eq!(
@@ -659,10 +737,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_setup_handler() {
-        let (_dir, manager) = create_test_manager();
+        let (_dir, manager) = create_test_manager_with_context().await;
 
         // Register a handler that always succeeds
-        manager.register_setup_handler("hue", Arc::new(|_entry| SetupResult::Success));
+        manager.register_setup_handler("hue", Arc::new(|_entry, _ctx| SetupResult::Success));
 
         let entry = manager.add(ConfigEntry::new("hue", "Test")).await.unwrap();
         manager.setup(&entry.entry_id).await.unwrap();
@@ -672,12 +750,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_setup_handler_failure() {
-        let (_dir, manager) = create_test_manager();
+        let (_dir, manager) = create_test_manager_with_context().await;
 
         // Register a handler that always fails
         manager.register_setup_handler(
             "hue",
-            Arc::new(|_entry| SetupResult::Failed("Connection failed".to_string())),
+            Arc::new(|_entry, _ctx| SetupResult::Failed("Connection failed".to_string())),
         );
 
         let entry = manager.add(ConfigEntry::new("hue", "Test")).await.unwrap();
@@ -692,12 +770,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_setup_not_ready_sets_retry_state() {
-        let (_dir, manager) = create_test_manager();
+        let (_dir, manager) = create_test_manager_with_context().await;
 
         // Register a handler that returns NotReady
         manager.register_setup_handler(
             "hue",
-            Arc::new(|_entry| SetupResult::NotReady("Device not responding".to_string())),
+            Arc::new(|_entry, _ctx| SetupResult::NotReady("Device not responding".to_string())),
         );
 
         let entry = manager.add(ConfigEntry::new("hue", "Test")).await.unwrap();
@@ -710,7 +788,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_unload_handler_failure() {
-        let (_dir, manager) = create_test_manager();
+        let (_dir, manager) = create_test_manager_with_context().await;
 
         // Setup first
         let entry = manager.add(ConfigEntry::new("hue", "Test")).await.unwrap();
@@ -719,7 +797,7 @@ mod tests {
         // Register an unload handler that fails
         manager.register_unload_handler(
             "hue",
-            Arc::new(|_entry| UnloadResult::Failed("Cleanup failed".to_string())),
+            Arc::new(|_entry, _ctx| UnloadResult::Failed("Cleanup failed".to_string())),
         );
 
         let result = manager.unload(&entry.entry_id).await;
@@ -732,7 +810,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_state_transition_rejected() {
-        let (_dir, manager) = create_test_manager();
+        let (_dir, manager) = create_test_manager_with_context().await;
 
         let entry = manager.add(ConfigEntry::new("hue", "Test")).await.unwrap();
         manager.setup(&entry.entry_id).await.unwrap(); // Now in Loaded state

@@ -246,6 +246,7 @@ impl StatesWrapper {
     }
 
     /// Count entities with optional domain filter
+    #[pyo3(signature = (domain_filter=None))]
     fn async_entity_ids_count(&self, domain_filter: Option<&str>) -> usize {
         if let Some(domain) = domain_filter {
             self.states
@@ -267,6 +268,7 @@ impl StatesWrapper {
     }
 
     /// Sync version of entity_ids
+    #[pyo3(signature = (domain_filter=None))]
     fn entity_ids(&self, domain_filter: Option<&str>) -> Vec<String> {
         if let Some(domain) = domain_filter {
             self.states
@@ -285,6 +287,7 @@ impl StatesWrapper {
     }
 
     /// Sync version of all
+    #[pyo3(signature = (domain_filter=None))]
     fn all<'py>(
         &self,
         py: Python<'py>,

@@ -301,6 +301,44 @@ impl PyBridge {
                 .unload_entry(domain, &py_hass, &py_entry, &self.async_bridge)
         })
     }
+
+    /// Create a setup handler that can be registered with ConfigEntries
+    ///
+    /// The returned handler calls `setup_config_entry` using context from SetupContext.
+    pub fn create_setup_handler(bridge: Arc<Self>) -> ha_config_entries::SetupHandler {
+        Arc::new(move |entry, ctx| {
+            match bridge.setup_config_entry(
+                entry,
+                ctx.bus.clone(),
+                ctx.states.clone(),
+                ctx.services.clone(),
+            ) {
+                Ok(true) => ha_config_entries::SetupResult::Success,
+                Ok(false) => ha_config_entries::SetupResult::Failed(
+                    "Integration doesn't support config entries".into(),
+                ),
+                Err(e) => ha_config_entries::SetupResult::Failed(e.to_string()),
+            }
+        })
+    }
+
+    /// Create an unload handler that can be registered with ConfigEntries
+    ///
+    /// The returned handler calls `unload_config_entry` using context from SetupContext.
+    pub fn create_unload_handler(bridge: Arc<Self>) -> ha_config_entries::UnloadHandler {
+        Arc::new(move |entry, ctx| {
+            match bridge.unload_config_entry(
+                entry,
+                ctx.bus.clone(),
+                ctx.states.clone(),
+                ctx.services.clone(),
+            ) {
+                Ok(true) => ha_config_entries::UnloadResult::Success,
+                Ok(false) => ha_config_entries::UnloadResult::NotSupported,
+                Err(e) => ha_config_entries::UnloadResult::Failed(e.to_string()),
+            }
+        })
+    }
 }
 
 #[cfg(test)]
