@@ -90,15 +90,11 @@ install-dev: $(VENV_STAMP) ## Install Python extension in development mode
 	cd crates/ha-py-bridge && $(CURDIR)/$(MATURIN) develop
 
 .PHONY: run
-run: $(VENV_STAMP) ## Run the Home Assistant server (strict mode - no native fallback)
+run: $(VENV_STAMP) ## Run the Home Assistant server
 	$(RUN_ENV) cargo run --bin homeassistant --features python
 
-.PHONY: run-fallback
-run-fallback: $(VENV_STAMP) ## Run with native HA fallback enabled (development only)
-	ALLOW_HA_NATIVE_FALLBACK=1 $(RUN_ENV) cargo run --bin homeassistant --features python
-
 .PHONY: run-release
-run-release: $(VENV_STAMP) ## Run the Home Assistant server in release mode (strict)
+run-release: $(VENV_STAMP) ## Run the Home Assistant server in release mode
 	$(RUN_ENV) cargo run --bin homeassistant --features python --release
 
 .PHONY: setup
