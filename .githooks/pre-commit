@@ -5,14 +5,14 @@ echo "Running pre-commit checks..."
 
 # Format check
 echo "Checking formatting..."
-cargo fmt --all -- --check
+make fmt-check
 
-# Alphabetization check
+# Alphabetization check (staged files only)
 echo "Checking alphabetization..."
 ./scripts/lint-alpha.py --staged
 
 # Lint
 echo "Running clippy..."
-cargo clippy --workspace --all-targets -- -D warnings
+make clippy
 
 echo "All pre-commit checks passed!"
