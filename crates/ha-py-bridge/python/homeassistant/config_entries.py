@@ -131,6 +131,18 @@ STORAGE_VERSION = getattr(_native, "STORAGE_VERSION", 1)
 # Registry for config flow handlers (maps domain to ConfigFlow class)
 HANDLERS = _native.HANDLERS
 
+# Discovery sources tuple (used by various components)
+DISCOVERY_SOURCES = _native.DISCOVERY_SOURCES
+
+# Signals
+signal_discovered_config_entry_removed = _native.signal_discovered_config_entry_removed
+
+# Re-export any remaining public symbols from native that we haven't explicitly listed
+# This ensures we don't miss exports that integrations might need
+for _name in dir(_native):
+    if not _name.startswith("_") and _name not in globals():
+        globals()[_name] = getattr(_native, _name)
+
 # Build __all__ list with all exported names
 __all__ = [
     # Rust-backed types
@@ -199,6 +211,8 @@ __all__ = [
     "STORAGE_KEY",
     "STORAGE_VERSION",
     "HANDLERS",
+    "DISCOVERY_SOURCES",
+    "signal_discovered_config_entry_removed",
 ]
 
 # For debugging: indicate which implementation is being used
