@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, info, warn};
 
+use crate::translations;
 use crate::AppState;
 
 use super::connection::ActiveConnection;
@@ -1004,20 +1005,24 @@ pub async fn handle_frontend_get_themes(
 pub async fn handle_frontend_get_translations(
     _conn: &Arc<ActiveConnection>,
     id: u64,
-    _language: Option<String>,
-    _category: Option<String>,
-    _integration: Option<Vec<String>>,
-    _config_flow: Option<bool>,
+    language: Option<String>,
+    category: Option<String>,
+    integration: Option<Vec<String>>,
+    config_flow: Option<bool>,
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> Result<(), String> {
-    // Return empty translations for now
+    let lang = language.as_deref().unwrap_or("en");
+    let cat = category.as_deref();
+    let is_config_flow = config_flow.unwrap_or(false);
+
+    let translations =
+        translations::get_translations(cat, integration.as_deref(), is_config_flow, lang);
+
     let result = OutgoingMessage::Result(ResultMessage {
         id,
         msg_type: "result",
         success: true,
-        result: Some(serde_json::json!({
-            "resources": {}
-        })),
+        result: Some(translations),
         error: None,
     });
     tx.send(result).await.map_err(|e| e.to_string())

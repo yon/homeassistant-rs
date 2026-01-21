@@ -9,6 +9,7 @@ pub mod config_flow;
 pub mod frontend;
 pub mod manifest;
 pub mod persistent_notification;
+pub mod translations;
 mod websocket;
 
 use axum::{
