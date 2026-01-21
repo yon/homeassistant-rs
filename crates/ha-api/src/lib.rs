@@ -693,12 +693,10 @@ async fn progress_config_flow(
         }
     };
 
-    // The user_input might be an empty object or have actual data
-    let input = if user_input.as_object().map(|o| o.is_empty()).unwrap_or(true) {
-        None
-    } else {
-        Some(user_input)
-    };
+    // In Python, user_input=None is different from user_input={}
+    // None means "show the form", {} means "user submitted empty form"
+    // We pass the input as-is to preserve this distinction
+    let input = Some(user_input);
 
     match config_flow_handler.progress_flow(&flow_id, input).await {
         Ok(flow_result) => {

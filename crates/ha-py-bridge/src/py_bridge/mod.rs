@@ -42,6 +42,7 @@ mod integration;
 mod pyclass_wrappers;
 mod runtime;
 mod service_bridge;
+mod wrappers;
 
 pub use async_bridge::{run_python_async, rust_future_to_python, AsyncBridge, PyFuture};
 pub use config_entry::{config_entry_to_python, create_config_entry_instance};

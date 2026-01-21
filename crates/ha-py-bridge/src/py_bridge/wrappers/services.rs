@@ -209,7 +209,7 @@ impl ServicesWrapper {
                             if result.is_none(py) {
                                 Ok(None)
                             } else {
-                                let json_val = py_to_json(result.bind(py))?;
+                                let json_val = py_to_json(result.bind(py));
                                 Ok(Some(json_val))
                             }
                         })
