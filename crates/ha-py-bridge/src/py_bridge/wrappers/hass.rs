@@ -66,6 +66,99 @@ impl HassWrapper {
         let integrations = PyDict::new_bound(py);
         data.set_item("integrations", &integrations)?;
 
+        // Initialize the network singleton - many components expect this to exist
+        // The network component stores a Network object in hass.data["network"]
+        // We need to initialize it so components can access network adapters
+        // We create a minimal Network object with real adapter info from ifaddr
+        let init_network_code = r#"
+def init_network(hass_data):
+    try:
+        import ifaddr
+        from ipaddress import ip_address
+
+        # Get source IP for default route detection
+        def get_source_ip(target_ip):
+            import socket
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect((target_ip, 80))
+                source = s.getsockname()[0]
+                s.close()
+                return source
+            except Exception:
+                return None
+
+        source_ip = get_source_ip("224.0.0.251")  # mDNS target
+        source_ip_address = ip_address(source_ip) if source_ip else None
+
+        # Convert ifaddr adapters to HA format
+        adapters = []
+        for adapter in ifaddr.get_adapters():
+            ipv4_list = []
+            ipv6_list = []
+            for ip in adapter.ips:
+                if isinstance(ip.ip, str):
+                    # IPv4
+                    ipv4_list.append({
+                        "address": ip.ip,
+                        "network_prefix": ip.network_prefix,
+                    })
+                elif isinstance(ip.ip, tuple):
+                    # IPv6
+                    ipv6_list.append({
+                        "address": ip.ip[0],
+                        "flowinfo": ip.ip[1],
+                        "scope_id": ip.ip[2],
+                        "network_prefix": ip.network_prefix,
+                    })
+
+            is_default = False
+            if source_ip_address and ipv4_list:
+                for ipv4 in ipv4_list:
+                    if ipv4["address"] == str(source_ip_address):
+                        is_default = True
+                        break
+
+            adapters.append({
+                "name": adapter.nice_name,
+                "index": getattr(adapter, 'index', None),
+                "enabled": is_default,  # Only enable the default adapter
+                "auto": is_default,
+                "default": is_default,
+                "ipv4": ipv4_list,
+                "ipv6": ipv6_list,
+            })
+
+        # Create a minimal Network-like object
+        class MinimalNetwork:
+            def __init__(self, adapters_list):
+                self.adapters = adapters_list
+                self._data = {}
+
+            @property
+            def configured_adapters(self):
+                return []
+
+        hass_data["network"] = MinimalNetwork(adapters)
+    except Exception as e:
+        import sys
+        print(f"Warning: Failed to initialize network component: {e}", file=sys.stderr)
+        # Fallback: create empty network
+        class MinimalNetwork:
+            def __init__(self):
+                self.adapters = []
+                self._data = {}
+            @property
+            def configured_adapters(self):
+                return []
+        hass_data["network"] = MinimalNetwork()
+"#;
+        let globals = PyDict::new_bound(py);
+        py.run_bound(init_network_code, Some(&globals), None)?;
+
+        let init_fn = globals.get_item("init_network")?.unwrap();
+        let _ = init_fn.call1((&data,));
+
         Ok(Self {
             instance_id: HASS_INSTANCE_COUNTER.fetch_add(1, Ordering::SeqCst),
             bus,

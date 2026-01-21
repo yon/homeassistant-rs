@@ -20,4 +20,3 @@ pub use hass::HassWrapper;
 pub use registries::RegistriesWrapper;
 pub use services::ServicesWrapper;
 pub use states::StatesWrapper;
-pub use unit_system::UnitSystemWrapper;
