@@ -5,7 +5,7 @@
 
 use ha_core::{Context, EntityId};
 use ha_event_bus::EventBus;
-use ha_state_machine::StateMachine;
+use ha_state_store::StateStore;
 use ha_template::TemplateEngine;
 use serde_json::json;
 use std::collections::HashMap;
@@ -13,14 +13,14 @@ use std::sync::Arc;
 
 fn setup_engine() -> TemplateEngine {
     let event_bus = Arc::new(EventBus::new());
-    let state_machine = Arc::new(StateMachine::new(event_bus));
+    let state_machine = Arc::new(StateStore::new(event_bus));
     TemplateEngine::new(state_machine)
 }
 
 #[allow(dead_code)]
 fn setup_engine_with_trackers() -> TemplateEngine {
     let event_bus = Arc::new(EventBus::new());
-    let state_machine = Arc::new(StateMachine::new(event_bus));
+    let state_machine = Arc::new(StateStore::new(event_bus));
 
     // Add device trackers with GPS coordinates
     state_machine.set(
@@ -93,7 +93,7 @@ fn test_iif_with_expression() {
 #[test]
 fn test_iif_with_state_check() {
     let event_bus = Arc::new(EventBus::new());
-    let state_machine = Arc::new(StateMachine::new(event_bus));
+    let state_machine = Arc::new(StateStore::new(event_bus));
     state_machine.set(
         EntityId::new("light", "test").unwrap(),
         "on",

@@ -1,23 +1,24 @@
-//! Python wrapper for StateMachine
+//! Python wrapper for StateStore (exposed to Python as StateStore for API compatibility)
 
 use std::sync::Arc;
 
 use ha_core::EntityId;
 use ha_event_bus::EventBus;
-use ha_state_machine::StateMachine;
+use ha_state_store::StateStore;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use super::py_types::{py_dict_to_hashmap, PyContext, PyState};
 
-/// Python wrapper for StateMachine
+/// Python wrapper for StateStore
+/// Note: Exposed to Python as "StateStore" for API compatibility with Home Assistant
 #[pyclass(name = "StateMachine")]
-pub struct PyStateMachine {
-    inner: Arc<StateMachine>,
+pub struct PyStateStore {
+    inner: Arc<StateStore>,
 }
 
 #[pymethods]
-impl PyStateMachine {
+impl PyStateStore {
     /// Set the state of an entity
     ///
     /// Args:
@@ -163,7 +164,8 @@ impl PyStateMachine {
     }
 
     fn __repr__(&self) -> String {
-        format!("StateMachine(entities={})", self.inner.entity_count())
+        // Use "StateStore" in repr for Python API compatibility
+        format!("StateStore(entities={})", self.inner.entity_count())
     }
 
     fn __len__(&self) -> usize {
@@ -171,18 +173,18 @@ impl PyStateMachine {
     }
 }
 
-impl PyStateMachine {
+impl PyStateStore {
     pub fn new(event_bus: Arc<EventBus>) -> Self {
         Self {
-            inner: Arc::new(StateMachine::new(event_bus)),
+            inner: Arc::new(StateStore::new(event_bus)),
         }
     }
 
-    pub fn from_arc(inner: Arc<StateMachine>) -> Self {
+    pub fn from_arc(inner: Arc<StateStore>) -> Self {
         Self { inner }
     }
 
-    pub fn inner(&self) -> &Arc<StateMachine> {
+    pub fn inner(&self) -> &Arc<StateStore> {
         &self.inner
     }
 }

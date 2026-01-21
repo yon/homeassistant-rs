@@ -1,7 +1,7 @@
 //! Python wrappers for Condition Evaluation
 
 use ha_automation::{Condition, ConditionEvaluator, EvalContext};
-use ha_state_machine::StateMachine;
+use ha_state_store::StateStore;
 use ha_template::TemplateEngine;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -154,7 +154,7 @@ impl PyConditionEvaluator {
 }
 
 impl PyConditionEvaluator {
-    pub fn new(state_machine: Arc<StateMachine>, template_engine: Arc<TemplateEngine>) -> Self {
+    pub fn new(state_machine: Arc<StateStore>, template_engine: Arc<TemplateEngine>) -> Self {
         Self {
             inner: Arc::new(ConditionEvaluator::new(state_machine, template_engine)),
         }

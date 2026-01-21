@@ -5,7 +5,7 @@
 //! whether automation actions should execute.
 
 use chrono::{Datelike, Local, NaiveTime};
-use ha_state_machine::StateMachine;
+use ha_state_store::StateStore;
 use ha_template::TemplateEngine;
 use regex::Regex;
 use std::collections::HashMap;
@@ -92,13 +92,13 @@ impl EvalContext {
 /// Evaluates conditions against the current system state using the state machine
 /// and template engine for state access and template rendering.
 pub struct ConditionEvaluator {
-    state_machine: Arc<StateMachine>,
+    state_machine: Arc<StateStore>,
     template_engine: Arc<TemplateEngine>,
 }
 
 impl ConditionEvaluator {
     /// Create a new condition evaluator
-    pub fn new(state_machine: Arc<StateMachine>, template_engine: Arc<TemplateEngine>) -> Self {
+    pub fn new(state_machine: Arc<StateStore>, template_engine: Arc<TemplateEngine>) -> Self {
         Self {
             state_machine,
             template_engine,
@@ -609,16 +609,16 @@ mod tests {
     use ha_core::{Context, EntityId};
     use ha_event_bus::EventBus;
 
-    fn make_test_evaluator() -> (ConditionEvaluator, Arc<StateMachine>) {
+    fn make_test_evaluator() -> (ConditionEvaluator, Arc<StateStore>) {
         let event_bus = Arc::new(EventBus::new());
-        let state_machine = Arc::new(StateMachine::new(event_bus));
+        let state_machine = Arc::new(StateStore::new(event_bus));
         let template_engine = Arc::new(TemplateEngine::new(state_machine.clone()));
         let evaluator = ConditionEvaluator::new(state_machine.clone(), template_engine);
         (evaluator, state_machine)
     }
 
     fn set_state(
-        sm: &StateMachine,
+        sm: &StateStore,
         entity_id: &str,
         state: &str,
         attrs: HashMap<String, serde_json::Value>,

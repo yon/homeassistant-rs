@@ -26,7 +26,7 @@ use ha_core::{Context, EntityId, Event};
 use ha_event_bus::EventBus;
 use ha_registries::Registries;
 use ha_service_registry::ServiceRegistry;
-use ha_state_machine::StateMachine;
+use ha_state_store::StateStore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -60,7 +60,7 @@ pub fn new_application_credentials_store() -> ApplicationCredentialsStore {
 #[derive(Clone)]
 pub struct AppState {
     pub event_bus: Arc<EventBus>,
-    pub state_machine: Arc<StateMachine>,
+    pub state_machine: Arc<StateStore>,
     pub service_registry: Arc<ServiceRegistry>,
     pub config: Arc<CoreConfig>,
     pub components: Arc<Vec<String>>,
@@ -901,7 +901,7 @@ mod tests {
         use ha_registries::Storage;
 
         let event_bus = Arc::new(EventBus::new());
-        let state_machine = Arc::new(StateMachine::new(event_bus.clone()));
+        let state_machine = Arc::new(StateStore::new(event_bus.clone()));
         let service_registry = Arc::new(ServiceRegistry::new());
         // Use a temp directory for test registries
         let temp_dir = std::env::temp_dir().join("ha-api-test");

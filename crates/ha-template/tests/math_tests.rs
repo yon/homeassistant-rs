@@ -4,13 +4,13 @@
 //! Based on Python Home Assistant's test_template.py math tests.
 
 use ha_event_bus::EventBus;
-use ha_state_machine::StateMachine;
+use ha_state_store::StateStore;
 use ha_template::TemplateEngine;
 use std::sync::Arc;
 
 fn setup_engine() -> TemplateEngine {
     let event_bus = Arc::new(EventBus::new());
-    let state_machine = Arc::new(StateMachine::new(event_bus));
+    let state_machine = Arc::new(StateStore::new(event_bus));
     TemplateEngine::new(state_machine)
 }
 

@@ -33,7 +33,7 @@
 //!
 //! ```ignore
 //! use ha_template::TemplateEngine;
-//! use ha_state_machine::StateMachine;
+//! use ha_state_store::StateStore;
 //!
 //! let engine = TemplateEngine::new(state_machine);
 //!

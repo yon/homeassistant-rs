@@ -23,6 +23,9 @@ ulid = { workspace = true }
 # Error handling
 thiserror = { workspace = true }
 
+# Random (for retry jitter)
+rand = "0.8"
+
 # Async
 tokio = { workspace = true, features = ["sync"] }
 

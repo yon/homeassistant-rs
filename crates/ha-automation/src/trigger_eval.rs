@@ -7,7 +7,7 @@
 use chrono::{DateTime, Local, NaiveTime, Timelike, Utc};
 use ha_core::events::{StateChangedData, STATE_CHANGED};
 use ha_core::{Event, State};
-use ha_state_machine::StateMachine;
+use ha_state_store::StateStore;
 use ha_template::TemplateEngine;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -47,13 +47,13 @@ impl TriggerEvalContext {
 /// Evaluates whether incoming events match trigger configurations and produces
 /// TriggerData when they do.
 pub struct TriggerEvaluator {
-    state_machine: Arc<StateMachine>,
+    state_machine: Arc<StateStore>,
     template_engine: Arc<TemplateEngine>,
 }
 
 impl TriggerEvaluator {
     /// Create a new trigger evaluator
-    pub fn new(state_machine: Arc<StateMachine>, template_engine: Arc<TemplateEngine>) -> Self {
+    pub fn new(state_machine: Arc<StateStore>, template_engine: Arc<TemplateEngine>) -> Self {
         Self {
             state_machine,
             template_engine,
@@ -783,9 +783,9 @@ mod tests {
     use ha_core::{Context, EntityId};
     use ha_event_bus::EventBus;
 
-    fn make_test_evaluator() -> (TriggerEvaluator, Arc<StateMachine>, Arc<EventBus>) {
+    fn make_test_evaluator() -> (TriggerEvaluator, Arc<StateStore>, Arc<EventBus>) {
         let event_bus = Arc::new(EventBus::new());
-        let state_machine = Arc::new(StateMachine::new(event_bus.clone()));
+        let state_machine = Arc::new(StateStore::new(event_bus.clone()));
         let template_engine = Arc::new(TemplateEngine::new(state_machine.clone()));
         let evaluator = TriggerEvaluator::new(state_machine.clone(), template_engine);
         (evaluator, state_machine, event_bus)

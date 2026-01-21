@@ -18,7 +18,7 @@ use ha_api::ApplicationCredentialsStore;
 use ha_event_bus::EventBus;
 use ha_registries::Registries;
 use ha_service_registry::ServiceRegistry;
-use ha_state_machine::StateMachine;
+use ha_state_store::StateStore;
 
 use super::async_bridge::AsyncBridge;
 use super::hass_wrapper::create_hass_wrapper_for_config_flow;
@@ -296,7 +296,7 @@ pub struct ConfigFlowManager {
     /// Event bus reference
     event_bus: Arc<EventBus>,
     /// State machine reference
-    state_machine: Arc<StateMachine>,
+    state_machine: Arc<StateStore>,
     /// Service registry reference
     service_registry: Arc<ServiceRegistry>,
     /// Registries reference
@@ -313,7 +313,7 @@ impl ConfigFlowManager {
     /// Create a new ConfigFlowManager
     pub fn new(
         event_bus: Arc<EventBus>,
-        state_machine: Arc<StateMachine>,
+        state_machine: Arc<StateStore>,
         service_registry: Arc<ServiceRegistry>,
         registries: Arc<Registries>,
         config_dir: Option<PathBuf>,

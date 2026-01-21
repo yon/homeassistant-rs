@@ -26,7 +26,9 @@ pub use py_area_registry::{PyAreaEntry, PyAreaRegistry};
 // Note: PyAutomation and PyAutomationManager are not yet exposed in lib.rs
 // pub use py_automation::{PyAutomation, PyAutomationManager};
 pub use py_condition::{PyConditionEvaluator, PyEvalContext};
-pub use py_config_entries::{PyConfigEntries, PyConfigEntry};
+pub use py_config_entries::{
+    InvalidStateTransition, PyConfigEntries, PyConfigEntry, PyConfigEntryState,
+};
 pub use py_device_registry::{PyDeviceEntry, PyDeviceRegistry};
 pub use py_entity_registry::{PyEntityEntry, PyEntityRegistry};
 pub use py_event_bus::{PyEventBus, PyUnsubscribe};
@@ -34,7 +36,7 @@ pub use py_floor_registry::{PyFloorEntry, PyFloorRegistry};
 pub use py_home_assistant::PyHomeAssistant;
 pub use py_label_registry::{PyLabelEntry, PyLabelRegistry};
 pub use py_service_registry::PyServiceRegistry;
-pub use py_state_machine::PyStateMachine;
+pub use py_state_machine::PyStateStore;
 pub use py_storage::PyStorage;
 pub use py_template::{PyTemplate, PyTemplateEngine};
 pub use py_trigger::{PyTriggerData, PyTriggerEvalContext, PyTriggerEvaluator};

@@ -7,7 +7,7 @@ use crate::error::TemplateResult;
 use crate::filters;
 use crate::globals;
 use crate::states::{self, StatesObject};
-use ha_state_machine::StateMachine;
+use ha_state_store::StateStore;
 use minijinja::{Environment, Value};
 use std::sync::Arc;
 use tracing::debug;
@@ -26,7 +26,7 @@ pub struct TemplateEngine {
 
 impl TemplateEngine {
     /// Create a new template engine with access to the state machine
-    pub fn new(state_machine: Arc<StateMachine>) -> Self {
+    pub fn new(state_machine: Arc<StateStore>) -> Self {
         let states = Arc::new(StatesObject::new(state_machine));
         let mut env = Environment::new();
 
@@ -337,7 +337,7 @@ pub fn create_test_engine() -> TemplateEngine {
     use ha_event_bus::EventBus;
 
     let event_bus = Arc::new(EventBus::new());
-    let state_machine = Arc::new(StateMachine::new(event_bus));
+    let state_machine = Arc::new(StateStore::new(event_bus));
     TemplateEngine::new(state_machine)
 }
 
@@ -414,7 +414,7 @@ mod tests {
 
     fn make_test_engine() -> TemplateEngine {
         let event_bus = Arc::new(EventBus::new());
-        let state_machine = Arc::new(StateMachine::new(event_bus));
+        let state_machine = Arc::new(StateStore::new(event_bus));
 
         // Add test states
         state_machine.set(

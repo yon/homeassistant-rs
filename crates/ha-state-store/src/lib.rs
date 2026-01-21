@@ -1,6 +1,6 @@
-//! State machine with domain indexing for Home Assistant
+//! Entity state storage with domain indexing for Home Assistant
 //!
-//! This crate provides the StateMachine, which tracks the current state of
+//! This crate provides the StateStore, which tracks the current state of
 //! all entities in Home Assistant. It maintains indices by domain for
 //! efficient queries and fires STATE_CHANGED events on the event bus.
 
@@ -11,14 +11,14 @@ use ha_event_bus::EventBus;
 use std::sync::Arc;
 use tracing::{debug, instrument, trace};
 
-/// The state machine tracks all entity states
+/// The state store tracks all entity states
 ///
-/// The StateMachine is responsible for:
+/// The StateStore is responsible for:
 /// - Storing the current state of all entities
 /// - Maintaining a domain index for efficient domain-based queries
 /// - Firing STATE_CHANGED events when states change
 /// - Providing thread-safe concurrent access to states
-pub struct StateMachine {
+pub struct StateStore {
     /// All entity states keyed by entity_id string
     states: DashMap<String, State>,
     /// Index of entity_ids by domain
@@ -27,7 +27,7 @@ pub struct StateMachine {
     event_bus: Arc<EventBus>,
 }
 
-impl StateMachine {
+impl StateStore {
     /// Create a new state machine with the given event bus
     pub fn new(event_bus: Arc<EventBus>) -> Self {
         Self {
@@ -171,8 +171,8 @@ impl StateMachine {
     }
 }
 
-/// Thread-safe wrapper for StateMachine
-pub type SharedStateMachine = Arc<StateMachine>;
+/// Thread-safe wrapper for StateStore
+pub type SharedStateStore = Arc<StateStore>;
 
 // Unit tests removed - covered by HA native tests via `make ha-compat-test`
-// See tests/ha_compat/ for comprehensive StateMachine testing through Python bindings
+// See tests/ha_compat/ for comprehensive StateStore testing through Python bindings
