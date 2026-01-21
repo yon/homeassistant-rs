@@ -3,7 +3,7 @@
 //! Provides the `states` object that allows templates to access entity states.
 
 use ha_core::State;
-use ha_state_machine::StateMachine;
+use ha_state_store::StateStore;
 use minijinja::value::{Object, ObjectRepr, Value};
 use minijinja::{Error, ErrorKind};
 use std::collections::HashMap;
@@ -30,7 +30,7 @@ fn value_to_bool(value: &Value) -> Option<bool> {
 /// - `states.domain` - Get domain proxy for `states.domain.entity`
 #[derive(Clone)]
 pub struct StatesObject {
-    state_machine: Arc<StateMachine>,
+    state_machine: Arc<StateStore>,
 }
 
 impl std::fmt::Debug for StatesObject {
@@ -40,7 +40,7 @@ impl std::fmt::Debug for StatesObject {
 }
 
 impl StatesObject {
-    pub fn new(state_machine: Arc<StateMachine>) -> Self {
+    pub fn new(state_machine: Arc<StateStore>) -> Self {
         Self { state_machine }
     }
 
@@ -137,7 +137,7 @@ impl Object for StatesObject {
 #[derive(Clone)]
 struct DomainProxy {
     domain: String,
-    state_machine: Arc<StateMachine>,
+    state_machine: Arc<StateStore>,
 }
 
 impl std::fmt::Debug for DomainProxy {
@@ -330,9 +330,9 @@ mod tests {
     use ha_event_bus::EventBus;
     use std::collections::HashMap;
 
-    fn make_test_setup() -> (Arc<StateMachine>, StatesObject) {
+    fn make_test_setup() -> (Arc<StateStore>, StatesObject) {
         let event_bus = Arc::new(EventBus::new());
-        let state_machine = Arc::new(StateMachine::new(event_bus));
+        let state_machine = Arc::new(StateStore::new(event_bus));
 
         // Add some test states
         state_machine.set(

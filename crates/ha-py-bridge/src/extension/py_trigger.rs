@@ -2,7 +2,7 @@
 
 use ha_automation::{Trigger, TriggerData, TriggerEvalContext, TriggerEvaluator};
 use ha_core::Event;
-use ha_state_machine::StateMachine;
+use ha_state_store::StateStore;
 use ha_template::TemplateEngine;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -82,7 +82,7 @@ impl PyTriggerEvaluator {
 }
 
 impl PyTriggerEvaluator {
-    pub fn new(state_machine: Arc<StateMachine>, template_engine: Arc<TemplateEngine>) -> Self {
+    pub fn new(state_machine: Arc<StateStore>, template_engine: Arc<TemplateEngine>) -> Self {
         Self {
             inner: Arc::new(TriggerEvaluator::new(state_machine, template_engine)),
         }

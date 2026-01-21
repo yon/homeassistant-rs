@@ -1,24 +1,24 @@
-//! StatesWrapper - wraps Rust StateMachine for Python access
+//! StatesWrapper - wraps Rust StateStore for Python access
 
 use super::util::{json_to_py, py_to_json};
 use ha_core::{Context, EntityId};
-use ha_state_machine::StateMachine;
+use ha_state_store::StateStore;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Python wrapper for the Rust StateMachine
+/// Python wrapper for the Rust StateStore
 ///
 /// Provides direct access to state storage without Python intermediaries.
 #[pyclass(name = "StatesWrapper")]
 pub struct StatesWrapper {
-    states: Arc<StateMachine>,
+    states: Arc<StateStore>,
 }
 
 impl StatesWrapper {
-    pub fn new(states: Arc<StateMachine>) -> Self {
+    pub fn new(states: Arc<StateStore>) -> Self {
         Self { states }
     }
 }
@@ -83,7 +83,7 @@ impl StatesWrapper {
 
     /// Set the state of an entity (async version)
     ///
-    /// Note: This is actually sync since Rust StateMachine operations are fast.
+    /// Note: This is actually sync since Rust StateStore operations are fast.
     /// The async interface is for compatibility with HA's API.
     #[pyo3(signature = (entity_id, new_state, attributes=None, force_update=None, context=None))]
     fn async_set<'py>(
@@ -328,7 +328,7 @@ mod tests {
 
         Python::with_gil(|py| {
             let bus = Arc::new(EventBus::new());
-            let states = Arc::new(StateMachine::new(bus));
+            let states = Arc::new(StateStore::new(bus));
             let wrapper = StatesWrapper::new(states);
 
             // Test set and get

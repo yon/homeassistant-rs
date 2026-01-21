@@ -5,7 +5,7 @@
 
 use ha_core::{Context, EntityId, ServiceCall, SupportsResponse};
 use ha_service_registry::{ServiceDescription, ServiceRegistry};
-use ha_state_machine::StateMachine;
+use ha_state_store::StateStore;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -33,7 +33,7 @@ pub struct InputBooleanConfig {
 /// Load input_boolean entities from config and register them in the state machine
 pub fn load_input_booleans(
     config: &HashMap<String, Option<InputBooleanConfig>>,
-    states: &StateMachine,
+    states: &StateStore,
 ) -> usize {
     let mut count = 0;
 
@@ -79,7 +79,7 @@ pub fn load_input_booleans(
 }
 
 /// Register input_boolean services
-pub fn register_input_boolean_services(services: &ServiceRegistry, states: Arc<StateMachine>) {
+pub fn register_input_boolean_services(services: &ServiceRegistry, states: Arc<StateStore>) {
     const DOMAIN: &str = "input_boolean";
 
     // turn_on service
@@ -206,7 +206,7 @@ fn default_mode() -> String {
 /// Load input_number entities from config and register them in the state machine
 pub fn load_input_numbers(
     config: &HashMap<String, InputNumberConfig>,
-    states: &StateMachine,
+    states: &StateStore,
 ) -> usize {
     let mut count = 0;
 
@@ -274,7 +274,7 @@ fn format_number(value: f64) -> String {
 }
 
 /// Register input_number services
-pub fn register_input_number_services(services: &ServiceRegistry, states: Arc<StateMachine>) {
+pub fn register_input_number_services(services: &ServiceRegistry, states: Arc<StateStore>) {
     const DOMAIN: &str = "input_number";
 
     // set_value service

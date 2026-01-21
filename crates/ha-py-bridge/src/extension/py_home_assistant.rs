@@ -8,14 +8,14 @@ use std::sync::{
 use ha_automation::{ConditionEvaluator, TriggerEvaluator};
 use ha_event_bus::EventBus;
 use ha_service_registry::ServiceRegistry;
-use ha_state_machine::StateMachine;
+use ha_state_store::StateStore;
 use ha_template::TemplateEngine;
 use pyo3::prelude::*;
 use tokio::runtime::Handle;
 use tokio::sync::Notify;
 
 use super::{
-    PyConditionEvaluator, PyEventBus, PyServiceRegistry, PyStateMachine, PyTemplateEngine,
+    PyConditionEvaluator, PyEventBus, PyServiceRegistry, PyStateStore, PyTemplateEngine,
     PyTriggerEvaluator,
 };
 
@@ -85,7 +85,7 @@ impl TaskTracker {
 #[pyclass(name = "HomeAssistant")]
 pub struct PyHomeAssistant {
     bus: Arc<EventBus>,
-    states: Arc<StateMachine>,
+    states: Arc<StateStore>,
     services: Arc<ServiceRegistry>,
     template_engine: Arc<TemplateEngine>,
     condition_evaluator: Arc<ConditionEvaluator>,
@@ -98,7 +98,7 @@ impl PyHomeAssistant {
     #[new]
     fn new() -> Self {
         let bus = Arc::new(EventBus::new());
-        let states = Arc::new(StateMachine::new(bus.clone()));
+        let states = Arc::new(StateStore::new(bus.clone()));
         let services = Arc::new(ServiceRegistry::new());
         let template_engine = Arc::new(TemplateEngine::new(states.clone()));
         let condition_evaluator = Arc::new(ConditionEvaluator::new(
@@ -130,8 +130,8 @@ impl PyHomeAssistant {
 
     /// Get the state machine
     #[getter]
-    fn states(&self) -> PyStateMachine {
-        PyStateMachine::from_arc(self.states.clone())
+    fn states(&self) -> PyStateStore {
+        PyStateStore::from_arc(self.states.clone())
     }
 
     /// Get the service registry
@@ -246,7 +246,7 @@ impl PyHomeAssistant {
         &self.bus
     }
 
-    pub fn states_arc(&self) -> &Arc<StateMachine> {
+    pub fn states_arc(&self) -> &Arc<StateStore> {
         &self.states
     }
 

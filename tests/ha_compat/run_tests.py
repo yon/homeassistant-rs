@@ -64,6 +64,36 @@ TEST_CATEGORIES = {
     ],
 
     # ==========================================================================
+    # Config Entry State Transitions - tests for FSM validation
+    # ==========================================================================
+    "config_entries_state": [
+        # Setup retry behavior
+        "test_config_entries.py::test_setup_raise_not_ready",
+        "test_config_entries.py::test_setup_raise_not_ready_from_exception",
+        "test_config_entries.py::test_setup_retrying_during_unload",
+        "test_config_entries.py::test_setup_retrying_during_unload_before_started",
+        "test_config_entries.py::test_reload_during_setup_retrying_waits",
+        # Unload during various states
+        "test_config_entries.py::test_entry_unload",
+        "test_config_entries.py::test_entry_unload_failed_to_load",
+        "test_config_entries.py::test_entry_unload_invalid_state",
+        # Setup state validation
+        "test_config_entries.py::test_entry_setup_succeed",
+        "test_config_entries.py::test_entry_setup_invalid_state",
+        # Lock validation
+        "test_config_entries.py::test_entry_setup_without_lock_raises",
+        "test_config_entries.py::test_entry_unload_without_lock_raises",
+        # State change listeners
+        "test_config_entries.py::test_entry_state_change_calls_listener",
+        "test_config_entries.py::test_entry_state_change_wrapped_in_on_unload",
+        "test_config_entries.py::test_entry_state_change_listener_removed",
+        "test_config_entries.py::test_entry_state_change_error_does_not_block_transition",
+        # Error states
+        "test_config_entries.py::test_setup_raise_entry_error",
+        "test_config_entries.py::test_setup_raise_entry_error_from_first_coordinator_update",
+    ],
+
+    # ==========================================================================
     # Core Types (tests/test_core.py) - ha-core crate
     # ==========================================================================
     "state": [

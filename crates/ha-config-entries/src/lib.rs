@@ -17,6 +17,7 @@
 
 pub mod entry;
 pub mod manager;
+pub mod state_machine;
 
 // Re-export main types
 pub use entry::{
@@ -27,3 +28,5 @@ pub use manager::{
     ConfigEntries, ConfigEntriesData, ConfigEntriesError, ConfigEntriesResult, SetupHandler,
     STORAGE_KEY, STORAGE_MINOR_VERSION, STORAGE_VERSION,
 };
+
+pub use state_machine::{calculate_retry_delay, InvalidTransition};

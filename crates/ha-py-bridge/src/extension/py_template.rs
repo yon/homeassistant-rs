@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::sync::Arc;
 
-use super::py_state_machine::PyStateMachine;
+use super::py_state_machine::PyStateStore;
 use super::py_types::py_to_json;
 
 /// Python wrapper for TemplateEngine
@@ -23,7 +23,7 @@ impl PyTemplate {
     ///     template: The template string
     ///     state_machine: The state machine to use for state access
     #[new]
-    fn new(template: String, state_machine: &PyStateMachine) -> Self {
+    fn new(template: String, state_machine: &PyStateStore) -> Self {
         let engine = TemplateEngine::new(state_machine.inner().clone());
         Self { template, engine }
     }
@@ -113,7 +113,7 @@ pub struct PyTemplateEngine {
 impl PyTemplateEngine {
     /// Create a new template engine
     #[new]
-    fn new(state_machine: &PyStateMachine) -> Self {
+    fn new(state_machine: &PyStateStore) -> Self {
         Self {
             inner: Arc::new(TemplateEngine::new(state_machine.inner().clone())),
         }

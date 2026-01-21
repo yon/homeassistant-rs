@@ -1,7 +1,7 @@
 //! Script executor
 //!
 //! Executes script actions with proper context, variable handling, and control flow.
-//! The executor is wired to core systems: ServiceRegistry, StateMachine, EventBus,
+//! The executor is wired to core systems: ServiceRegistry, StateStore, EventBus,
 //! TemplateEngine, and ConditionEvaluator.
 
 use crate::action::{Action, ChooseConditions, DelaySpec, RepeatConfig, RepeatCount};
@@ -9,7 +9,7 @@ use ha_automation::{ConditionEvaluator, EvalContext, TriggerData};
 use ha_core::Context;
 use ha_event_bus::EventBus;
 use ha_service_registry::ServiceRegistry;
-use ha_state_machine::StateMachine;
+use ha_state_store::StateStore;
 use ha_template::TemplateEngine;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -205,7 +205,7 @@ pub struct WaitContext {
 /// Executes script actions with access to core Home Assistant systems.
 pub struct ScriptExecutor {
     #[allow(dead_code)] // Reserved for future use (state access in actions)
-    state_machine: Arc<StateMachine>,
+    state_machine: Arc<StateStore>,
     service_registry: Arc<ServiceRegistry>,
     template_engine: Arc<TemplateEngine>,
     event_bus: Arc<EventBus>,
@@ -215,7 +215,7 @@ pub struct ScriptExecutor {
 impl ScriptExecutor {
     /// Create a new script executor with all required systems
     pub fn new(
-        state_machine: Arc<StateMachine>,
+        state_machine: Arc<StateStore>,
         service_registry: Arc<ServiceRegistry>,
         template_engine: Arc<TemplateEngine>,
         event_bus: Arc<EventBus>,

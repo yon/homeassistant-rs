@@ -28,7 +28,7 @@ ha-py-bridge = { path = "../ha-py-bridge", default-features = false, features = 
 ha-registries = { workspace = true }
 ha-script = { workspace = true }
 ha-service-registry = { workspace = true }
-ha-state-machine = { workspace = true }
+ha-state-store = { workspace = true }
 ha-template = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

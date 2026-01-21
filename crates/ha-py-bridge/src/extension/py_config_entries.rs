@@ -1,5 +1,8 @@
 //! Python wrappers for ConfigEntries
 
+// Allow unexpected_cfgs from PyO3's create_exception macro (gil-refs feature check)
+#![allow(unexpected_cfgs)]
+
 use ha_config_entries::{
     ConfigEntries, ConfigEntry, ConfigEntryDisabledBy, ConfigEntrySource, ConfigEntryState,
     ConfigEntryUpdate,
@@ -12,18 +15,105 @@ use tokio::runtime::Handle;
 use super::py_storage::PyStorage;
 use super::py_types::{json_to_py, py_to_json};
 
-fn state_to_str(state: &ConfigEntryState) -> &'static str {
-    match state {
-        ConfigEntryState::FailedUnload => "failed_unload",
-        ConfigEntryState::Loaded => "loaded",
-        ConfigEntryState::MigrationError => "migration_error",
-        ConfigEntryState::NotLoaded => "not_loaded",
-        ConfigEntryState::SetupError => "setup_error",
-        ConfigEntryState::SetupInProgress => "setup_in_progress",
-        ConfigEntryState::SetupRetry => "setup_retry",
-        ConfigEntryState::UnloadInProgress => "unload_in_progress",
+/// Python enum for ConfigEntryState
+/// Matches Python HA's ConfigEntryState exactly
+#[pyclass(name = "ConfigEntryState", eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PyConfigEntryState {
+    #[pyo3(name = "NOT_LOADED")]
+    NotLoaded,
+    #[pyo3(name = "SETUP_IN_PROGRESS")]
+    SetupInProgress,
+    #[pyo3(name = "LOADED")]
+    Loaded,
+    #[pyo3(name = "SETUP_ERROR")]
+    SetupError,
+    #[pyo3(name = "SETUP_RETRY")]
+    SetupRetry,
+    #[pyo3(name = "MIGRATION_ERROR")]
+    MigrationError,
+    #[pyo3(name = "UNLOAD_IN_PROGRESS")]
+    UnloadInProgress,
+    #[pyo3(name = "FAILED_UNLOAD")]
+    FailedUnload,
+}
+
+#[pymethods]
+impl PyConfigEntryState {
+    /// Check if the entry can be unloaded/reloaded from this state
+    fn is_recoverable(&self) -> bool {
+        matches!(
+            self,
+            PyConfigEntryState::Loaded
+                | PyConfigEntryState::SetupError
+                | PyConfigEntryState::SetupRetry
+                | PyConfigEntryState::NotLoaded
+        )
+    }
+
+    fn __repr__(&self) -> &'static str {
+        match self {
+            PyConfigEntryState::FailedUnload => "<ConfigEntryState.FAILED_UNLOAD>",
+            PyConfigEntryState::Loaded => "<ConfigEntryState.LOADED>",
+            PyConfigEntryState::MigrationError => "<ConfigEntryState.MIGRATION_ERROR>",
+            PyConfigEntryState::NotLoaded => "<ConfigEntryState.NOT_LOADED>",
+            PyConfigEntryState::SetupError => "<ConfigEntryState.SETUP_ERROR>",
+            PyConfigEntryState::SetupInProgress => "<ConfigEntryState.SETUP_IN_PROGRESS>",
+            PyConfigEntryState::SetupRetry => "<ConfigEntryState.SETUP_RETRY>",
+            PyConfigEntryState::UnloadInProgress => "<ConfigEntryState.UNLOAD_IN_PROGRESS>",
+        }
+    }
+
+    fn __str__(&self) -> &'static str {
+        match self {
+            PyConfigEntryState::FailedUnload => "failed_unload",
+            PyConfigEntryState::Loaded => "loaded",
+            PyConfigEntryState::MigrationError => "migration_error",
+            PyConfigEntryState::NotLoaded => "not_loaded",
+            PyConfigEntryState::SetupError => "setup_error",
+            PyConfigEntryState::SetupInProgress => "setup_in_progress",
+            PyConfigEntryState::SetupRetry => "setup_retry",
+            PyConfigEntryState::UnloadInProgress => "unload_in_progress",
+        }
     }
 }
+
+impl From<ConfigEntryState> for PyConfigEntryState {
+    fn from(state: ConfigEntryState) -> Self {
+        match state {
+            ConfigEntryState::FailedUnload => PyConfigEntryState::FailedUnload,
+            ConfigEntryState::Loaded => PyConfigEntryState::Loaded,
+            ConfigEntryState::MigrationError => PyConfigEntryState::MigrationError,
+            ConfigEntryState::NotLoaded => PyConfigEntryState::NotLoaded,
+            ConfigEntryState::SetupError => PyConfigEntryState::SetupError,
+            ConfigEntryState::SetupInProgress => PyConfigEntryState::SetupInProgress,
+            ConfigEntryState::SetupRetry => PyConfigEntryState::SetupRetry,
+            ConfigEntryState::UnloadInProgress => PyConfigEntryState::UnloadInProgress,
+        }
+    }
+}
+
+impl From<PyConfigEntryState> for ConfigEntryState {
+    fn from(state: PyConfigEntryState) -> Self {
+        match state {
+            PyConfigEntryState::FailedUnload => ConfigEntryState::FailedUnload,
+            PyConfigEntryState::Loaded => ConfigEntryState::Loaded,
+            PyConfigEntryState::MigrationError => ConfigEntryState::MigrationError,
+            PyConfigEntryState::NotLoaded => ConfigEntryState::NotLoaded,
+            PyConfigEntryState::SetupError => ConfigEntryState::SetupError,
+            PyConfigEntryState::SetupInProgress => ConfigEntryState::SetupInProgress,
+            PyConfigEntryState::SetupRetry => ConfigEntryState::SetupRetry,
+            PyConfigEntryState::UnloadInProgress => ConfigEntryState::UnloadInProgress,
+        }
+    }
+}
+
+// Exception raised when an invalid state transition is attempted
+pyo3::create_exception!(
+    ha_core_rs,
+    InvalidStateTransition,
+    pyo3::exceptions::PyException
+);
 
 fn source_to_str(source: &ConfigEntrySource) -> &'static str {
     match source {
@@ -129,8 +219,8 @@ impl PyConfigEntry {
     }
 
     #[getter]
-    fn state(&self) -> &str {
-        state_to_str(&self.inner.state)
+    fn state(&self) -> PyConfigEntryState {
+        self.inner.state.into()
     }
 
     #[getter]

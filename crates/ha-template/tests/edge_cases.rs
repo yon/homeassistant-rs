@@ -5,7 +5,7 @@
 
 use ha_core::{Context, EntityId};
 use ha_event_bus::EventBus;
-use ha_state_machine::StateMachine;
+use ha_state_store::StateStore;
 use ha_template::TemplateEngine;
 use serde_json::json;
 use std::collections::HashMap;
@@ -13,13 +13,13 @@ use std::sync::Arc;
 
 fn setup_engine() -> TemplateEngine {
     let event_bus = Arc::new(EventBus::new());
-    let state_machine = Arc::new(StateMachine::new(event_bus));
+    let state_machine = Arc::new(StateStore::new(event_bus));
     TemplateEngine::new(state_machine)
 }
 
 fn setup_engine_with_states() -> TemplateEngine {
     let event_bus = Arc::new(EventBus::new());
-    let state_machine = Arc::new(StateMachine::new(event_bus));
+    let state_machine = Arc::new(StateStore::new(event_bus));
 
     // Add various edge case states
     state_machine.set(

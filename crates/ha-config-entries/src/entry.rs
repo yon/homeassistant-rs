@@ -5,6 +5,10 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+use crate::state_machine::InvalidTransition;
 
 /// Config entry lifecycle state
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -135,6 +139,15 @@ pub struct ConfigEntry {
     #[serde(skip, default)]
     pub reason: Option<String>,
 
+    /// Per-entry setup/unload lock (not persisted)
+    /// Wrapped in Arc so ConfigEntry can still be Clone
+    #[serde(skip)]
+    pub setup_lock: Arc<Mutex<()>>,
+
+    /// Number of setup retry attempts (not persisted)
+    #[serde(skip, default)]
+    pub tries: u32,
+
     /// Prevent auto-entity creation
     #[serde(default)]
     pub pref_disable_new_entities: bool,
@@ -188,6 +201,8 @@ impl ConfigEntry {
             source: ConfigEntrySource::User,
             state: ConfigEntryState::NotLoaded,
             reason: None,
+            setup_lock: Arc::new(Mutex::new(())),
+            tries: 0,
             pref_disable_new_entities: false,
             pref_disable_polling: false,
             disabled_by: None,
@@ -242,6 +257,39 @@ impl ConfigEntry {
     /// Check if entry supports unload
     pub fn supports_unload(&self) -> bool {
         self.state.is_recoverable()
+    }
+
+    /// Attempt to transition to a new state with validation.
+    ///
+    /// Returns an error if the transition is invalid according to the FSM rules.
+    /// On success, updates the state and reason fields.
+    pub fn try_set_state(
+        &mut self,
+        new_state: ConfigEntryState,
+        reason: Option<String>,
+    ) -> Result<(), InvalidTransition> {
+        // Validate the transition
+        self.state.try_transition(new_state)?;
+
+        // Apply the transition
+        self.state = new_state;
+        self.reason = reason;
+
+        // Reset tries counter on non-retry states
+        if !matches!(
+            new_state,
+            ConfigEntryState::SetupRetry | ConfigEntryState::SetupInProgress
+        ) {
+            self.tries = 0;
+        }
+
+        Ok(())
+    }
+
+    /// Increment the retry counter and return the new count
+    pub fn increment_tries(&mut self) -> u32 {
+        self.tries += 1;
+        self.tries
     }
 }
 

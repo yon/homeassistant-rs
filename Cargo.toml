@@ -14,7 +14,7 @@ members = [
     "crates/ha-script",
     "crates/ha-server",
     "crates/ha-service-registry",
-    "crates/ha-state-machine",
+    "crates/ha-state-store",
     "crates/ha-template",
     "crates/ha-test-comparison",
 ]
@@ -97,5 +97,5 @@ ha-registries = { path = "crates/ha-registries" }
 ha-script = { path = "crates/ha-script" }
 ha-server = { path = "crates/ha-server" }
 ha-service-registry = { path = "crates/ha-service-registry" }
-ha-state-machine = { path = "crates/ha-state-machine" }
+ha-state-store = { path = "crates/ha-state-store" }
 ha-template = { path = "crates/ha-template" }

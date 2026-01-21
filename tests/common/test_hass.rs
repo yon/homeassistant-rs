@@ -6,7 +6,7 @@
 use ha_core::{Context, EntityId, Event, ServiceCall, State};
 use ha_event_bus::EventBus;
 use ha_service_registry::ServiceRegistry;
-use ha_state_machine::StateMachine;
+use ha_state_store::StateStore;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -15,7 +15,7 @@ pub struct TestHomeAssistant {
     /// Event bus for pub/sub communication
     pub bus: Arc<EventBus>,
     /// State machine for entity states
-    pub states: Arc<StateMachine>,
+    pub states: Arc<StateStore>,
     /// Service registry for service calls
     pub services: Arc<ServiceRegistry>,
     /// Captured events for assertions
@@ -28,7 +28,7 @@ impl TestHomeAssistant {
     /// Create a new test Home Assistant instance
     pub fn new() -> Self {
         let bus = Arc::new(EventBus::new());
-        let states = Arc::new(StateMachine::new(bus.clone()));
+        let states = Arc::new(StateStore::new(bus.clone()));
         let services = Arc::new(ServiceRegistry::new());
 
         Self {

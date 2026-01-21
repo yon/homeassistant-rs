@@ -19,7 +19,7 @@ use ha_core::{Context, EntityId, ServiceCall, SupportsResponse};
 use ha_event_bus::EventBus;
 use ha_registries::{Registries, Storage};
 use ha_service_registry::{ServiceDescription, ServiceRegistry};
-use ha_state_machine::StateMachine;
+use ha_state_store::StateStore;
 use ha_template::TemplateEngine;
 use serde_json::json;
 use std::collections::HashMap;
@@ -48,7 +48,7 @@ pub struct HomeAssistant {
     /// Service registry for service calls
     pub services: Arc<ServiceRegistry>,
     /// State machine for entity states
-    pub states: Arc<StateMachine>,
+    pub states: Arc<StateStore>,
     /// Template engine for rendering templates
     pub template_engine: Arc<TemplateEngine>,
     /// Python bridge for running Python integrations
@@ -64,7 +64,7 @@ impl HomeAssistant {
     /// * `registries` - Registries for entities, devices, areas, etc.
     pub fn new(config_dir: &Path, registries: Arc<Registries>) -> Self {
         let bus = Arc::new(EventBus::new());
-        let states = Arc::new(StateMachine::new(bus.clone()));
+        let states = Arc::new(StateStore::new(bus.clone()));
         let services = Arc::new(ServiceRegistry::new());
 
         // Create template engine and load custom templates before wrapping in Arc
@@ -1172,7 +1172,7 @@ fn load_automations(config_dir: &Path) -> Vec<AutomationConfig> {
 }
 
 /// Load input helpers (input_boolean, input_number) from configuration
-fn load_input_helpers(config_dir: &Path, states: &StateMachine) {
+fn load_input_helpers(config_dir: &Path, states: &StateStore) {
     let config_file = config_dir.join("configuration.yaml");
 
     if !config_file.exists() {

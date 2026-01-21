@@ -55,7 +55,7 @@ fn ha_core_rs(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyContext>()?;
     m.add_class::<PyEntityId>()?;
     m.add_class::<PyEventBus>()?;
-    m.add_class::<PyStateMachine>()?;
+    m.add_class::<PyStateStore>()?;
     m.add_class::<PyServiceRegistry>()?;
     m.add_class::<PyUnsubscribe>()?;
 
@@ -81,6 +81,11 @@ fn ha_core_rs(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Config Entries
     m.add_class::<PyConfigEntry>()?;
     m.add_class::<PyConfigEntries>()?;
+    m.add_class::<PyConfigEntryState>()?;
+    m.add(
+        "InvalidStateTransition",
+        py.get_type_bound::<InvalidStateTransition>(),
+    )?;
 
     // Also create submodules for alternative import paths
     let core = PyModule::new_bound(py, "core")?;
@@ -126,7 +131,7 @@ fn register_core_module(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()
 
     // Core components (also accessible via hass.bus, hass.states, hass.services)
     m.add_class::<PyEventBus>()?;
-    m.add_class::<PyStateMachine>()?;
+    m.add_class::<PyStateStore>()?;
     m.add_class::<PyServiceRegistry>()?;
 
     // Helper for unsubscribing from events
@@ -173,14 +178,21 @@ fn callback(func: PyObject) -> PyObject {
 
 /// Register classes in the `homeassistant.config_entries` submodule
 #[cfg(feature = "extension")]
-fn register_config_entries_module(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn register_config_entries_module(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     use extension::*;
 
     // Config entry classes
     m.add_class::<PyConfigEntry>()?;
     m.add_class::<PyConfigEntries>()?;
+    m.add_class::<PyConfigEntryState>()?;
 
-    // Source constants
+    // Exceptions
+    m.add(
+        "InvalidStateTransition",
+        py.get_type_bound::<InvalidStateTransition>(),
+    )?;
+
+    // Source constants (matching Python HA's SOURCE_* constants)
     m.add("SOURCE_USER", "user")?;
     m.add("SOURCE_IMPORT", "import")?;
     m.add("SOURCE_DISCOVERY", "discovery")?;
@@ -195,6 +207,11 @@ fn register_config_entries_module(_py: Python<'_>, m: &Bound<'_, PyModule>) -> P
     m.add("SOURCE_REAUTH", "reauth")?;
     m.add("SOURCE_RECONFIGURE", "reconfigure")?;
     m.add("SOURCE_SYSTEM", "system")?;
+    m.add("SOURCE_INTEGRATION_DISCOVERY", "integration_discovery")?;
+    // Additional sources in Python HA
+    m.add("SOURCE_USB", "usb")?;
+    m.add("SOURCE_HARDWARE", "hardware")?;
+    m.add("SOURCE_ESPHOME", "esphome")?;
 
     Ok(())
 }

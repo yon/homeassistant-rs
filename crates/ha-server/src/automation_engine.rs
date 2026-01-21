@@ -13,7 +13,7 @@ use ha_automation::{
 use ha_core::Event;
 use ha_event_bus::EventBus;
 use ha_service_registry::ServiceRegistry;
-use ha_state_machine::StateMachine;
+use ha_state_store::StateStore;
 use ha_template::TemplateEngine;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,7 +26,7 @@ pub struct AutomationEngine {
     /// Event bus for subscribing to events
     event_bus: Arc<EventBus>,
     /// State machine for entity state
-    state_machine: Arc<StateMachine>,
+    state_machine: Arc<StateStore>,
     /// Service registry for calling services
     service_registry: Arc<ServiceRegistry>,
     /// Template engine for rendering templates
@@ -49,7 +49,7 @@ impl AutomationEngine {
     /// Create a new automation engine
     pub fn new(
         event_bus: Arc<EventBus>,
-        state_machine: Arc<StateMachine>,
+        state_machine: Arc<StateStore>,
         service_registry: Arc<ServiceRegistry>,
         template_engine: Arc<TemplateEngine>,
     ) -> Self {
@@ -193,7 +193,7 @@ impl AutomationEngine {
     async fn process_event(
         event: &Event<serde_json::Value>,
         event_bus: &Arc<EventBus>,
-        state_machine: &Arc<StateMachine>,
+        state_machine: &Arc<StateStore>,
         service_registry: &Arc<ServiceRegistry>,
         template_engine: &Arc<TemplateEngine>,
         manager: &Arc<RwLock<AutomationManager>>,
@@ -267,7 +267,7 @@ impl AutomationEngine {
         automation: &Automation,
         trigger_data: TriggerData,
         event_bus: &Arc<EventBus>,
-        state_machine: &Arc<StateMachine>,
+        state_machine: &Arc<StateStore>,
         service_registry: &Arc<ServiceRegistry>,
         template_engine: &Arc<TemplateEngine>,
         condition_evaluator: &Arc<ConditionEvaluator>,

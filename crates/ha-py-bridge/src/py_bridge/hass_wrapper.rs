@@ -7,7 +7,7 @@ use ha_api::ApplicationCredentialsStore;
 use ha_event_bus::EventBus;
 use ha_registries::Registries;
 use ha_service_registry::ServiceRegistry;
-use ha_state_machine::StateMachine;
+use ha_state_store::StateStore;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::sync::{Arc, OnceLock};
@@ -332,7 +332,7 @@ fn pyobject_to_json(obj: &Bound<'_, pyo3::PyAny>) -> PyResult<serde_json::Value>
 pub fn create_hass_wrapper(
     py: Python<'_>,
     bus: Arc<EventBus>,
-    states: Arc<StateMachine>,
+    states: Arc<StateStore>,
     services: Arc<ServiceRegistry>,
     registries: Arc<Registries>,
     config_dir: Option<&std::path::Path>,
@@ -352,7 +352,7 @@ pub fn create_hass_wrapper(
 pub fn create_hass_wrapper_for_config_flow(
     py: Python<'_>,
     bus: Arc<EventBus>,
-    states: Arc<StateMachine>,
+    states: Arc<StateStore>,
     services: Arc<ServiceRegistry>,
     registries: Arc<Registries>,
     config_dir: Option<&std::path::Path>,
@@ -384,7 +384,7 @@ pub fn create_hass_wrapper_for_config_flow(
 fn create_hass_wrapper_internal(
     py: Python<'_>,
     bus: Arc<EventBus>,
-    states: Arc<StateMachine>,
+    states: Arc<StateStore>,
     services: Arc<ServiceRegistry>,
     registries: Arc<Registries>,
     config_dir: Option<&std::path::Path>,
@@ -1906,7 +1906,7 @@ mod tests {
         Python::with_gil(|py| {
             let temp_dir = TempDir::new().unwrap();
             let bus = Arc::new(EventBus::new());
-            let states = Arc::new(StateMachine::new(bus.clone()));
+            let states = Arc::new(StateStore::new(bus.clone()));
             let services = Arc::new(ServiceRegistry::new());
             let registries = Arc::new(Registries::new(temp_dir.path()));
 

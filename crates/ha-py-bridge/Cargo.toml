@@ -29,7 +29,7 @@ ha-core = { workspace = true }
 ha-event-bus = { workspace = true }
 ha-registries = { workspace = true }
 ha-service-registry = { workspace = true }
-ha-state-machine = { workspace = true }
+ha-state-store = { workspace = true }
 ha-template = { workspace = true }
 minijinja = { workspace = true }
 pyo3 = { workspace = true, optional = true }

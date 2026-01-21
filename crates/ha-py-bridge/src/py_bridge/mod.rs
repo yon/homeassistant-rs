@@ -59,7 +59,7 @@ use ha_config_entries::ConfigEntry;
 use ha_event_bus::EventBus;
 use ha_registries::Registries;
 use ha_service_registry::ServiceRegistry;
-use ha_state_machine::StateMachine;
+use ha_state_store::StateStore;
 use pyo3::prelude::*;
 use serde::Deserialize;
 use std::path::Path;
@@ -221,13 +221,13 @@ impl PyBridge {
     /// 2. Sets the hass reference for platform setup
     /// 3. Converts the config entry to a Python object
     /// 4. Calls the integration's async_setup_entry function
-    /// 5. Syncs pending states from Python to Rust StateMachine
+    /// 5. Syncs pending states from Python to Rust StateStore
     /// 6. Returns Ok(true) if setup succeeded, Ok(false) if integration doesn't support config entries
     pub fn setup_config_entry(
         &self,
         entry: &ConfigEntry,
         bus: Arc<EventBus>,
-        states: Arc<StateMachine>,
+        states: Arc<StateStore>,
         services: Arc<ServiceRegistry>,
     ) -> PyBridgeResult<bool> {
         let domain = &entry.domain;
@@ -273,7 +273,7 @@ impl PyBridge {
         &self,
         entry: &ConfigEntry,
         bus: Arc<EventBus>,
-        states: Arc<StateMachine>,
+        states: Arc<StateStore>,
         services: Arc<ServiceRegistry>,
     ) -> PyBridgeResult<bool> {
         let domain = &entry.domain;
