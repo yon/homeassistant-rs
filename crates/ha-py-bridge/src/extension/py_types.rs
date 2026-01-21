@@ -144,7 +144,7 @@ impl Default for PyContext {
 }
 
 /// Python wrapper for State
-#[pyclass(name = "State")]
+#[pyclass(name = "State", subclass)]
 #[derive(Clone)]
 pub struct PyState {
     inner: State,
