@@ -1715,13 +1715,18 @@ async fn main() -> Result<()> {
     // Create config flow handler for Python integration setup (only with python feature)
     #[cfg(feature = "python")]
     let config_flow_handler: Option<Arc<dyn ConfigFlowHandler>> =
-        Some(Arc::new(ConfigFlowManager::new(
-            hass.bus.clone(),
-            hass.states.clone(),
-            hass.services.clone(),
-            hass.registries.clone(),
-            Some(config_dir.clone()),
-        )));
+        hass.python_bridge
+            .as_ref()
+            .map(|bridge| -> Arc<dyn ConfigFlowHandler> {
+                Arc::new(ConfigFlowManager::new(
+                    hass.bus.clone(),
+                    hass.states.clone(),
+                    hass.services.clone(),
+                    hass.registries.clone(),
+                    Some(config_dir.clone()),
+                    bridge.async_bridge.clone(),
+                ))
+            });
     #[cfg(not(feature = "python"))]
     let config_flow_handler: Option<Arc<dyn ConfigFlowHandler>> = None;
 

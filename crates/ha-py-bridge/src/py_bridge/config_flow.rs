@@ -19,6 +19,7 @@ use ha_registries::Registries;
 use ha_service_registry::ServiceRegistry;
 use ha_state_machine::StateMachine;
 
+use super::async_bridge::AsyncBridge;
 use super::hass_wrapper::create_hass_wrapper_for_config_flow;
 
 /// Active flow state
@@ -35,6 +36,259 @@ struct ActiveFlow {
 ///
 /// This struct holds references to Rust core objects and handles all Python
 /// interop internally via PyO3. Callers don't need to deal with PyO3 types.
+///
+/// Run a flow step on a blocking thread to avoid blocking Tokio workers.
+/// This is critical for long-running Python async operations like network I/O.
+///
+/// This function creates a NEW event loop for each blocking call rather than
+/// using a shared one. This avoids "event loop already running" errors when
+/// called from spawn_blocking.
+fn run_flow_step_blocking(
+    _async_bridge: &Arc<AsyncBridge>,
+    flow_instance: &PyObject,
+    step: &str,
+    user_input: Option<serde_json::Value>,
+    flow_id: &str,
+    handler: &str,
+    _hass: &PyObject,
+) -> Result<FlowResult, String> {
+    Python::with_gil(|py| {
+        let method_name = format!("async_step_{}", step);
+        debug!("Calling {} on flow (blocking thread)", method_name);
+
+        // Convert user_input to Python dict
+        let py_input = match user_input {
+            Some(input) => json_to_pyobject(py, &input),
+            None => None,
+        };
+
+        // Get the method
+        let flow_bound = flow_instance.bind(py);
+        let method = flow_bound
+            .getattr(method_name.as_str())
+            .map_err(|e| format!("Flow has no method {}: {}", method_name, e))?;
+
+        // Call the method (it's async, so we get a coroutine)
+        let coro = if let Some(input) = py_input {
+            method
+                .call1((input,))
+                .map_err(|e| format!("Failed to call {}: {}", method_name, e))?
+        } else {
+            method
+                .call1((py.None(),))
+                .map_err(|e| format!("Failed to call {}: {}", method_name, e))?
+        };
+
+        // Create a NEW event loop for this blocking call
+        // This avoids "event loop already running" errors since spawn_blocking
+        // threads don't have an event loop set up, and we can't use a shared one
+        let asyncio = py
+            .import_bound("asyncio")
+            .map_err(|e| format!("Failed to import asyncio: {}", e))?;
+
+        let new_loop = asyncio
+            .call_method0("new_event_loop")
+            .map_err(|e| format!("Failed to create event loop: {}", e))?;
+
+        // Set it as the current loop for this thread
+        asyncio
+            .call_method1("set_event_loop", (&new_loop,))
+            .map_err(|e| format!("Failed to set event loop: {}", e))?;
+
+        // Run the coroutine to completion
+        let result = new_loop
+            .call_method1("run_until_complete", (&coro,))
+            .map_err(|e| format!("Failed to run coroutine: {}", e))?;
+
+        // Close the loop when done
+        let _ = new_loop.call_method0("close");
+
+        // Convert Python result to FlowResult
+        convert_flow_result_standalone(py, &result, flow_id, handler)
+    })
+}
+
+/// Convert a Python flow result dict to FlowResult (standalone version)
+fn convert_flow_result_standalone(
+    py: Python<'_>,
+    result: &pyo3::Bound<'_, pyo3::PyAny>,
+    flow_id: &str,
+    handler: &str,
+) -> Result<FlowResult, String> {
+    let result_type = result
+        .get_item("type")
+        .ok()
+        .and_then(|t| {
+            if let Ok(val) = t.getattr("value") {
+                val.extract::<String>().ok()
+            } else {
+                t.extract::<String>().ok()
+            }
+        })
+        .unwrap_or_else(|| "form".to_string());
+
+    debug!("Flow result type: {}", result_type);
+
+    let step_id = result
+        .get_item("step_id")
+        .ok()
+        .and_then(|s| s.extract::<String>().ok());
+
+    let errors = result.get_item("errors").ok().and_then(|e| {
+        if e.is_none() {
+            return None;
+        }
+        let dict = e.downcast::<PyDict>().ok()?;
+        let mut map = HashMap::new();
+        for (k, v) in dict.iter() {
+            if let (Ok(key), Ok(val)) = (k.extract::<String>(), v.extract::<String>()) {
+                map.insert(key, val);
+            }
+        }
+        if map.is_empty() {
+            None
+        } else {
+            Some(map)
+        }
+    });
+
+    let description_placeholders = result
+        .get_item("description_placeholders")
+        .ok()
+        .and_then(|e| {
+            if e.is_none() {
+                return None;
+            }
+            let dict = e.downcast::<PyDict>().ok()?;
+            let mut map = HashMap::new();
+            for (k, v) in dict.iter() {
+                if let (Ok(key), Ok(val)) = (k.extract::<String>(), v.extract::<String>()) {
+                    map.insert(key, val);
+                }
+            }
+            if map.is_empty() {
+                None
+            } else {
+                Some(map)
+            }
+        });
+
+    let data_schema = result
+        .get_item("data_schema")
+        .ok()
+        .and_then(|schema| {
+            if schema.is_none() {
+                return None;
+            }
+            convert_schema_to_fields_standalone(&schema)
+        })
+        .unwrap_or_default();
+
+    let title = result
+        .get_item("title")
+        .ok()
+        .and_then(|t| t.extract::<String>().ok());
+
+    let reason = result
+        .get_item("reason")
+        .ok()
+        .and_then(|r| r.extract::<String>().ok());
+
+    let entry_result = if result_type == "create_entry" {
+        if let Ok(data) = result.get_item("data") {
+            if let Ok(dict) = data.downcast::<PyDict>() {
+                let mut map = serde_json::Map::new();
+                for (k, v) in dict.iter() {
+                    if let Ok(key) = k.extract::<String>() {
+                        let val = pyobject_to_json(py, &v);
+                        map.insert(key, val);
+                    }
+                }
+                Some(serde_json::Value::Object(map))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let last_step = result.get_item("last_step").ok().and_then(|v| {
+        if v.is_none() {
+            None
+        } else {
+            v.extract::<bool>().ok()
+        }
+    });
+
+    let preview = result.get_item("preview").ok().and_then(|v| {
+        if v.is_none() {
+            None
+        } else {
+            v.extract::<String>().ok()
+        }
+    });
+
+    Ok(FlowResult {
+        flow_id: flow_id.to_string(),
+        handler: handler.to_string(),
+        result_type,
+        step_id,
+        data_schema,
+        errors,
+        description_placeholders,
+        title,
+        reason,
+        version: Some(1),
+        minor_version: Some(1),
+        result: entry_result,
+        last_step,
+        preview,
+    })
+}
+
+/// Convert a voluptuous schema to form fields (standalone version)
+fn convert_schema_to_fields_standalone(
+    schema: &pyo3::Bound<'_, pyo3::PyAny>,
+) -> Option<Vec<FormField>> {
+    let schema_dict = schema.getattr("schema").ok()?;
+    let dict = schema_dict.downcast::<PyDict>().ok()?;
+
+    let mut fields = Vec::new();
+
+    for (key, _value) in dict.iter() {
+        let field_name = if let Ok(schema_attr) = key.getattr("schema") {
+            schema_attr.extract::<String>().ok()
+        } else {
+            key.extract::<String>().ok()
+        };
+
+        if let Some(name) = field_name {
+            let type_name = key
+                .get_type()
+                .name()
+                .map(|n| n.to_string())
+                .unwrap_or_default();
+            let required = type_name.contains("Required");
+
+            fields.push(FormField {
+                name,
+                field_type: "string".to_string(),
+                required: Some(required),
+                default: None,
+            });
+        }
+    }
+
+    if fields.is_empty() {
+        None
+    } else {
+        Some(fields)
+    }
+}
+
 pub struct ConfigFlowManager {
     /// Active flows: flow_id -> flow state
     flows: RwLock<HashMap<String, ActiveFlow>>,
@@ -48,6 +302,8 @@ pub struct ConfigFlowManager {
     registries: Arc<Registries>,
     /// Config directory path
     config_dir: Option<PathBuf>,
+    /// Async bridge for running Python coroutines
+    async_bridge: Arc<AsyncBridge>,
 }
 
 impl ConfigFlowManager {
@@ -58,6 +314,7 @@ impl ConfigFlowManager {
         service_registry: Arc<ServiceRegistry>,
         registries: Arc<Registries>,
         config_dir: Option<PathBuf>,
+        async_bridge: Arc<AsyncBridge>,
     ) -> Self {
         Self {
             flows: RwLock::new(HashMap::new()),
@@ -66,6 +323,7 @@ impl ConfigFlowManager {
             service_registry,
             registries,
             config_dir,
+            async_bridge,
         }
     }
 
@@ -188,6 +446,9 @@ impl ConfigFlowManager {
     }
 
     /// Call a flow step and convert the result
+    ///
+    /// Creates a new event loop for each call to avoid "event loop already running"
+    /// errors. This is needed because we may be called from various contexts.
     fn call_flow_step(
         &self,
         py: Python<'_>,
@@ -224,31 +485,28 @@ impl ConfigFlowManager {
                 .map_err(|e| format!("Failed to call {}: {}", method_name, e))?
         };
 
-        // Run the coroutine using asyncio
-        let asyncio = py.import_bound("asyncio").map_err(|e| e.to_string())?;
+        // Create a NEW event loop for this call
+        // This avoids "event loop already running" errors
+        let asyncio = py
+            .import_bound("asyncio")
+            .map_err(|e| format!("Failed to import asyncio: {}", e))?;
 
-        // Get or create event loop
-        let loop_obj = match asyncio.call_method0("get_event_loop") {
-            Ok(l) => l,
-            Err(_) => {
-                let new_loop = asyncio
-                    .call_method0("new_event_loop")
-                    .map_err(|e| e.to_string())?;
-                asyncio
-                    .call_method1("set_event_loop", (&new_loop,))
-                    .map_err(|e| e.to_string())?;
-                new_loop
-            }
-        };
+        let new_loop = asyncio
+            .call_method0("new_event_loop")
+            .map_err(|e| format!("Failed to create event loop: {}", e))?;
 
-        // Ensure the event loop is set as current
+        // Set it as the current loop for this thread
         asyncio
-            .call_method1("set_event_loop", (&loop_obj,))
-            .map_err(|e| e.to_string())?;
+            .call_method1("set_event_loop", (&new_loop,))
+            .map_err(|e| format!("Failed to set event loop: {}", e))?;
 
-        let result = loop_obj
-            .call_method1("run_until_complete", (coro,))
+        // Run the coroutine to completion
+        let result = new_loop
+            .call_method1("run_until_complete", (&coro,))
             .map_err(|e| format!("Failed to run coroutine: {}", e))?;
+
+        // Close the loop when done
+        let _ = new_loop.call_method0("close");
 
         // Convert Python result to FlowResult
         self.convert_flow_result(py, &result, flow_id, handler)
@@ -516,19 +774,25 @@ impl ConfigFlowHandler for ConfigFlowManager {
         );
 
         let hass = self.create_hass()?;
+        let async_bridge = self.async_bridge.clone();
+        let flow_id_owned = flow_id.to_string();
+        let handler_owned = handler.clone();
 
-        // Call the current step with user input
-        let result = Python::with_gil(|py| {
-            self.call_flow_step(
-                py,
+        // Run the Python code on a blocking thread to avoid blocking Tokio workers
+        // This is critical for long-running async operations like network I/O (e.g. async_pair())
+        let result = tokio::task::spawn_blocking(move || {
+            run_flow_step_blocking(
+                &async_bridge,
                 &flow_instance,
                 &current_step,
                 user_input,
-                flow_id,
-                &handler,
+                &flow_id_owned,
+                &handler_owned,
                 &hass,
             )
-        })?;
+        })
+        .await
+        .map_err(|e| format!("Task panicked: {}", e))??;
 
         // Update flow state or clean up if done
         if result.result_type == "create_entry" || result.result_type == "abort" {

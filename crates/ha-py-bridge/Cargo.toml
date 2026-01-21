@@ -21,6 +21,7 @@ py_bridge = ["dep:pyo3", "pyo3/auto-initialize"]
 [dependencies]
 async-trait = { workspace = true }
 chrono = { workspace = true }
+dashmap = { workspace = true }
 ha-api = { workspace = true }
 ha-automation = { workspace = true }
 ha-config-entries = { workspace = true }

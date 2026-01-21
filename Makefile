@@ -158,7 +158,7 @@ ha-stop: ## Stop HA test instance
 ##@ Testing
 
 .PHONY: test
-test: test-rust test-python test-integration ## Run ALL tests (Rust + Python + integration)
+test: test-rust test-python test-integration test-ha-compat ## Run ALL tests (Rust + Python + integration)
 
 .PHONY: test-compare
 test-compare: ## Run API comparison tests against Python HA (requires Docker)
