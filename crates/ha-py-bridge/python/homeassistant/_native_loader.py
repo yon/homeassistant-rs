@@ -117,11 +117,25 @@ def _load_native_module_impl(module_name: str) -> Any:
         # Restore sys.path
         sys.path = original_path
 
-        # Clear ALL homeassistant modules that were loaded during native import
+        # Restore shim modules, but keep native modules that don't have shims
+        # First, collect native modules that were loaded during this import
+        native_modules_loaded = {
+            name: mod
+            for name, mod in sys.modules.items()
+            if name == "homeassistant" or name.startswith("homeassistant.")
+        }
+
+        # Clear all homeassistant modules
         for name in list(sys.modules.keys()):
             if name == "homeassistant" or name.startswith("homeassistant."):
                 del sys.modules[name]
 
-        # Restore our saved modules (shim modules)
+        # Restore saved shim modules first (they take precedence)
         for name, mod in saved_modules.items():
             sys.modules[name] = mod
+
+        # Then restore native modules that were loaded during import,
+        # but only if there's no shim for them (not already restored)
+        for name, mod in native_modules_loaded.items():
+            if name not in sys.modules:
+                sys.modules[name] = mod
