@@ -77,6 +77,10 @@ lint-makefile: ## Check Makefile targets are alphabetized within sections
 .PHONY: clean
 clean: ## Remove build artifacts
 	cargo clean
+	@# Remove installed Python extension (ha_core_rs wheel)
+	@if [ -d "$(VENV)/lib" ]; then \
+		rm -rf $(VENV)/lib/python*/site-packages/ha_core_rs* $(VENV)/lib/python*/site-packages/ha_py_bridge*; \
+	fi
 
 .PHONY: clean-all
 clean-all: clean ## Remove build artifacts and Python venv

@@ -221,71 +221,61 @@ fn register_config_entries_module(py: Python<'_>, m: &Bound<'_, PyModule>) -> Py
 fn register_helpers_module(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     use extension::*;
 
-    let sys = py.import_bound("sys")?;
-    let modules = sys.getattr("modules")?;
-
-    // Entity registry helpers
+    // Entity registry helpers - available as ha_core_rs.entity_registry
+    // The Python shim at homeassistant/helpers/entity_registry.py merges
+    // these Rust classes with native HA's full module
     let entity_registry = PyModule::new_bound(py, "entity_registry")?;
     entity_registry.add_class::<PyEntityRegistry>()?;
     entity_registry.add_class::<PyEntityEntry>()?;
     m.add_submodule(&entity_registry)?;
-    modules.set_item("homeassistant.helpers.entity_registry", &entity_registry)?;
 
-    // Device registry helpers
+    // Device registry helpers - available as ha_core_rs.device_registry
     let device_registry = PyModule::new_bound(py, "device_registry")?;
     device_registry.add_class::<PyDeviceRegistry>()?;
     device_registry.add_class::<PyDeviceEntry>()?;
     m.add_submodule(&device_registry)?;
-    modules.set_item("homeassistant.helpers.device_registry", &device_registry)?;
 
-    // Area registry helpers
+    // Area registry helpers - available as ha_core_rs.area_registry
     let area_registry = PyModule::new_bound(py, "area_registry")?;
     area_registry.add_class::<PyAreaRegistry>()?;
     area_registry.add_class::<PyAreaEntry>()?;
     m.add_submodule(&area_registry)?;
-    modules.set_item("homeassistant.helpers.area_registry", &area_registry)?;
 
-    // Floor registry helpers
+    // Floor registry helpers - available as ha_core_rs.floor_registry
     let floor_registry = PyModule::new_bound(py, "floor_registry")?;
     floor_registry.add_class::<PyFloorRegistry>()?;
     floor_registry.add_class::<PyFloorEntry>()?;
     m.add_submodule(&floor_registry)?;
-    modules.set_item("homeassistant.helpers.floor_registry", &floor_registry)?;
 
-    // Label registry helpers
+    // Label registry helpers - available as ha_core_rs.label_registry
     let label_registry = PyModule::new_bound(py, "label_registry")?;
     label_registry.add_class::<PyLabelRegistry>()?;
     label_registry.add_class::<PyLabelEntry>()?;
     m.add_submodule(&label_registry)?;
-    modules.set_item("homeassistant.helpers.label_registry", &label_registry)?;
 
-    // Storage helpers
+    // Storage helpers - available as ha_core_rs.storage
     let storage = PyModule::new_bound(py, "storage")?;
     storage.add_class::<PyStorage>()?;
     m.add_submodule(&storage)?;
-    modules.set_item("homeassistant.helpers.storage", &storage)?;
 
-    // Template helpers
+    // Template helpers - available as ha_core_rs.template
     let template = PyModule::new_bound(py, "template")?;
     template.add_class::<PyTemplate>()?;
     template.add_class::<PyTemplateEngine>()?;
     m.add_submodule(&template)?;
-    modules.set_item("homeassistant.helpers.template", &template)?;
 
-    // Condition helpers
+    // Condition helpers - available as ha_core_rs.condition
     let condition = PyModule::new_bound(py, "condition")?;
     condition.add_class::<PyConditionEvaluator>()?;
     condition.add_class::<PyEvalContext>()?;
     m.add_submodule(&condition)?;
-    modules.set_item("homeassistant.helpers.condition", &condition)?;
 
-    // Trigger helpers
+    // Trigger helpers - available as ha_core_rs.trigger
     let trigger = PyModule::new_bound(py, "trigger")?;
     trigger.add_class::<PyTriggerEvaluator>()?;
     trigger.add_class::<PyTriggerData>()?;
     trigger.add_class::<PyTriggerEvalContext>()?;
     m.add_submodule(&trigger)?;
-    modules.set_item("homeassistant.helpers.trigger", &trigger)?;
 
     Ok(())
 }
