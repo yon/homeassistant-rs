@@ -14,6 +14,7 @@ use tracing::{debug, info};
 use ulid::Ulid;
 
 use ha_api::config_flow::{ConfigFlowHandler, FlowResult, FormField};
+use ha_api::manifest::get_manifest;
 use ha_api::ApplicationCredentialsStore;
 use ha_event_bus::EventBus;
 use ha_registries::Registries;
@@ -22,6 +23,7 @@ use ha_state_store::StateStore;
 
 use super::async_bridge::AsyncBridge;
 use super::hass_wrapper::create_hass_wrapper_for_config_flow;
+use super::requirements::RequirementsManager;
 
 /// Active flow state
 struct ActiveFlow {
@@ -307,6 +309,8 @@ pub struct ConfigFlowManager {
     async_bridge: Arc<AsyncBridge>,
     /// Application credentials store for OAuth integrations
     application_credentials: ApplicationCredentialsStore,
+    /// Requirements manager for installing Python packages
+    requirements: Arc<RequirementsManager>,
 }
 
 impl ConfigFlowManager {
@@ -319,6 +323,7 @@ impl ConfigFlowManager {
         config_dir: Option<PathBuf>,
         async_bridge: Arc<AsyncBridge>,
         application_credentials: ApplicationCredentialsStore,
+        requirements: Arc<RequirementsManager>,
     ) -> Self {
         Self {
             flows: RwLock::new(HashMap::new()),
@@ -329,7 +334,24 @@ impl ConfigFlowManager {
             config_dir,
             async_bridge,
             application_credentials,
+            requirements,
         }
+    }
+
+    /// Ensure requirements for an integration are installed
+    fn ensure_integration_requirements(&self, handler: &str) -> Result<(), String> {
+        if let Some(manifest) = get_manifest(handler) {
+            if !manifest.requirements.is_empty() {
+                info!(
+                    "Installing {} requirements for integration '{}'",
+                    manifest.requirements.len(),
+                    handler
+                );
+                self.requirements
+                    .ensure_requirements(handler, &manifest.requirements)?;
+            }
+        }
+        Ok(())
     }
 
     /// Create a hass wrapper for config flows
@@ -357,6 +379,10 @@ impl ConfigFlowManager {
         _show_advanced_options: bool,
         hass: &PyObject,
     ) -> Result<(PyObject, FlowResult), String> {
+        // Ensure requirements are installed before importing
+        // This installs packages like 'accuweather' that the integration needs
+        self.ensure_integration_requirements(handler)?;
+
         // Import the config_flow module for this integration
         let module_path = format!("homeassistant.components.{}.config_flow", handler);
         debug!("Importing config flow module: {}", module_path);

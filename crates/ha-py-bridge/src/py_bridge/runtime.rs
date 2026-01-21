@@ -98,6 +98,84 @@ impl PythonRuntime {
         })
     }
 
+    /// Get the path to the Python executable
+    ///
+    /// When Python is embedded, sys.executable returns the embedding binary,
+    /// not the Python interpreter. We need to find the actual Python interpreter
+    /// that was used to build PyO3.
+    pub fn python_executable(&self) -> PyBridgeResult<std::path::PathBuf> {
+        // First try PYO3_PYTHON environment variable (set at build time or runtime)
+        if let Ok(path) = std::env::var("PYO3_PYTHON") {
+            debug!("Using PYO3_PYTHON from environment: {}", path);
+            return Ok(std::path::PathBuf::from(path));
+        }
+
+        // When Python is embedded via PyO3, sys.prefix points to the base Python
+        // installation, not our venv. Look for venv paths in PYTHONPATH instead.
+        if let Ok(pythonpath) = std::env::var("PYTHONPATH") {
+            for path in pythonpath.split(':') {
+                // Look for paths ending with site-packages (venv structure)
+                if path.ends_with("site-packages") {
+                    // site-packages is at .venv/lib/python3.x/site-packages
+                    // We want .venv/bin/python3
+                    if let Some(venv_path) = std::path::Path::new(path)
+                        .parent() // lib/python3.x
+                        .and_then(|p| p.parent()) // lib
+                        .and_then(|p| p.parent())
+                    // .venv
+                    {
+                        let candidates = [
+                            venv_path.join("bin/python3"),
+                            venv_path.join("bin/python"),
+                            venv_path.join("Scripts/python.exe"), // Windows
+                        ];
+
+                        for candidate in &candidates {
+                            if candidate.exists() {
+                                debug!(
+                                    "Found Python executable from PYTHONPATH at: {:?}",
+                                    candidate
+                                );
+                                return Ok(candidate.to_path_buf());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: try sys.prefix (works when not in embedded mode)
+        Python::with_gil(|py| {
+            let sys = py.import_bound("sys")?;
+
+            // Get the prefix (e.g., /path/to/.venv)
+            let prefix: String = sys.getattr("prefix")?.extract()?;
+            let prefix_path = std::path::PathBuf::from(&prefix);
+
+            // Try common Python executable locations
+            let candidates = [
+                prefix_path.join("bin/python3"),
+                prefix_path.join("bin/python"),
+                prefix_path.join("Scripts/python.exe"), // Windows
+            ];
+
+            for candidate in &candidates {
+                if candidate.exists() {
+                    debug!("Found Python executable at: {:?}", candidate);
+                    return Ok(candidate.clone());
+                }
+            }
+
+            // Fallback: use sys.executable (may not work for embedded Python)
+            let executable: String = sys.getattr("executable")?.extract()?;
+            warn!(
+                "No Python found in prefix '{}', falling back to sys.executable: {}",
+                prefix, executable
+            );
+            Ok(std::path::PathBuf::from(executable))
+        })
+    }
+
     /// Create a new Python dict
     pub fn new_dict<'py>(&self, py: Python<'py>) -> Bound<'py, PyDict> {
         PyDict::new_bound(py)

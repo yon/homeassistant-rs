@@ -25,6 +25,8 @@ pub const STORAGE_KEY: &str = "core.config_entries";
 pub const STORAGE_VERSION: u32 = 1;
 /// Current minor version
 pub const STORAGE_MINOR_VERSION: u32 = 5;
+/// Wildcard domain for catch-all handlers
+pub const WILDCARD_DOMAIN: &str = "*";
 
 /// Result of calling an integration's async_setup_entry
 #[derive(Debug, Clone)]
@@ -105,9 +107,6 @@ pub struct SetupContext {
     /// Service registry for calling/registering services
     pub services: Arc<ServiceRegistry>,
 }
-
-/// Wildcard domain for handlers that apply to all integrations
-pub const WILDCARD_DOMAIN: &str = "*";
 
 /// Setup handler function type
 ///

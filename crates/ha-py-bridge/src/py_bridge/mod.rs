@@ -40,6 +40,7 @@ mod errors;
 pub mod hass_wrapper;
 mod integration;
 mod pyclass_wrappers;
+mod requirements;
 mod runtime;
 mod service_bridge;
 mod wrappers;
@@ -52,6 +53,7 @@ pub use hass_wrapper::{
     call_python_entity_service, create_hass_wrapper, get_python_devices, get_python_entities,
 };
 pub use integration::{ComponentRegistry, IntegrationLoader, IntegrationManifest};
+pub use requirements::RequirementsManager;
 pub use runtime::{with_gil, PythonRuntime};
 pub use service_bridge::ServiceBridge;
 
@@ -135,6 +137,8 @@ pub struct PyBridge {
     pub registries: Arc<Registries>,
     /// Config directory path (for loading registries from disk)
     pub config_dir: Option<std::path::PathBuf>,
+    /// Requirements manager for installing Python packages
+    pub requirements: Arc<RequirementsManager>,
 }
 
 impl PyBridge {
@@ -156,6 +160,10 @@ impl PyBridge {
         let async_bridge = Arc::new(AsyncBridge::new()?);
         let services = ServiceBridge::new(async_bridge.clone());
 
+        // Get Python executable path for requirements manager
+        let python_path = runtime.python_executable()?;
+        let requirements = Arc::new(RequirementsManager::new(python_path));
+
         info!("Python bridge initialized");
 
         Ok(Self {
@@ -165,6 +173,7 @@ impl PyBridge {
             services,
             registries,
             config_dir,
+            requirements,
         })
     }
 
@@ -181,6 +190,21 @@ impl PyBridge {
     /// Check if a component should use Python
     pub fn is_python_component(&self, name: &str) -> bool {
         self.integrations.components().is_python_component(name)
+    }
+
+    /// Ensure all requirements for an integration are installed
+    ///
+    /// Uses the manifest from ha-api to get the requirements list, then
+    /// installs any missing packages via pip.
+    pub fn ensure_requirements(&self, domain: &str) -> Result<(), String> {
+        // Get manifest from ha-api
+        if let Some(manifest) = ha_api::manifest::get_manifest(domain) {
+            if !manifest.requirements.is_empty() {
+                self.requirements
+                    .ensure_requirements(domain, &manifest.requirements)?;
+            }
+        }
+        Ok(())
     }
 
     /// Load a Python integration
