@@ -38,6 +38,70 @@ def _find_vendor_path() -> Path:
 
 _VENDOR_PATH = _find_vendor_path()
 
+# Find the shim directory (where this file lives)
+_SHIM_PATH = Path(__file__).resolve().parent.parent  # crates/ha-py-bridge/python
+
+
+def _discover_shimmed_modules() -> frozenset[str]:
+    """Scan the shim directory to find all shimmed modules.
+
+    Returns a frozenset of module names (e.g., "homeassistant.const").
+    Only includes public modules (not starting with _).
+    """
+    shim_modules = set()
+    ha_path = _SHIM_PATH / "homeassistant"
+
+    if not ha_path.exists():
+        return frozenset()
+
+    for py_file in ha_path.rglob("*.py"):
+        # Skip __pycache__
+        if "__pycache__" in str(py_file):
+            continue
+
+        rel_path = py_file.relative_to(_SHIM_PATH)
+        parts = list(rel_path.parts)
+
+        # Convert to module name
+        if parts[-1] == "__init__.py":
+            parts = parts[:-1]
+        else:
+            parts[-1] = parts[-1][:-3]  # Remove .py
+
+        # Skip private modules (starting with _)
+        if parts and parts[-1].startswith("_"):
+            continue
+
+        module_name = ".".join(parts)
+        if module_name:
+            shim_modules.add(module_name)
+
+    return frozenset(shim_modules)
+
+
+# Auto-discovered set of all shimmed modules.
+# When load_native_module() loads native HA dependencies, it will NOT put
+# these modules in sys.modules, allowing the shim to be loaded instead.
+SHIMMED_MODULES: frozenset[str] = _discover_shimmed_modules()
+
+
+def _shim_exists_for_module(module_name: str) -> bool:
+    """Check if a shim exists for the given module name.
+
+    Args:
+        module_name: Full module path (e.g., "homeassistant.const")
+
+    Returns:
+        True if the module is in SHIMMED_MODULES.
+    """
+    return module_name in SHIMMED_MODULES
+
+
+def get_shim_path() -> Path:
+    """Return the shim directory path. Used by tests."""
+    return _SHIM_PATH
+
+
 # Cache for loaded modules - keyed by module name
 _module_cache: dict[str, Any] = {}
 
@@ -135,7 +199,9 @@ def _load_native_module_impl(module_name: str) -> Any:
             sys.modules[name] = mod
 
         # Then restore native modules that were loaded during import,
-        # but only if there's no shim for them (not already restored)
+        # but only if there's no shim FILE for them.
+        # We check for shim files, not just saved_modules, because on first
+        # import there may be no saved modules yet but shims still exist.
         for name, mod in native_modules_loaded.items():
-            if name not in sys.modules:
+            if name not in sys.modules and not _shim_exists_for_module(name):
                 sys.modules[name] = mod

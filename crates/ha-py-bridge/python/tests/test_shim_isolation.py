@@ -25,6 +25,8 @@ def clean_homeassistant_modules():
     """Remove all homeassistant modules and configure sys.path for shim."""
     # Save original state
     original_path = sys.path.copy()
+    original_path_hooks = sys.path_hooks.copy()
+    original_path_importer_cache = sys.path_importer_cache.copy()
     original_modules = {k: v for k, v in sys.modules.items()
                         if k == "homeassistant" or k.startswith("homeassistant.")}
 
@@ -35,14 +37,25 @@ def clean_homeassistant_modules():
 
     clear_modules()
 
-    # Add our shim first on sys.path
-    # We keep site-packages for dependencies (propcache, etc.) but our shim
-    # takes precedence because it's first
+    # Remove editable install path hooks for homeassistant
+    # These use _EditableNamespaceFinder which would override our shim
+    sys.path_hooks = [
+        hook for hook in sys.path_hooks
+        if not (hasattr(hook, '__self__') and
+                'editable' in getattr(hook.__self__, '__module__', '').lower())
+    ]
+
+    # Remove editable path entries and add our shim first
     shim_str = str(SHIM_PATH)
-    # Remove shim if already present, then add at start
-    new_path = [p for p in sys.path if p != shim_str]
+    new_path = [
+        p for p in sys.path
+        if p != shim_str and '__editable__' not in p
+    ]
     new_path.insert(0, shim_str)
     sys.path = new_path
+
+    # Clear path importer cache to force re-evaluation
+    sys.path_importer_cache.clear()
     importlib.invalidate_caches()
 
     yield
@@ -50,6 +63,9 @@ def clean_homeassistant_modules():
     # Restore
     clear_modules()
     sys.path = original_path
+    sys.path_hooks = original_path_hooks
+    sys.path_importer_cache.clear()
+    sys.path_importer_cache.update(original_path_importer_cache)
     importlib.invalidate_caches()
 
 
