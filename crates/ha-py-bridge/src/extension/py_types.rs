@@ -72,9 +72,13 @@ pub struct PyContext {
 #[pymethods]
 impl PyContext {
     #[new]
-    #[pyo3(signature = (user_id=None, parent_id=None))]
-    fn new(user_id: Option<String>, parent_id: Option<String>) -> Self {
-        let mut ctx = Context::new();
+    #[pyo3(signature = (id=None, user_id=None, parent_id=None))]
+    fn new(id: Option<String>, user_id: Option<String>, parent_id: Option<String>) -> Self {
+        let mut ctx = if let Some(id) = id {
+            Context::with_id(id)
+        } else {
+            Context::new()
+        };
         ctx.user_id = user_id;
         ctx.parent_id = parent_id;
         Self { inner: ctx }
@@ -95,11 +99,31 @@ impl PyContext {
         self.inner.parent_id.as_deref()
     }
 
+    /// Return dictionary representation of context
+    fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let dict = PyDict::new_bound(py);
+        dict.set_item("id", &self.inner.id)?;
+        dict.set_item("parent_id", self.inner.parent_id.as_deref())?;
+        dict.set_item("user_id", self.inner.user_id.as_deref())?;
+        Ok(dict.into_any().unbind())
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "Context(id='{}', user_id={:?})",
             self.inner.id, self.inner.user_id
         )
+    }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self.inner.id == other.inner.id
+    }
+
+    fn __hash__(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.inner.id.hash(&mut hasher);
+        hasher.finish()
     }
 }
 
@@ -115,7 +139,7 @@ impl PyContext {
 
 impl Default for PyContext {
     fn default() -> Self {
-        Self::new(None, None)
+        Self::new(None, None, None)
     }
 }
 
@@ -129,8 +153,18 @@ pub struct PyState {
 #[pymethods]
 impl PyState {
     #[getter]
-    fn entity_id(&self) -> PyEntityId {
-        PyEntityId::from_inner(self.inner.entity_id.clone())
+    fn entity_id(&self) -> String {
+        self.inner.entity_id.to_string()
+    }
+
+    #[getter]
+    fn domain(&self) -> &str {
+        self.inner.entity_id.domain()
+    }
+
+    #[getter]
+    fn object_id(&self) -> &str {
+        self.inner.entity_id.object_id()
     }
 
     #[getter]
@@ -158,11 +192,49 @@ impl PyState {
         self.inner.last_updated.to_rfc3339()
     }
 
+    /// Return the friendly name of the entity
+    #[getter]
+    fn name(&self) -> Option<String> {
+        self.inner
+            .attributes
+            .get("friendly_name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    }
+
+    /// Return dictionary representation of state
+    fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let dict = PyDict::new_bound(py);
+        dict.set_item("entity_id", self.inner.entity_id.to_string())?;
+        dict.set_item("state", &self.inner.state)?;
+
+        // Convert attributes
+        let attrs = PyDict::new_bound(py);
+        for (key, value) in &self.inner.attributes {
+            let py_value = json_to_py(py, value)?;
+            attrs.set_item(key, py_value)?;
+        }
+        dict.set_item("attributes", attrs)?;
+
+        dict.set_item("last_changed", self.inner.last_changed.to_rfc3339())?;
+        dict.set_item("last_updated", self.inner.last_updated.to_rfc3339())?;
+
+        Ok(dict.into_any().unbind())
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "State(entity_id='{}', state='{}')",
-            self.inner.entity_id, self.inner.state
+            "<state {}={} @ {}>",
+            self.inner.entity_id,
+            self.inner.state,
+            self.inner.last_changed.to_rfc3339()
         )
+    }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self.inner.entity_id == other.inner.entity_id
+            && self.inner.state == other.inner.state
+            && self.inner.attributes == other.inner.attributes
     }
 }
 
@@ -201,8 +273,32 @@ impl PyEvent {
         PyContext::from_inner(self.inner.context.clone())
     }
 
+    /// Return dictionary representation of event
+    fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let dict = PyDict::new_bound(py);
+        dict.set_item("event_type", self.inner.event_type.as_str())?;
+        dict.set_item("data", json_to_py(py, &self.inner.data)?)?;
+        dict.set_item("origin", "LOCAL")?; // Default origin
+        dict.set_item("time_fired", self.inner.time_fired.to_rfc3339())?;
+
+        // Add context as dict
+        let ctx_dict = PyDict::new_bound(py);
+        ctx_dict.set_item("id", &self.inner.context.id)?;
+        ctx_dict.set_item("parent_id", self.inner.context.parent_id.as_deref())?;
+        ctx_dict.set_item("user_id", self.inner.context.user_id.as_deref())?;
+        dict.set_item("context", ctx_dict)?;
+
+        Ok(dict.into_any().unbind())
+    }
+
     fn __repr__(&self) -> String {
-        format!("Event(type='{}')", self.inner.event_type)
+        format!("<Event {}>", self.inner.event_type)
+    }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self.inner.event_type == other.inner.event_type
+            && self.inner.data == other.inner.data
+            && self.inner.context.id == other.inner.context.id
     }
 }
 

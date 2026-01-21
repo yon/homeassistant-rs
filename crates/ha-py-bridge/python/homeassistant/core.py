@@ -1,14 +1,13 @@
 """Core types for Home Assistant, backed by Rust.
 
 This module provides the core types integrations expect:
-- HomeAssistant: Main coordinator object (Rust-backed proxy)
+- HomeAssistant: Main coordinator object
 - callback: Decorator marking functions as safe to call from event loop
-- Event: Event data container
-- State: Entity state container
+- Event: Event data container (Rust-backed)
+- State: Entity state container (Rust-backed)
+- Context: Request context for tracking causality (Rust-backed)
 
-We also re-export native HA symbols that internal modules need. This ensures
-that when native modules do `from homeassistant.core import CALLBACK_TYPE`,
-they find the symbol in our shim.
+We also re-export native HA symbols that internal modules need.
 """
 
 from __future__ import annotations
@@ -25,9 +24,28 @@ _LOGGER = logging.getLogger(__name__)
 # Load native core module to re-export symbols that native modules need
 _native = load_native_module("homeassistant.core")
 
+# Try to import Rust implementations
+try:
+    from ha_core_rs import (
+        Context as RustContext,
+        Event as RustEvent,
+        State as RustState,
+        callback as rust_callback,
+        split_entity_id,
+        valid_entity_id,
+    )
+    _RUST_AVAILABLE = True
+except ImportError:
+    _RUST_AVAILABLE = False
+    RustContext = None
+    RustEvent = None
+    RustState = None
+    rust_callback = None
+    split_entity_id = None
+    valid_entity_id = None
+
 # Re-export all type aliases and internal symbols that native modules expect
 CALLBACK_TYPE = _native.CALLBACK_TYPE
-Context = _native.Context
 HassJob = _native.HassJob
 HassJobType = _native.HassJobType
 ReleaseChannel = _native.ReleaseChannel
@@ -51,95 +69,25 @@ def callback(func: _CallableT) -> _CallableT:
     return func
 
 
-class Event:
-    """Representation of an event within Home Assistant."""
-
-    __slots__ = ("event_type", "data", "origin", "time_fired", "context")
-
-    def __init__(
-        self,
-        event_type: str,
-        data: dict[str, Any] | None = None,
-        origin: str = "LOCAL",
-        time_fired: Any = None,
-        context: Any = None,
-    ) -> None:
-        """Initialize an event."""
-        self.event_type = event_type
-        self.data = data or {}
-        self.origin = origin
-        self.time_fired = time_fired
-        self.context = context
-
-    def as_dict(self) -> dict[str, Any]:
-        """Return dictionary representation of event."""
-        return {
-            "event_type": self.event_type,
-            "data": self.data,
-            "origin": self.origin,
-            "time_fired": self.time_fired,
-            "context": self.context,
-        }
+# Use Rust Context if available, otherwise fall back to native
+if _RUST_AVAILABLE and RustContext is not None:
+    Context = RustContext
+else:
+    Context = _native.Context
 
 
-class State:
-    """Representation of an entity state."""
+# Use Rust State if available, otherwise fall back to native
+if _RUST_AVAILABLE and RustState is not None:
+    State = RustState
+else:
+    State = _native.State
 
-    __slots__ = (
-        "entity_id",
-        "state",
-        "attributes",
-        "last_changed",
-        "last_reported",
-        "last_updated",
-        "context",
-    )
 
-    def __init__(
-        self,
-        entity_id: str,
-        state: str,
-        attributes: dict[str, Any] | None = None,
-        last_changed: Any = None,
-        last_reported: Any = None,
-        last_updated: Any = None,
-        context: Any = None,
-    ) -> None:
-        """Initialize a state."""
-        self.entity_id = entity_id
-        self.state = state
-        self.attributes = attributes or {}
-        self.last_changed = last_changed
-        self.last_reported = last_reported
-        self.last_updated = last_updated
-        self.context = context
-
-    @property
-    def domain(self) -> str:
-        """Return domain of entity."""
-        return self.entity_id.split(".", 1)[0]
-
-    @property
-    def name(self) -> str | None:
-        """Return friendly name of entity."""
-        return self.attributes.get("friendly_name")
-
-    @property
-    def object_id(self) -> str:
-        """Return object ID of entity."""
-        return self.entity_id.split(".", 1)[1]
-
-    def as_dict(self) -> dict[str, Any]:
-        """Return dictionary representation of state."""
-        return {
-            "entity_id": self.entity_id,
-            "state": self.state,
-            "attributes": self.attributes,
-            "last_changed": self.last_changed,
-            "last_reported": self.last_reported,
-            "last_updated": self.last_updated,
-            "context": self.context,
-        }
+# Use Rust Event if available, otherwise fall back to native
+if _RUST_AVAILABLE and RustEvent is not None:
+    Event = RustEvent
+else:
+    Event = _native.Event
 
 
 class HomeAssistant:
@@ -197,9 +145,9 @@ __all__ = [
     "callback",
     "Event",
     "State",
+    "Context",
     # Re-exported from native for internal modules
     "CALLBACK_TYPE",
-    "Context",
     "CoreState",
     "EventOrigin",
     "HassJob",
@@ -215,3 +163,9 @@ for _name in dir(_native):
     if not _name.startswith("_") and _name not in globals():
         globals()[_name] = getattr(_native, _name)
         __all__.append(_name)
+
+
+# For debugging: indicate which implementation is being used
+def _is_rust_backed() -> bool:
+    """Return True if using Rust implementations."""
+    return _RUST_AVAILABLE

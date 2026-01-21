@@ -32,6 +32,15 @@ impl Context {
         }
     }
 
+    /// Create a new context with a specific ID
+    pub fn with_id(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            user_id: None,
+            parent_id: None,
+        }
+    }
+
     /// Create a new context with a specific user
     pub fn with_user(user_id: impl Into<String>) -> Self {
         Self {
