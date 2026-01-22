@@ -8,8 +8,12 @@ from homeassistant.helpers.entity import RustStateMixin
 # Load native HA switch module
 _native = load_native_module("homeassistant.components.switch")
 
+# Get the metaclass from the native class to avoid metaclass conflicts
+# when the native module is loaded fresh with a new CachedProperties instance
+_SwitchEntityMeta = type(_native.SwitchEntity)
 
-class SwitchEntity(RustStateMixin, _native.SwitchEntity):
+
+class SwitchEntity(RustStateMixin, _native.SwitchEntity, metaclass=_SwitchEntityMeta):
     """Switch entity that routes state writes to Rust."""
 
     pass

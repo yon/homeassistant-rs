@@ -8,8 +8,12 @@ from homeassistant.helpers.entity import RustStateMixin
 # Load native HA sensor module
 _native = load_native_module("homeassistant.components.sensor")
 
+# Get the metaclass from the native class to avoid metaclass conflicts
+# when the native module is loaded fresh with a new CachedProperties instance
+_SensorEntityMeta = type(_native.SensorEntity)
 
-class SensorEntity(RustStateMixin, _native.SensorEntity):
+
+class SensorEntity(RustStateMixin, _native.SensorEntity, metaclass=_SensorEntityMeta):
     """Sensor entity that routes state writes to Rust."""
 
     pass

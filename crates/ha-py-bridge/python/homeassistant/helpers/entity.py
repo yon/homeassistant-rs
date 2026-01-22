@@ -21,12 +21,16 @@ _LOGGER = logging.getLogger(__name__)
 # Load native HA entity module
 _native = load_native_module("homeassistant.helpers.entity")
 
+# Get the CachedProperties metaclass from native HA
+# This is needed so RustStateMixin uses the same metaclass as HA entity classes
+_CachedProperties = _native.Entity.__class__
 
-class RustStateMixin:
+
+class RustStateMixin(metaclass=_CachedProperties):
     """Mixin that routes state writes to Rust.
 
-    This is a plain mixin with no base class, so it avoids metaclass conflicts
-    when used with native HA entity classes that use CachedProperties metaclass.
+    Uses the same CachedProperties metaclass as HA entity classes to avoid
+    metaclass conflicts when combined in multiple inheritance.
     """
 
     hass: Any  # Type hint to satisfy mypy
@@ -46,6 +50,11 @@ class RustStateMixin:
         # Get state and attributes
         try:
             state = self.state
+            # Handle None state - use "unavailable" or "unknown" as appropriate
+            if state is None:
+                state = "unavailable"
+            else:
+                state = str(state)
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Error getting state for %s", self.entity_id)
             return
