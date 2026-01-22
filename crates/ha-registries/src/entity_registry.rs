@@ -252,12 +252,15 @@ impl Storable for EntityRegistryData {
 /// - config_entry_id (multi)
 /// - area_id (multi)
 /// - platform (multi)
+///
+/// Entries are stored as `Arc<EntityEntry>` to avoid cloning on reads.
+/// The `Arc` reference counting is atomic and very fast.
 pub struct EntityRegistry {
     /// Storage backend
     storage: Arc<Storage>,
 
-    /// Primary index: entity_id -> EntityEntry
-    by_entity_id: DashMap<String, EntityEntry>,
+    /// Primary index: entity_id -> EntityEntry (Arc-wrapped to avoid clones)
+    by_entity_id: DashMap<String, Arc<EntityEntry>>,
 
     /// Index: unique_id -> entity_id
     by_unique_id: DashMap<String, String>,
@@ -274,8 +277,8 @@ pub struct EntityRegistry {
     /// Index: platform -> set of entity_ids
     by_platform: DashMap<String, HashSet<String>>,
 
-    /// Deleted entities (soft delete)
-    deleted: DashMap<String, EntityEntry>,
+    /// Deleted entities (soft delete, Arc-wrapped)
+    deleted: DashMap<String, Arc<EntityEntry>>,
 }
 
 impl EntityRegistry {
@@ -304,11 +307,12 @@ impl EntityRegistry {
             );
 
             for entry in storage_file.data.entities {
-                self.index_entry(&entry);
+                self.index_entry(Arc::new(entry));
             }
 
             for entry in storage_file.data.deleted_entities {
-                self.deleted.insert(entry.entity_id.clone(), entry);
+                self.deleted
+                    .insert(entry.entity_id.clone(), Arc::new(entry));
             }
         }
         Ok(())
@@ -320,9 +324,9 @@ impl EntityRegistry {
             entities: self
                 .by_entity_id
                 .iter()
-                .map(|r| r.value().clone())
+                .map(|r| (**r.value()).clone())
                 .collect(),
-            deleted_entities: self.deleted.iter().map(|r| r.value().clone()).collect(),
+            deleted_entities: self.deleted.iter().map(|r| (**r.value()).clone()).collect(),
         };
 
         let storage_file =
@@ -334,11 +338,10 @@ impl EntityRegistry {
     }
 
     /// Index an entry in all indexes
-    fn index_entry(&self, entry: &EntityEntry) {
+    ///
+    /// Takes an `Arc<EntityEntry>` to avoid cloning - the Arc is stored directly.
+    fn index_entry(&self, entry: Arc<EntityEntry>) {
         let entity_id = entry.entity_id.clone();
-
-        // Primary index
-        self.by_entity_id.insert(entity_id.clone(), entry.clone());
 
         // unique_id index
         if let Some(ref unique_id) = entry.unique_id {
@@ -374,7 +377,10 @@ impl EntityRegistry {
         self.by_platform
             .entry(entry.platform.clone())
             .or_default()
-            .insert(entity_id);
+            .insert(entity_id.clone());
+
+        // Primary index (insert Arc directly, no clone)
+        self.by_entity_id.insert(entity_id, entry);
     }
 
     /// Remove an entry from all indexes
@@ -417,19 +423,23 @@ impl EntityRegistry {
     }
 
     /// Get entity by entity_id
-    pub fn get(&self, entity_id: &str) -> Option<EntityEntry> {
-        self.by_entity_id.get(entity_id).map(|r| r.value().clone())
+    ///
+    /// Returns an `Arc<EntityEntry>` - cheap to clone (atomic increment).
+    pub fn get(&self, entity_id: &str) -> Option<Arc<EntityEntry>> {
+        self.by_entity_id
+            .get(entity_id)
+            .map(|r| Arc::clone(r.value()))
     }
 
     /// Get entity by unique_id
-    pub fn get_by_unique_id(&self, unique_id: &str) -> Option<EntityEntry> {
+    pub fn get_by_unique_id(&self, unique_id: &str) -> Option<Arc<EntityEntry>> {
         self.by_unique_id
             .get(unique_id)
             .and_then(|entity_id| self.get(&entity_id))
     }
 
     /// Get all entities for a device
-    pub fn get_by_device_id(&self, device_id: &str) -> Vec<EntityEntry> {
+    pub fn get_by_device_id(&self, device_id: &str) -> Vec<Arc<EntityEntry>> {
         self.by_device_id
             .get(device_id)
             .map(|ids| ids.iter().filter_map(|id| self.get(id)).collect())
@@ -437,7 +447,7 @@ impl EntityRegistry {
     }
 
     /// Get all entities for a config entry
-    pub fn get_by_config_entry_id(&self, config_entry_id: &str) -> Vec<EntityEntry> {
+    pub fn get_by_config_entry_id(&self, config_entry_id: &str) -> Vec<Arc<EntityEntry>> {
         self.by_config_entry_id
             .get(config_entry_id)
             .map(|ids| ids.iter().filter_map(|id| self.get(id)).collect())
@@ -445,7 +455,7 @@ impl EntityRegistry {
     }
 
     /// Get all entities in an area
-    pub fn get_by_area_id(&self, area_id: &str) -> Vec<EntityEntry> {
+    pub fn get_by_area_id(&self, area_id: &str) -> Vec<Arc<EntityEntry>> {
         self.by_area_id
             .get(area_id)
             .map(|ids| ids.iter().filter_map(|id| self.get(id)).collect())
@@ -453,7 +463,7 @@ impl EntityRegistry {
     }
 
     /// Get all entities for a platform
-    pub fn get_by_platform(&self, platform: &str) -> Vec<EntityEntry> {
+    pub fn get_by_platform(&self, platform: &str) -> Vec<Arc<EntityEntry>> {
         self.by_platform
             .get(platform)
             .map(|ids| ids.iter().filter_map(|id| self.get(id)).collect())
@@ -464,6 +474,8 @@ impl EntityRegistry {
     ///
     /// This is the main registration method. If an entity with the same
     /// unique_id exists, returns it. Otherwise creates a new entry.
+    ///
+    /// Returns an `Arc<EntityEntry>` - cheap to clone (atomic increment).
     pub fn get_or_create(
         &self,
         platform: &str,
@@ -471,7 +483,7 @@ impl EntityRegistry {
         unique_id: Option<&str>,
         config_entry_id: Option<&str>,
         device_id: Option<&str>,
-    ) -> EntityEntry {
+    ) -> Arc<EntityEntry> {
         // Check if unique_id exists
         if let Some(uid) = unique_id {
             if let Some(existing) = self.get_by_unique_id(uid) {
@@ -499,21 +511,27 @@ impl EntityRegistry {
         entry.config_entry_id = config_entry_id.map(String::from);
         entry.device_id = device_id.map(String::from);
 
-        self.index_entry(&entry);
+        let arc_entry = Arc::new(entry);
+        self.index_entry(Arc::clone(&arc_entry));
 
         info!("Registered new entity: {}", entity_id);
-        entry
+        arc_entry
     }
 
     /// Update an entity entry
     ///
-    /// Returns the updated entry, or an error if the entity was not found.
-    pub fn update<F>(&self, entity_id: &str, f: F) -> Result<EntityEntry, EntityRegistryError>
+    /// Returns the updated entry as `Arc<EntityEntry>`, or an error if not found.
+    /// The closure receives a mutable reference to a cloned entry, which is then
+    /// wrapped in a new Arc and stored.
+    pub fn update<F>(&self, entity_id: &str, f: F) -> Result<Arc<EntityEntry>, EntityRegistryError>
     where
         F: FnOnce(&mut EntityEntry),
     {
         // Remove first to avoid deadlock (don't hold ref while modifying indexes)
-        if let Some((_, mut entry)) = self.by_entity_id.remove(entity_id) {
+        if let Some((_, arc_entry)) = self.by_entity_id.remove(entity_id) {
+            // Clone the inner entry for modification
+            let mut entry = (*arc_entry).clone();
+
             // Unindex the old entry from secondary indexes
             if let Some(ref unique_id) = entry.unique_id {
                 self.by_unique_id.remove(unique_id);
@@ -541,23 +559,27 @@ impl EntityRegistry {
             f(&mut entry);
             entry.modified_at = Utc::now();
 
-            // Re-index
-            self.index_entry(&entry);
+            // Re-index with new Arc
+            let new_arc = Arc::new(entry);
+            self.index_entry(Arc::clone(&new_arc));
 
-            Ok(entry)
+            Ok(new_arc)
         } else {
             Err(EntityRegistryError::NotFound(entity_id.to_string()))
         }
     }
 
     /// Remove an entity
-    pub fn remove(&self, entity_id: &str) -> Option<EntityEntry> {
-        if let Some((_, entry)) = self.by_entity_id.remove(entity_id) {
-            self.unindex_entry(&entry);
+    ///
+    /// Returns the removed entry as `Arc<EntityEntry>`.
+    pub fn remove(&self, entity_id: &str) -> Option<Arc<EntityEntry>> {
+        if let Some((_, arc_entry)) = self.by_entity_id.remove(entity_id) {
+            self.unindex_entry(&arc_entry);
             // Add to deleted for tracking
-            self.deleted.insert(entity_id.to_string(), entry.clone());
+            self.deleted
+                .insert(entity_id.to_string(), Arc::clone(&arc_entry));
             info!("Removed entity: {}", entity_id);
-            Some(entry)
+            Some(arc_entry)
         } else {
             None
         }
@@ -579,8 +601,10 @@ impl EntityRegistry {
     }
 
     /// Iterate over all entries
-    pub fn iter(&self) -> impl Iterator<Item = EntityEntry> + '_ {
-        self.by_entity_id.iter().map(|r| r.value().clone())
+    ///
+    /// Returns `Arc<EntityEntry>` references - cheap to clone.
+    pub fn iter(&self) -> impl Iterator<Item = Arc<EntityEntry>> + '_ {
+        self.by_entity_id.iter().map(|r| Arc::clone(r.value()))
     }
 }
 

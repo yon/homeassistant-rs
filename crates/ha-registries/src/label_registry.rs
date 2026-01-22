@@ -110,12 +110,14 @@ impl Storable for LabelRegistryData {
 }
 
 /// Label Registry
+///
+/// Entries are stored as `Arc<LabelEntry>` to avoid cloning on reads.
 pub struct LabelRegistry {
     /// Storage backend
     storage: Arc<Storage>,
 
-    /// Primary index: label_id -> LabelEntry
-    by_id: DashMap<String, LabelEntry>,
+    /// Primary index: label_id -> LabelEntry (Arc-wrapped)
+    by_id: DashMap<String, Arc<LabelEntry>>,
 
     /// Index: normalized_name -> label_id
     by_name: DashMap<String, String>,
@@ -142,7 +144,7 @@ impl LabelRegistry {
             );
 
             for entry in storage_file.data.labels {
-                self.index_entry(&entry);
+                self.index_entry(Arc::new(entry));
             }
         }
         Ok(())
@@ -151,7 +153,7 @@ impl LabelRegistry {
     /// Save to storage
     pub async fn save(&self) -> StorageResult<()> {
         let data = LabelRegistryData {
-            labels: self.by_id.iter().map(|r| r.value().clone()).collect(),
+            labels: self.by_id.iter().map(|r| (**r.value()).clone()).collect(),
         };
 
         let storage_file =
@@ -162,15 +164,15 @@ impl LabelRegistry {
         Ok(())
     }
 
-    /// Index an entry
-    fn index_entry(&self, entry: &LabelEntry) {
+    /// Index an entry (takes Arc to avoid cloning)
+    fn index_entry(&self, entry: Arc<LabelEntry>) {
         let label_id = entry.id.clone();
 
-        self.by_id.insert(label_id.clone(), entry.clone());
-
         if let Some(ref normalized) = entry.normalized_name {
-            self.by_name.insert(normalized.clone(), label_id);
+            self.by_name.insert(normalized.clone(), label_id.clone());
         }
+
+        self.by_id.insert(label_id, entry);
     }
 
     /// Remove an entry from indexes
@@ -182,12 +184,14 @@ impl LabelRegistry {
     }
 
     /// Get label by ID
-    pub fn get(&self, label_id: &str) -> Option<LabelEntry> {
-        self.by_id.get(label_id).map(|r| r.value().clone())
+    ///
+    /// Returns an `Arc<LabelEntry>` - cheap to clone.
+    pub fn get(&self, label_id: &str) -> Option<Arc<LabelEntry>> {
+        self.by_id.get(label_id).map(|r| Arc::clone(r.value()))
     }
 
     /// Get label by name
-    pub fn get_by_name(&self, name: &str) -> Option<LabelEntry> {
+    pub fn get_by_name(&self, name: &str) -> Option<Arc<LabelEntry>> {
         let normalized = normalize_name(name);
         self.by_name
             .get(&normalized)
@@ -195,27 +199,38 @@ impl LabelRegistry {
     }
 
     /// Create a new label
-    pub fn create(&self, name: &str) -> LabelEntry {
+    ///
+    /// Returns an `Arc<LabelEntry>` - cheap to clone.
+    pub fn create(&self, name: &str) -> Arc<LabelEntry> {
         let entry = LabelEntry::new(name);
-        self.index_entry(&entry);
-        info!("Created label: {} ({})", name, entry.id);
-        entry
+        let arc_entry = Arc::new(entry);
+        info!("Created label: {} ({})", name, arc_entry.id);
+        self.index_entry(Arc::clone(&arc_entry));
+        arc_entry
     }
 
     /// Create a new label with builder pattern
-    pub fn create_with(&self, entry: LabelEntry) -> LabelEntry {
-        self.index_entry(&entry);
-        info!("Created label: {} ({})", entry.name, entry.id);
-        entry
+    ///
+    /// Returns an `Arc<LabelEntry>` - cheap to clone.
+    pub fn create_with(&self, entry: LabelEntry) -> Arc<LabelEntry> {
+        let arc_entry = Arc::new(entry);
+        info!("Created label: {} ({})", arc_entry.name, arc_entry.id);
+        self.index_entry(Arc::clone(&arc_entry));
+        arc_entry
     }
 
     /// Update a label
-    pub fn update<F>(&self, label_id: &str, f: F) -> Option<LabelEntry>
+    ///
+    /// Returns the updated entry as `Arc<LabelEntry>`.
+    pub fn update<F>(&self, label_id: &str, f: F) -> Option<Arc<LabelEntry>>
     where
         F: FnOnce(&mut LabelEntry),
     {
         // Remove first to avoid deadlock
-        if let Some((_, mut entry)) = self.by_id.remove(label_id) {
+        if let Some((_, arc_entry)) = self.by_id.remove(label_id) {
+            // Clone the inner entry for modification
+            let mut entry = (*arc_entry).clone();
+
             // Unindex from secondary indexes
             if let Some(ref normalized) = entry.normalized_name {
                 self.by_name.remove(normalized);
@@ -226,21 +241,24 @@ impl LabelRegistry {
             entry.normalized_name = Some(normalize_name(&entry.name));
             entry.modified_at = Utc::now();
 
-            // Re-index
-            self.index_entry(&entry);
+            // Re-index with new Arc
+            let new_arc = Arc::new(entry);
+            self.index_entry(Arc::clone(&new_arc));
 
-            Some(entry)
+            Some(new_arc)
         } else {
             None
         }
     }
 
     /// Remove a label
-    pub fn remove(&self, label_id: &str) -> Option<LabelEntry> {
-        if let Some((_, entry)) = self.by_id.remove(label_id) {
-            self.unindex_entry(&entry);
+    ///
+    /// Returns the removed entry as `Arc<LabelEntry>`.
+    pub fn remove(&self, label_id: &str) -> Option<Arc<LabelEntry>> {
+        if let Some((_, arc_entry)) = self.by_id.remove(label_id) {
+            self.unindex_entry(&arc_entry);
             info!("Removed label: {}", label_id);
-            Some(entry)
+            Some(arc_entry)
         } else {
             None
         }
@@ -257,12 +275,16 @@ impl LabelRegistry {
     }
 
     /// Iterate over all labels
-    pub fn iter(&self) -> impl Iterator<Item = LabelEntry> + '_ {
-        self.by_id.iter().map(|r| r.value().clone())
+    ///
+    /// Returns `Arc<LabelEntry>` references - cheap to clone.
+    pub fn iter(&self) -> impl Iterator<Item = Arc<LabelEntry>> + '_ {
+        self.by_id.iter().map(|r| Arc::clone(r.value()))
     }
 
     /// Get all labels sorted by name
-    pub fn sorted_by_name(&self) -> Vec<LabelEntry> {
+    ///
+    /// Returns `Arc<LabelEntry>` references - cheap to clone.
+    pub fn sorted_by_name(&self) -> Vec<Arc<LabelEntry>> {
         let mut labels: Vec<_> = self.iter().collect();
         labels.sort_by(|a, b| a.name.cmp(&b.name));
         labels

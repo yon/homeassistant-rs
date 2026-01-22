@@ -30,6 +30,7 @@ thiserror = { workspace = true }
 rand = "0.8"
 
 # Async
+futures = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 
 # Logging

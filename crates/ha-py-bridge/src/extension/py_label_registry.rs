@@ -82,8 +82,11 @@ impl PyLabelEntry {
 }
 
 impl PyLabelEntry {
-    pub fn from_inner(inner: LabelEntry) -> Self {
-        Self { inner }
+    /// Create from Arc<LabelEntry> - clones the inner value for Python ownership
+    pub fn from_inner(inner: Arc<LabelEntry>) -> Self {
+        Self {
+            inner: (*inner).clone(),
+        }
     }
 
     pub fn inner(&self) -> &LabelEntry {

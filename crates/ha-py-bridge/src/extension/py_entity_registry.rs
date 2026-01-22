@@ -220,8 +220,11 @@ impl PyEntityEntry {
 }
 
 impl PyEntityEntry {
-    pub fn from_inner(inner: EntityEntry) -> Self {
-        Self { inner }
+    /// Create from Arc<EntityEntry> - clones the inner value for Python ownership
+    pub fn from_inner(inner: Arc<EntityEntry>) -> Self {
+        Self {
+            inner: (*inner).clone(),
+        }
     }
 
     pub fn inner(&self) -> &EntityEntry {

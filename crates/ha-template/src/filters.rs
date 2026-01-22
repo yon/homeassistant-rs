@@ -5,7 +5,49 @@
 use minijinja::value::{Kwargs, Value};
 use minijinja::{Error, ErrorKind, State};
 use regex::Regex;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::convert::TryFrom;
+
+/// Maximum number of cached regexes per thread
+const MAX_REGEX_CACHE_SIZE: usize = 64;
+
+thread_local! {
+    /// Thread-local cache for compiled regexes to avoid recompilation
+    static REGEX_CACHE: RefCell<HashMap<String, Regex>> = RefCell::new(HashMap::new());
+}
+
+/// Get or compile a regex pattern, using thread-local cache
+fn get_or_compile_regex(pattern: &str) -> Result<Regex, Error> {
+    REGEX_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+
+        // Check if already cached
+        if let Some(re) = cache.get(pattern) {
+            return Ok(re.clone());
+        }
+
+        // Compile new regex
+        let re = Regex::new(pattern).map_err(|e| {
+            Error::new(ErrorKind::InvalidOperation, format!("invalid regex: {}", e))
+        })?;
+
+        // Evict oldest entries if cache is full (simple eviction - clear half)
+        if cache.len() >= MAX_REGEX_CACHE_SIZE {
+            let keys_to_remove: Vec<_> = cache
+                .keys()
+                .take(MAX_REGEX_CACHE_SIZE / 2)
+                .cloned()
+                .collect();
+            for key in keys_to_remove {
+                cache.remove(&key);
+            }
+        }
+
+        cache.insert(pattern.to_string(), re.clone());
+        Ok(re)
+    })
+}
 
 /// Helper to convert Value to f64
 fn value_to_f64(value: &Value) -> Option<f64> {
@@ -30,16 +72,18 @@ pub fn slugify(value: &str, kwargs: Kwargs) -> Result<String, Error> {
 }
 
 /// Replace matches of a regex pattern with a replacement string
+///
+/// Uses cached regex compilation for repeated patterns.
 pub fn regex_replace(value: &str, find: &str, replace: &str) -> Result<String, Error> {
-    let re = Regex::new(find)
-        .map_err(|e| Error::new(ErrorKind::InvalidOperation, format!("invalid regex: {}", e)))?;
+    let re = get_or_compile_regex(find)?;
     Ok(re.replace_all(value, replace).to_string())
 }
 
 /// Find all matches of a regex pattern
+///
+/// Uses cached regex compilation for repeated patterns.
 pub fn regex_findall(value: &str, pattern: &str) -> Result<Value, Error> {
-    let re = Regex::new(pattern)
-        .map_err(|e| Error::new(ErrorKind::InvalidOperation, format!("invalid regex: {}", e)))?;
+    let re = get_or_compile_regex(pattern)?;
 
     let matches: Vec<Value> = re
         .captures_iter(value)
@@ -66,9 +110,10 @@ pub fn regex_findall(value: &str, pattern: &str) -> Result<Value, Error> {
 }
 
 /// Test if a regex pattern matches
+///
+/// Uses cached regex compilation for repeated patterns.
 pub fn regex_match(value: &str, pattern: &str) -> Result<bool, Error> {
-    let re = Regex::new(pattern)
-        .map_err(|e| Error::new(ErrorKind::InvalidOperation, format!("invalid regex: {}", e)))?;
+    let re = get_or_compile_regex(pattern)?;
     Ok(re.is_match(value))
 }
 

@@ -245,10 +245,13 @@ impl PyState {
 }
 
 /// Python wrapper for Event
+///
+/// Events are stored as Arc<Event> to avoid cloning event data.
+/// This matches the EventBus optimization where events are broadcast as Arc.
 #[pyclass(name = "Event")]
 #[derive(Clone)]
 pub struct PyEvent {
-    inner: Event<serde_json::Value>,
+    inner: std::sync::Arc<Event<serde_json::Value>>,
 }
 
 #[pymethods]
@@ -303,8 +306,16 @@ impl PyEvent {
 }
 
 impl PyEvent {
-    pub fn from_inner(inner: Event<serde_json::Value>) -> Self {
+    /// Create a PyEvent from an Arc<Event> (cheap, no clone)
+    pub fn from_arc(inner: std::sync::Arc<Event<serde_json::Value>>) -> Self {
         Self { inner }
+    }
+
+    /// Create a PyEvent from an owned Event (wraps in Arc)
+    pub fn from_inner(inner: Event<serde_json::Value>) -> Self {
+        Self {
+            inner: std::sync::Arc::new(inner),
+        }
     }
 }
 

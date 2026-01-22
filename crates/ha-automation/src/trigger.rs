@@ -5,7 +5,7 @@
 
 use chrono::{DateTime, NaiveTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use thiserror::Error;
 
@@ -165,13 +165,13 @@ pub struct StateTrigger {
     )]
     pub r#for: Option<Duration>,
 
-    /// Don't trigger if coming from these states
+    /// Don't trigger if coming from these states (HashSet for O(1) lookup)
     #[serde(default)]
-    pub not_from: Vec<String>,
+    pub not_from: HashSet<String>,
 
-    /// Don't trigger if going to these states
+    /// Don't trigger if going to these states (HashSet for O(1) lookup)
     #[serde(default)]
-    pub not_to: Vec<String>,
+    pub not_to: HashSet<String>,
 }
 
 /// Event trigger

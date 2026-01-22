@@ -102,12 +102,14 @@ impl Storable for AreaRegistryData {
 }
 
 /// Area Registry
+///
+/// Entries are stored as `Arc<AreaEntry>` to avoid cloning on reads.
 pub struct AreaRegistry {
     /// Storage backend
     storage: Arc<Storage>,
 
-    /// Primary index: area_id -> AreaEntry
-    by_id: DashMap<String, AreaEntry>,
+    /// Primary index: area_id -> AreaEntry (Arc-wrapped)
+    by_id: DashMap<String, Arc<AreaEntry>>,
 
     /// Index: normalized_name -> area_id
     by_name: DashMap<String, String>,
@@ -138,7 +140,7 @@ impl AreaRegistry {
             );
 
             for entry in storage_file.data.areas {
-                self.index_entry(&entry);
+                self.index_entry(Arc::new(entry));
             }
         }
         Ok(())
@@ -147,7 +149,7 @@ impl AreaRegistry {
     /// Save to storage
     pub async fn save(&self) -> StorageResult<()> {
         let data = AreaRegistryData {
-            areas: self.by_id.iter().map(|r| r.value().clone()).collect(),
+            areas: self.by_id.iter().map(|r| (**r.value()).clone()).collect(),
         };
 
         let storage_file =
@@ -158,11 +160,9 @@ impl AreaRegistry {
         Ok(())
     }
 
-    /// Index an entry
-    fn index_entry(&self, entry: &AreaEntry) {
+    /// Index an entry (takes Arc to avoid cloning)
+    fn index_entry(&self, entry: Arc<AreaEntry>) {
         let area_id = entry.id.clone();
-
-        self.by_id.insert(area_id.clone(), entry.clone());
 
         if let Some(ref normalized) = entry.normalized_name {
             self.by_name.insert(normalized.clone(), area_id.clone());
@@ -172,8 +172,10 @@ impl AreaRegistry {
             self.by_floor_id
                 .entry(floor_id.clone())
                 .or_default()
-                .insert(area_id);
+                .insert(area_id.clone());
         }
+
+        self.by_id.insert(area_id, entry);
     }
 
     /// Remove an entry from indexes
@@ -192,12 +194,14 @@ impl AreaRegistry {
     }
 
     /// Get area by ID
-    pub fn get(&self, area_id: &str) -> Option<AreaEntry> {
-        self.by_id.get(area_id).map(|r| r.value().clone())
+    ///
+    /// Returns an `Arc<AreaEntry>` - cheap to clone.
+    pub fn get(&self, area_id: &str) -> Option<Arc<AreaEntry>> {
+        self.by_id.get(area_id).map(|r| Arc::clone(r.value()))
     }
 
     /// Get area by name
-    pub fn get_by_name(&self, name: &str) -> Option<AreaEntry> {
+    pub fn get_by_name(&self, name: &str) -> Option<Arc<AreaEntry>> {
         let normalized = normalize_name(name);
         self.by_name
             .get(&normalized)
@@ -205,7 +209,7 @@ impl AreaRegistry {
     }
 
     /// Get all areas on a floor
-    pub fn get_by_floor_id(&self, floor_id: &str) -> Vec<AreaEntry> {
+    pub fn get_by_floor_id(&self, floor_id: &str) -> Vec<Arc<AreaEntry>> {
         self.by_floor_id
             .get(floor_id)
             .map(|ids| ids.iter().filter_map(|id| self.get(id)).collect())
@@ -213,20 +217,28 @@ impl AreaRegistry {
     }
 
     /// Create a new area
-    pub fn create(&self, name: &str) -> AreaEntry {
+    ///
+    /// Returns an `Arc<AreaEntry>` - cheap to clone.
+    pub fn create(&self, name: &str) -> Arc<AreaEntry> {
         let entry = AreaEntry::new(name);
-        self.index_entry(&entry);
-        info!("Created area: {} ({})", name, entry.id);
-        entry
+        let arc_entry = Arc::new(entry);
+        info!("Created area: {} ({})", name, arc_entry.id);
+        self.index_entry(Arc::clone(&arc_entry));
+        arc_entry
     }
 
     /// Update an area
-    pub fn update<F>(&self, area_id: &str, f: F) -> Option<AreaEntry>
+    ///
+    /// Returns the updated entry as `Arc<AreaEntry>`.
+    pub fn update<F>(&self, area_id: &str, f: F) -> Option<Arc<AreaEntry>>
     where
         F: FnOnce(&mut AreaEntry),
     {
         // Remove first to avoid deadlock
-        if let Some((_, mut entry)) = self.by_id.remove(area_id) {
+        if let Some((_, arc_entry)) = self.by_id.remove(area_id) {
+            // Clone the inner entry for modification
+            let mut entry = (*arc_entry).clone();
+
             // Unindex from secondary indexes
             if let Some(ref normalized) = entry.normalized_name {
                 self.by_name.remove(normalized);
@@ -242,21 +254,24 @@ impl AreaRegistry {
             entry.normalized_name = Some(normalize_name(&entry.name));
             entry.modified_at = Utc::now();
 
-            // Re-index
-            self.index_entry(&entry);
+            // Re-index with new Arc
+            let new_arc = Arc::new(entry);
+            self.index_entry(Arc::clone(&new_arc));
 
-            Some(entry)
+            Some(new_arc)
         } else {
             None
         }
     }
 
     /// Remove an area
-    pub fn remove(&self, area_id: &str) -> Option<AreaEntry> {
-        if let Some((_, entry)) = self.by_id.remove(area_id) {
-            self.unindex_entry(&entry);
+    ///
+    /// Returns the removed entry as `Arc<AreaEntry>`.
+    pub fn remove(&self, area_id: &str) -> Option<Arc<AreaEntry>> {
+        if let Some((_, arc_entry)) = self.by_id.remove(area_id) {
+            self.unindex_entry(&arc_entry);
             info!("Removed area: {}", area_id);
-            Some(entry)
+            Some(arc_entry)
         } else {
             None
         }
@@ -273,8 +288,10 @@ impl AreaRegistry {
     }
 
     /// Iterate over all areas
-    pub fn iter(&self) -> impl Iterator<Item = AreaEntry> + '_ {
-        self.by_id.iter().map(|r| r.value().clone())
+    ///
+    /// Returns `Arc<AreaEntry>` references - cheap to clone.
+    pub fn iter(&self) -> impl Iterator<Item = Arc<AreaEntry>> + '_ {
+        self.by_id.iter().map(|r| Arc::clone(r.value()))
     }
 }
 

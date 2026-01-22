@@ -92,12 +92,14 @@ impl Storable for FloorRegistryData {
 }
 
 /// Floor Registry
+///
+/// Entries are stored as `Arc<FloorEntry>` to avoid cloning on reads.
 pub struct FloorRegistry {
     /// Storage backend
     storage: Arc<Storage>,
 
-    /// Primary index: floor_id -> FloorEntry
-    by_id: DashMap<String, FloorEntry>,
+    /// Primary index: floor_id -> FloorEntry (Arc-wrapped)
+    by_id: DashMap<String, Arc<FloorEntry>>,
 
     /// Index: normalized_name -> floor_id
     by_name: DashMap<String, String>,
@@ -128,7 +130,7 @@ impl FloorRegistry {
             );
 
             for entry in storage_file.data.floors {
-                self.index_entry(&entry);
+                self.index_entry(Arc::new(entry));
             }
         }
         Ok(())
@@ -137,7 +139,7 @@ impl FloorRegistry {
     /// Save to storage
     pub async fn save(&self) -> StorageResult<()> {
         let data = FloorRegistryData {
-            floors: self.by_id.iter().map(|r| r.value().clone()).collect(),
+            floors: self.by_id.iter().map(|r| (**r.value()).clone()).collect(),
         };
 
         let storage_file =
@@ -148,17 +150,16 @@ impl FloorRegistry {
         Ok(())
     }
 
-    /// Index an entry
-    fn index_entry(&self, entry: &FloorEntry) {
+    /// Index an entry (takes Arc to avoid cloning)
+    fn index_entry(&self, entry: Arc<FloorEntry>) {
         let floor_id = entry.id.clone();
-
-        self.by_id.insert(floor_id.clone(), entry.clone());
 
         if let Some(ref normalized) = entry.normalized_name {
             self.by_name.insert(normalized.clone(), floor_id.clone());
         }
 
-        self.by_level.insert(entry.level, floor_id);
+        self.by_level.insert(entry.level, floor_id.clone());
+        self.by_id.insert(floor_id, entry);
     }
 
     /// Remove an entry from indexes
@@ -171,12 +172,14 @@ impl FloorRegistry {
     }
 
     /// Get floor by ID
-    pub fn get(&self, floor_id: &str) -> Option<FloorEntry> {
-        self.by_id.get(floor_id).map(|r| r.value().clone())
+    ///
+    /// Returns an `Arc<FloorEntry>` - cheap to clone.
+    pub fn get(&self, floor_id: &str) -> Option<Arc<FloorEntry>> {
+        self.by_id.get(floor_id).map(|r| Arc::clone(r.value()))
     }
 
     /// Get floor by name
-    pub fn get_by_name(&self, name: &str) -> Option<FloorEntry> {
+    pub fn get_by_name(&self, name: &str) -> Option<Arc<FloorEntry>> {
         let normalized = normalize_name(name);
         self.by_name
             .get(&normalized)
@@ -184,27 +187,38 @@ impl FloorRegistry {
     }
 
     /// Get floor by level
-    pub fn get_by_level(&self, level: i32) -> Option<FloorEntry> {
+    pub fn get_by_level(&self, level: i32) -> Option<Arc<FloorEntry>> {
         self.by_level
             .get(&level)
             .and_then(|floor_id| self.get(&floor_id))
     }
 
     /// Create a new floor
-    pub fn create(&self, name: &str, level: i32) -> FloorEntry {
+    ///
+    /// Returns an `Arc<FloorEntry>` - cheap to clone.
+    pub fn create(&self, name: &str, level: i32) -> Arc<FloorEntry> {
         let entry = FloorEntry::new(name, level);
-        self.index_entry(&entry);
-        info!("Created floor: {} (level {}, {})", name, level, entry.id);
-        entry
+        let arc_entry = Arc::new(entry);
+        info!(
+            "Created floor: {} (level {}, {})",
+            name, level, arc_entry.id
+        );
+        self.index_entry(Arc::clone(&arc_entry));
+        arc_entry
     }
 
     /// Update a floor
-    pub fn update<F>(&self, floor_id: &str, f: F) -> Option<FloorEntry>
+    ///
+    /// Returns the updated entry as `Arc<FloorEntry>`.
+    pub fn update<F>(&self, floor_id: &str, f: F) -> Option<Arc<FloorEntry>>
     where
         F: FnOnce(&mut FloorEntry),
     {
         // Remove first to avoid deadlock
-        if let Some((_, mut entry)) = self.by_id.remove(floor_id) {
+        if let Some((_, arc_entry)) = self.by_id.remove(floor_id) {
+            // Clone the inner entry for modification
+            let mut entry = (*arc_entry).clone();
+
             // Unindex from secondary indexes
             if let Some(ref normalized) = entry.normalized_name {
                 self.by_name.remove(normalized);
@@ -216,21 +230,24 @@ impl FloorRegistry {
             entry.normalized_name = Some(normalize_name(&entry.name));
             entry.modified_at = Utc::now();
 
-            // Re-index
-            self.index_entry(&entry);
+            // Re-index with new Arc
+            let new_arc = Arc::new(entry);
+            self.index_entry(Arc::clone(&new_arc));
 
-            Some(entry)
+            Some(new_arc)
         } else {
             None
         }
     }
 
     /// Remove a floor
-    pub fn remove(&self, floor_id: &str) -> Option<FloorEntry> {
-        if let Some((_, entry)) = self.by_id.remove(floor_id) {
-            self.unindex_entry(&entry);
+    ///
+    /// Returns the removed entry as `Arc<FloorEntry>`.
+    pub fn remove(&self, floor_id: &str) -> Option<Arc<FloorEntry>> {
+        if let Some((_, arc_entry)) = self.by_id.remove(floor_id) {
+            self.unindex_entry(&arc_entry);
             info!("Removed floor: {}", floor_id);
-            Some(entry)
+            Some(arc_entry)
         } else {
             None
         }
@@ -246,13 +263,17 @@ impl FloorRegistry {
         self.by_id.is_empty()
     }
 
-    /// Iterate over all floors (sorted by level)
-    pub fn iter(&self) -> impl Iterator<Item = FloorEntry> + '_ {
-        self.by_id.iter().map(|r| r.value().clone())
+    /// Iterate over all floors
+    ///
+    /// Returns `Arc<FloorEntry>` references - cheap to clone.
+    pub fn iter(&self) -> impl Iterator<Item = Arc<FloorEntry>> + '_ {
+        self.by_id.iter().map(|r| Arc::clone(r.value()))
     }
 
     /// Get all floors sorted by level
-    pub fn sorted_by_level(&self) -> Vec<FloorEntry> {
+    ///
+    /// Returns `Arc<FloorEntry>` references - cheap to clone.
+    pub fn sorted_by_level(&self) -> Vec<Arc<FloorEntry>> {
         let mut floors: Vec<_> = self.iter().collect();
         floors.sort_by_key(|f| f.level);
         floors

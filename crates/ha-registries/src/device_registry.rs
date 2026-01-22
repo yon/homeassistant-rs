@@ -308,12 +308,14 @@ impl Storable for DeviceRegistryData {
 /// - config_entry_id (multi)
 /// - area_id (multi)
 /// - via_device_id (multi)
+///
+/// Entries are stored as `Arc<DeviceEntry>` to avoid cloning on reads.
 pub struct DeviceRegistry {
     /// Storage backend
     storage: Arc<Storage>,
 
-    /// Primary index: device_id -> DeviceEntry
-    by_id: DashMap<String, DeviceEntry>,
+    /// Primary index: device_id -> DeviceEntry (Arc-wrapped)
+    by_id: DashMap<String, Arc<DeviceEntry>>,
 
     /// Index: identifier key -> device_id
     by_identifier: DashMap<String, String>,
@@ -330,8 +332,8 @@ pub struct DeviceRegistry {
     /// Index: via_device_id -> set of device_ids (child devices)
     by_via_device_id: DashMap<String, HashSet<String>>,
 
-    /// Deleted devices (soft delete)
-    deleted: DashMap<String, DeviceEntry>,
+    /// Deleted devices (soft delete, Arc-wrapped)
+    deleted: DashMap<String, Arc<DeviceEntry>>,
 }
 
 impl DeviceRegistry {
@@ -360,11 +362,11 @@ impl DeviceRegistry {
             );
 
             for entry in storage_file.data.devices {
-                self.index_entry(&entry);
+                self.index_entry(Arc::new(entry));
             }
 
             for entry in storage_file.data.deleted_devices {
-                self.deleted.insert(entry.id.clone(), entry);
+                self.deleted.insert(entry.id.clone(), Arc::new(entry));
             }
         }
         Ok(())
@@ -373,8 +375,8 @@ impl DeviceRegistry {
     /// Save to storage
     pub async fn save(&self) -> StorageResult<()> {
         let data = DeviceRegistryData {
-            devices: self.by_id.iter().map(|r| r.value().clone()).collect(),
-            deleted_devices: self.deleted.iter().map(|r| r.value().clone()).collect(),
+            devices: self.by_id.iter().map(|r| (**r.value()).clone()).collect(),
+            deleted_devices: self.deleted.iter().map(|r| (**r.value()).clone()).collect(),
         };
 
         let storage_file =
@@ -386,11 +388,10 @@ impl DeviceRegistry {
     }
 
     /// Index an entry in all indexes
-    fn index_entry(&self, entry: &DeviceEntry) {
+    ///
+    /// Takes an `Arc<DeviceEntry>` to avoid cloning.
+    fn index_entry(&self, entry: Arc<DeviceEntry>) {
         let device_id = entry.id.clone();
-
-        // Primary index
-        self.by_id.insert(device_id.clone(), entry.clone());
 
         // Identifier indexes
         for identifier in &entry.identifiers {
@@ -425,8 +426,11 @@ impl DeviceRegistry {
             self.by_via_device_id
                 .entry(via_device_id.clone())
                 .or_default()
-                .insert(device_id);
+                .insert(device_id.clone());
         }
+
+        // Primary index (insert Arc directly)
+        self.by_id.insert(device_id, entry);
     }
 
     /// Remove an entry from all indexes
@@ -469,12 +473,14 @@ impl DeviceRegistry {
     }
 
     /// Get device by ID
-    pub fn get(&self, device_id: &str) -> Option<DeviceEntry> {
-        self.by_id.get(device_id).map(|r| r.value().clone())
+    ///
+    /// Returns an `Arc<DeviceEntry>` - cheap to clone (atomic increment).
+    pub fn get(&self, device_id: &str) -> Option<Arc<DeviceEntry>> {
+        self.by_id.get(device_id).map(|r| Arc::clone(r.value()))
     }
 
     /// Get device by identifier
-    pub fn get_by_identifier(&self, domain: &str, id: &str) -> Option<DeviceEntry> {
+    pub fn get_by_identifier(&self, domain: &str, id: &str) -> Option<Arc<DeviceEntry>> {
         let key = format!("{}:{}", domain, id);
         self.by_identifier
             .get(&key)
@@ -482,7 +488,7 @@ impl DeviceRegistry {
     }
 
     /// Get device by connection
-    pub fn get_by_connection(&self, conn_type: &str, id: &str) -> Option<DeviceEntry> {
+    pub fn get_by_connection(&self, conn_type: &str, id: &str) -> Option<Arc<DeviceEntry>> {
         let key = format!("{}:{}", conn_type, id);
         self.by_connection
             .get(&key)
@@ -490,7 +496,7 @@ impl DeviceRegistry {
     }
 
     /// Get all devices for a config entry
-    pub fn get_by_config_entry_id(&self, config_entry_id: &str) -> Vec<DeviceEntry> {
+    pub fn get_by_config_entry_id(&self, config_entry_id: &str) -> Vec<Arc<DeviceEntry>> {
         self.by_config_entry_id
             .get(config_entry_id)
             .map(|ids| ids.iter().filter_map(|id| self.get(id)).collect())
@@ -498,7 +504,7 @@ impl DeviceRegistry {
     }
 
     /// Get all devices in an area
-    pub fn get_by_area_id(&self, area_id: &str) -> Vec<DeviceEntry> {
+    pub fn get_by_area_id(&self, area_id: &str) -> Vec<Arc<DeviceEntry>> {
         self.by_area_id
             .get(area_id)
             .map(|ids| ids.iter().filter_map(|id| self.get(id)).collect())
@@ -506,7 +512,7 @@ impl DeviceRegistry {
     }
 
     /// Get all child devices (connected via this device)
-    pub fn get_children(&self, device_id: &str) -> Vec<DeviceEntry> {
+    pub fn get_children(&self, device_id: &str) -> Vec<Arc<DeviceEntry>> {
         self.by_via_device_id
             .get(device_id)
             .map(|ids| ids.iter().filter_map(|id| self.get(id)).collect())
@@ -516,13 +522,14 @@ impl DeviceRegistry {
     /// Get or create a device
     ///
     /// Looks up by identifiers first, then connections. Creates new if not found.
+    /// Returns an `Arc<DeviceEntry>` - cheap to clone.
     pub fn get_or_create(
         &self,
         identifiers: &[DeviceIdentifier],
         connections: &[DeviceConnection],
         config_entry_id: Option<&str>,
         name: &str,
-    ) -> DeviceEntry {
+    ) -> Arc<DeviceEntry> {
         // Check by identifiers
         for identifier in identifiers {
             if let Some(existing) = self.get_by_identifier(identifier.domain(), identifier.id()) {
@@ -551,19 +558,25 @@ impl DeviceRegistry {
             entry.primary_config_entry = Some(config_id.to_string());
         }
 
-        self.index_entry(&entry);
+        let arc_entry = Arc::new(entry);
+        self.index_entry(Arc::clone(&arc_entry));
 
-        info!("Registered new device: {} ({})", name, entry.id);
-        entry
+        info!("Registered new device: {} ({})", name, arc_entry.id);
+        arc_entry
     }
 
     /// Update a device entry
-    pub fn update<F>(&self, device_id: &str, f: F) -> Option<DeviceEntry>
+    ///
+    /// Returns the updated entry as `Arc<DeviceEntry>`.
+    pub fn update<F>(&self, device_id: &str, f: F) -> Option<Arc<DeviceEntry>>
     where
         F: FnOnce(&mut DeviceEntry),
     {
         // Remove first to avoid deadlock
-        if let Some((_, mut entry)) = self.by_id.remove(device_id) {
+        if let Some((_, arc_entry)) = self.by_id.remove(device_id) {
+            // Clone the inner entry for modification
+            let mut entry = (*arc_entry).clone();
+
             // Unindex from secondary indexes
             for identifier in &entry.identifiers {
                 self.by_identifier.remove(&identifier.key());
@@ -591,23 +604,27 @@ impl DeviceRegistry {
             f(&mut entry);
             entry.modified_at = Utc::now();
 
-            // Re-index
-            self.index_entry(&entry);
+            // Re-index with new Arc
+            let new_arc = Arc::new(entry);
+            self.index_entry(Arc::clone(&new_arc));
 
-            Some(entry)
+            Some(new_arc)
         } else {
             None
         }
     }
 
     /// Remove a device
-    pub fn remove(&self, device_id: &str) -> Option<DeviceEntry> {
-        if let Some((_, entry)) = self.by_id.remove(device_id) {
-            self.unindex_entry(&entry);
+    ///
+    /// Returns the removed entry as `Arc<DeviceEntry>`.
+    pub fn remove(&self, device_id: &str) -> Option<Arc<DeviceEntry>> {
+        if let Some((_, arc_entry)) = self.by_id.remove(device_id) {
+            self.unindex_entry(&arc_entry);
             // Add to deleted for tracking
-            self.deleted.insert(device_id.to_string(), entry.clone());
+            self.deleted
+                .insert(device_id.to_string(), Arc::clone(&arc_entry));
             info!("Removed device: {}", device_id);
-            Some(entry)
+            Some(arc_entry)
         } else {
             None
         }
@@ -629,8 +646,10 @@ impl DeviceRegistry {
     }
 
     /// Iterate over all entries
-    pub fn iter(&self) -> impl Iterator<Item = DeviceEntry> + '_ {
-        self.by_id.iter().map(|r| r.value().clone())
+    ///
+    /// Returns `Arc<DeviceEntry>` references - cheap to clone.
+    pub fn iter(&self) -> impl Iterator<Item = Arc<DeviceEntry>> + '_ {
+        self.by_id.iter().map(|r| Arc::clone(r.value()))
     }
 }
 
