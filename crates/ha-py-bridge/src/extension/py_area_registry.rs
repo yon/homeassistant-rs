@@ -109,14 +109,13 @@ pub struct PyAreaRegistry {
 impl PyAreaRegistry {
     #[new]
     fn new(py: Python<'_>, hass: PyObject) -> PyResult<Self> {
-        // Extract storage path from hass.config.path('.storage')
+        // Extract config directory path from hass.config.path()
+        // Note: Storage::new() adds ".storage" internally, so we pass the config dir
         let config = hass.getattr(py, "config")?;
-        let storage_path: String = config
-            .call_method1(py, "path", (".storage",))?
-            .extract(py)?;
+        let config_dir: String = config.call_method1(py, "path", ("",))?.extract(py)?;
 
         // Create Rust storage and registry
-        let storage = Arc::new(ha_registries::storage::Storage::new(&storage_path));
+        let storage = Arc::new(ha_registries::storage::Storage::new(&config_dir));
         let registry = AreaRegistry::new(storage);
 
         Ok(Self {

@@ -2,7 +2,7 @@
 //!
 //! Defines all incoming and outgoing WebSocket message types.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -70,9 +70,9 @@ pub enum IncomingMessage {
         #[serde(default)]
         new_entity_id: Option<String>,
         #[serde(default)]
-        aliases: Option<Vec<String>>,
+        aliases: Option<HashSet<String>>,
         #[serde(default)]
-        labels: Option<Vec<String>>,
+        labels: Option<HashSet<String>>,
     },
     #[serde(rename = "config/entity_registry/list_for_display")]
     EntityRegistryListForDisplay {

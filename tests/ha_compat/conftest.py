@@ -925,6 +925,25 @@ class RustStorage:
 # Rust-backed EntityRegistry wrappers
 # =============================================================================
 
+def _convert_categories(categories):
+    """Convert categories from Rust JSON format to HA format.
+
+    Categories can be either:
+    - A dict (scope -> category_id mapping) - stays as dict
+    - A set of strings (from Python) - becomes list in JSON, convert back to set
+    - None/empty - returns empty dict
+    """
+    if not categories:
+        return {}
+    # If it's already a dict, return as-is
+    if isinstance(categories, dict):
+        return categories
+    # If it's a list (from JSON array, originally a set), convert to set
+    if isinstance(categories, list):
+        return set(categories)
+    return {}
+
+
 def _rust_entry_to_registry_entry(rust_entry):
     """Convert a Rust EntityEntry to HA's RegistryEntry.
 
@@ -962,7 +981,7 @@ def _rust_entry_to_registry_entry(rust_entry):
         previous_unique_id=rust_entry.previous_unique_id,
         aliases=set(rust_entry.aliases),
         area_id=rust_entry.area_id,
-        categories=dict(rust_entry.categories) if rust_entry.categories else {},
+        categories=_convert_categories(rust_entry.categories),
         capabilities=capabilities,
         config_entry_id=rust_entry.config_entry_id,
         config_subentry_id=rust_entry.config_subentry_id,
@@ -989,6 +1008,26 @@ def _rust_entry_to_registry_entry(rust_entry):
     )
 
 
+class _MockStore:
+    """Mock store for flush_store compatibility.
+
+    Bridges HA's flush_store helper to actually save the Rust registry.
+    """
+    def __init__(self, registry):
+        self._registry = registry
+        self._data = True  # Non-None so flush_store proceeds
+
+    def _async_cleanup_final_write_listener(self):
+        pass
+
+    def _async_cleanup_delay_listener(self):
+        pass
+
+    async def _async_handle_write_data(self):
+        # Actually save the registry to storage
+        self._registry._rust_registry.async_save()
+
+
 class RustEntityRegistry:
     """Wrapper that provides HA-compatible EntityRegistry API backed by Rust."""
 
@@ -999,6 +1038,8 @@ class RustEntityRegistry:
         self._hass = hass
         # Cache wrapper objects to maintain identity (for `is` checks in tests)
         self._entry_cache: dict[str, RustEntityEntry] = {}
+        # Mock store for flush_store compatibility - references this registry
+        self._store = _MockStore(self)
 
     def _fire_event(self, action: str, entity_id: str, changes: dict | None = None, old_entity_id: str | None = None) -> None:
         """Fire entity registry updated event."""
@@ -1013,13 +1054,12 @@ class RustEntityRegistry:
         self._hass.bus.async_fire(er.EVENT_ENTITY_REGISTRY_UPDATED, data)
 
     async def async_load(self) -> None:
-        # No-op for testing - Rust registries start empty in test context
-        # (no Tokio runtime available in Python's asyncio)
-        pass
+        """Load entities from storage."""
+        self._rust_registry.async_load()
 
     async def async_save(self) -> None:
-        # No-op for testing - persistence not needed for unit tests
-        pass
+        """Save entities to storage."""
+        self._rust_registry.async_save()
 
     def _get_or_create_wrapper(self, rust_entry, force_new: bool = False):
         """Get cached wrapper or create and cache a new one.
@@ -1044,6 +1084,22 @@ class RustEntityRegistry:
                 device_ids.add(entry.device_id)
         return device_ids
 
+    def async_generate_entity_id(
+        self,
+        domain: str,
+        suggested_object_id: str,
+        *,
+        current_entity_id: str | None = None,
+    ) -> str:
+        """Generate an entity ID that does not conflict with registered entities."""
+        # Get entity IDs from state machine to pass as reserved IDs
+        reserved_ids = self._get_state_machine_entity_ids()
+        return self._rust_registry.async_generate_entity_id(
+            domain, suggested_object_id,
+            current_entity_id=current_entity_id,
+            reserved_ids=reserved_ids
+        )
+
     def async_get(self, entity_id_or_id: str):
         """Get entity by entity_id or internal ID."""
         # Try by entity_id first
@@ -1060,6 +1116,12 @@ class RustEntityRegistry:
         self, domain: str, platform: str, unique_id: str
     ) -> str | None:
         return self._rust_registry.async_get_entity_id(domain, platform, unique_id)
+
+    def _get_state_machine_entity_ids(self) -> list[str]:
+        """Get entity IDs from state machine to use as reserved IDs."""
+        if self._hass is not None and hasattr(self._hass, 'states'):
+            return self._hass.states.async_entity_ids()
+        return []
 
     def async_get_or_create(
         self,
@@ -1094,70 +1156,62 @@ class RustEntityRegistry:
             elif config_entry_id is UNDEFINED:
                 config_entry_id = config_entry.entry_id
 
-        # Check if entity already exists (to determine if we need to fire create event)
+        # Check if entity already exists (for event firing)
         existing_entity_id = self._rust_registry.async_get_entity_id(domain, platform, unique_id)
-        is_new = existing_entity_id is None
+        is_restoring_deleted = self._rust_registry.is_deleted(domain, platform, unique_id)
+        is_new = existing_entity_id is None and not is_restoring_deleted
 
         # Pass current Python time as timestamp (respects freezer in tests)
         timestamp_iso = datetime.now(timezone.utc).isoformat()
-        # created_at only for new entities, modified_at for all updates
-        created_at_iso = timestamp_iso if is_new else None
-        modified_at_iso = timestamp_iso
 
-        # Helper: convert UNDEFINED to None (don't change), None to "" (clear), value to value
-        def to_rust_optional(value, default_for_new=None):
+        # Helper: convert UNDEFINED to None for Rust
+        def to_rust(value):
+            return None if value is UNDEFINED else value
+
+        # Helper: convert UNDEFINED to None, Python None to "" (clear marker)
+        def to_rust_string(value):
             if value is UNDEFINED:
-                # Not provided - return default for new entities, None for existing
-                return default_for_new if is_new else None
+                return None
             if value is None:
                 return ""  # Empty string = clear in Rust
             return value
 
-        # disabled_by and hidden_by only affect newly created entities,
-        # not existing ones (see native HA entity_registry.py comments)
+        # Call Rust - all business logic is handled there
+        # Pass state machine entity IDs as reserved IDs for conflict resolution
+        reserved_ids = self._get_state_machine_entity_ids()
         entry = self._rust_registry.async_get_or_create(
             domain=domain,
             platform=platform,
             unique_id=unique_id,
-            config_entry_id=to_rust_optional(config_entry_id),
-            config_subentry_id=to_rust_optional(config_subentry_id),
-            device_id=to_rust_optional(device_id),
+            config_entry_id=to_rust_string(config_entry_id),
+            config_subentry_id=to_rust_string(config_subentry_id),
+            device_id=to_rust_string(device_id),
             suggested_object_id=suggested_object_id,
-            disabled_by=disabled_by if is_new else None,
-            hidden_by=hidden_by if is_new else None,
-            has_entity_name=None if has_entity_name is UNDEFINED else has_entity_name,
-            capabilities=None if capabilities is UNDEFINED else capabilities,
-            supported_features=None if supported_features is UNDEFINED else supported_features,
-            device_class=to_rust_optional(device_class),
-            unit_of_measurement=to_rust_optional(unit_of_measurement),
-            original_name=to_rust_optional(original_name),
-            original_icon=to_rust_optional(original_icon),
-            original_device_class=to_rust_optional(original_device_class),
-            entity_category=None if entity_category is UNDEFINED else entity_category,
-            translation_key=to_rust_optional(translation_key),
-            created_at=created_at_iso,
-            modified_at=modified_at_iso,
+            disabled_by=disabled_by,
+            hidden_by=hidden_by,
+            has_entity_name=to_rust(has_entity_name),
+            capabilities=to_rust(capabilities),
+            supported_features=to_rust(supported_features),
+            device_class=to_rust_string(device_class),
+            unit_of_measurement=to_rust_string(unit_of_measurement),
+            original_name=to_rust_string(original_name),
+            original_icon=to_rust_string(original_icon),
+            original_device_class=to_rust_string(original_device_class),
+            entity_category=to_rust(entity_category),
+            translation_key=to_rust_string(translation_key),
+            reserved_ids=reserved_ids,
+            created_at=timestamp_iso if is_new else None,
+            modified_at=timestamp_iso,
         )
-        # Check if we need to force a new RegistryEntry
-        # For new entities: always create new (timestamps just set)
-        # For existing: only force new if update parameters were provided
-        # Note: disabled_by and hidden_by are NOT update params (only affect creation)
-        has_update_params = (
-            config_entry_id is not UNDEFINED
-            or config_subentry_id is not UNDEFINED
-            or device_id is not UNDEFINED
-            or has_entity_name is not UNDEFINED
-            or capabilities is not UNDEFINED
-            or supported_features is not UNDEFINED
-            or device_class is not UNDEFINED
-            or unit_of_measurement is not UNDEFINED
-            or original_name is not UNDEFINED
-            or original_icon is not UNDEFINED
-            or original_device_class is not UNDEFINED
-            or entity_category is not UNDEFINED
-            or translation_key is not UNDEFINED
-        )
-        force_new = is_new or (not is_new and has_update_params)
+
+        # Check if we need to force a new RegistryEntry wrapper
+        has_update_params = any(v is not UNDEFINED for v in [
+            config_entry_id, config_subentry_id, device_id, has_entity_name,
+            capabilities, supported_features, device_class, unit_of_measurement,
+            original_name, original_icon, original_device_class, entity_category,
+            translation_key
+        ])
+        force_new = is_new or has_update_params
         wrapped = self._get_or_create_wrapper(entry, force_new=force_new)
 
         # Fire create event if this was a new entity
@@ -1175,6 +1229,10 @@ class RustEntityRegistry:
         self._entry_cache.pop(entity_id, None)
         # Fire remove event
         self._fire_event("remove", entity_id)
+
+    def async_schedule_save(self) -> None:
+        """Schedule saving to storage (stub for HA API compatibility)."""
+        pass
 
     def async_update_entity(
         self,
@@ -1200,6 +1258,25 @@ class RustEntityRegistry:
             )
 
         return wrapped
+
+    def async_update_entity_options(
+        self,
+        entity_id: str,
+        domain: str,
+        options: dict | None,
+    ):
+        """Update entity options for a specific domain."""
+        entry = self._rust_registry.async_update_entity_options(entity_id, domain, options)
+        # Force new RegistryEntry since data was updated
+        return self._get_or_create_wrapper(entry, force_new=True)
+
+    @property
+    def deleted_entities(self):
+        """Return dict of (domain, platform, unique_id) to deleted RegistryEntry."""
+        return {
+            key: _rust_entry_to_registry_entry(entry)
+            for key, entry in self._rust_registry.deleted_entities.items()
+        }
 
     @property
     def entities(self):
@@ -2803,12 +2880,13 @@ def patch_registry_lookups(tmp_path):
     from homeassistant.helpers import floor_registry as fr
     from homeassistant.helpers import label_registry as lr
 
-    # Save original functions
+    # Save original functions and classes
     orig_er_get = er.async_get
     orig_dr_get = dr.async_get
     orig_ar_get = ar.async_get
     orig_fr_get = fr.async_get
     orig_lr_get = lr.async_get
+    orig_er_class = er.EntityRegistry
 
     # Create patched versions that return Rust registries
     # Add cache_clear as no-op for compatibility with tests that call it
@@ -2845,20 +2923,33 @@ def patch_registry_lookups(tmp_path):
         return rust_label_reg
     patched_lr_get.cache_clear = lambda: None
 
+    # Create a factory class that returns new RustEntityRegistry instances
+    # This is needed for tests that directly instantiate er.EntityRegistry(hass)
+    # IMPORTANT: Use the same storage path (mock_hass) for consistency
+    class PatchedEntityRegistry(RustEntityRegistry):
+        """Patched EntityRegistry that uses Rust backend with consistent storage."""
+        def __init__(self, hass):
+            # Use mock_hass for storage path consistency, but store the real hass
+            # for event firing and data access
+            super().__init__(mock_hass)
+            self._hass = hass
+
     # Apply patches
     er.async_get = patched_er_get
     dr.async_get = patched_dr_get
     ar.async_get = patched_ar_get
     fr.async_get = patched_fr_get
     lr.async_get = patched_lr_get
+    er.EntityRegistry = PatchedEntityRegistry  # Patch class for direct instantiation
 
     try:
         yield
     finally:
-        # Restore original functions
+        # Restore original functions and classes
         er.async_get = orig_er_get
         dr.async_get = orig_dr_get
         ar.async_get = orig_ar_get
         fr.async_get = orig_fr_get
         lr.async_get = orig_lr_get
+        er.EntityRegistry = orig_er_class
         _test_rust_registries = {}

@@ -375,6 +375,14 @@ pub fn py_to_json(obj: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
             map.insert(key, py_to_json(&v)?);
         }
         Ok(serde_json::Value::Object(map))
+    } else if let Ok(set) = obj.downcast::<pyo3::types::PySet>() {
+        // Convert Python set to JSON array
+        let arr: Result<Vec<_>, _> = set.iter().map(|item| py_to_json(&item)).collect();
+        Ok(serde_json::Value::Array(arr?))
+    } else if let Ok(frozenset) = obj.downcast::<pyo3::types::PyFrozenSet>() {
+        // Convert Python frozenset to JSON array
+        let arr: Result<Vec<_>, _> = frozenset.iter().map(|item| py_to_json(&item)).collect();
+        Ok(serde_json::Value::Array(arr?))
     } else {
         Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
             "Cannot convert Python object to JSON",

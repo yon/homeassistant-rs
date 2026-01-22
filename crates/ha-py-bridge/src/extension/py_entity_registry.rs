@@ -5,6 +5,7 @@ use ha_registries::entity_registry::{
 };
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::runtime::Handle;
 
@@ -173,23 +174,25 @@ impl PyEntityEntry {
     }
 
     #[getter]
-    fn labels(&self) -> Vec<String> {
+    fn labels(&self) -> std::collections::HashSet<String> {
         self.inner.labels.clone()
     }
 
     #[getter]
-    fn aliases(&self) -> Vec<String> {
+    fn aliases(&self) -> std::collections::HashSet<String> {
         self.inner.aliases.clone()
     }
 
     #[getter]
     fn categories(&self, py: Python<'_>) -> PyResult<PyObject> {
-        use pyo3::types::PyDict;
-        let dict = PyDict::new_bound(py);
-        for (k, v) in &self.inner.categories {
-            dict.set_item(k, v)?;
+        match &self.inner.categories {
+            Some(v) => json_to_py(py, v),
+            None => {
+                // Return empty dict for None
+                use pyo3::types::PyDict;
+                Ok(PyDict::new_bound(py).into())
+            }
         }
-        Ok(dict.into())
     }
 
     #[getter]
@@ -273,14 +276,13 @@ pub struct PyEntityRegistry {
 impl PyEntityRegistry {
     #[new]
     fn new(py: Python<'_>, hass: PyObject) -> PyResult<Self> {
-        // Extract storage path from hass.config.path('.storage')
+        // Extract config directory path from hass.config.path()
+        // Note: Storage::new() adds ".storage" internally, so we pass the config dir
         let config = hass.getattr(py, "config")?;
-        let storage_path: String = config
-            .call_method1(py, "path", (".storage",))?
-            .extract(py)?;
+        let config_dir: String = config.call_method1(py, "path", ("",))?.extract(py)?;
 
         // Create Rust storage and registry
-        let storage = Arc::new(ha_registries::storage::Storage::new(&storage_path));
+        let storage = Arc::new(ha_registries::storage::Storage::new(&config_dir));
         let registry = EntityRegistry::new(storage);
 
         Ok(Self {
@@ -291,30 +293,42 @@ impl PyEntityRegistry {
 
     /// Load entities from storage
     fn async_load(&self) -> PyResult<()> {
-        let handle = Handle::try_current().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "No Tokio runtime available: {}",
-                e
-            ))
-        })?;
-
+        // Try to use existing Tokio runtime, or create a new one
         let inner = self.inner.clone();
-        tokio::task::block_in_place(|| handle.block_on(async { inner.load().await }))
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        if let Ok(handle) = Handle::try_current() {
+            tokio::task::block_in_place(|| handle.block_on(async { inner.load().await }))
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        } else {
+            // No runtime available, create a temporary one
+            let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to create Tokio runtime: {}",
+                    e
+                ))
+            })?;
+            rt.block_on(async { inner.load().await })
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        }
     }
 
     /// Save entities to storage
     fn async_save(&self) -> PyResult<()> {
-        let handle = Handle::try_current().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "No Tokio runtime available: {}",
-                e
-            ))
-        })?;
-
+        // Try to use existing Tokio runtime, or create a new one
         let inner = self.inner.clone();
-        tokio::task::block_in_place(|| handle.block_on(async { inner.save().await }))
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        if let Ok(handle) = Handle::try_current() {
+            tokio::task::block_in_place(|| handle.block_on(async { inner.save().await }))
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        } else {
+            // No runtime available, create a temporary one
+            let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to create Tokio runtime: {}",
+                    e
+                ))
+            })?;
+            rt.block_on(async { inner.save().await })
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        }
     }
 
     /// Get entity by entity_id
@@ -328,6 +342,11 @@ impl PyEntityRegistry {
             .get_by_unique_id(unique_id)
             .filter(|e| e.domain() == domain && e.platform == platform)
             .map(|e| e.entity_id.clone())
+    }
+
+    /// Check if an entity with the given (domain, platform, unique_id) is in deleted_entities
+    fn is_deleted(&self, domain: &str, platform: &str, unique_id: &str) -> bool {
+        self.inner.is_deleted(domain, platform, unique_id)
     }
 
     /// Get entity by unique_id
@@ -400,6 +419,8 @@ impl PyEntityRegistry {
         known_object_ids=None,
         get_initial_options=None,
         calculated_object_id=None,
+        // Entity IDs that should be considered unavailable (e.g., from state machine)
+        reserved_ids=None,
         // Timestamp overrides for tests (ISO format strings)
         // created_at: only passed for new entities
         // modified_at: passed for updates (and new entities)
@@ -431,18 +452,32 @@ impl PyEntityRegistry {
         #[allow(unused_variables)] known_object_ids: Option<&Bound<'_, PyAny>>,
         #[allow(unused_variables)] get_initial_options: Option<&Bound<'_, PyAny>>,
         #[allow(unused_variables)] calculated_object_id: Option<&str>,
+        // Entity IDs that should be considered unavailable (e.g., from state machine)
+        reserved_ids: Option<Vec<String>>,
         // Timestamp overrides for tests (ISO format strings)
         created_at: Option<&str>,
         modified_at: Option<&str>,
     ) -> PyEntityEntry {
-        // Build entity_id from domain, platform, and unique_id
-        // HA format: {domain}.{platform}_{unique_id} or {domain}.{suggested_object_id}
-        let object_id = suggested_object_id
-            .map(String::from)
-            .unwrap_or_else(|| format!("{}_{}", platform, unique_id));
-        let entity_id = format!("{}.{}", domain, object_id);
+        // Check if entity with this unique_id already exists
+        let existing = self.inner.get_by_unique_id(unique_id);
+        let is_new = existing.is_none();
 
-        // Get or create the base entry
+        // Determine the entity_id to use
+        let entity_id = if let Some(ref existing_entry) = existing {
+            // Entity exists - use its current entity_id
+            existing_entry.entity_id.clone()
+        } else {
+            // New entity - generate a conflict-free entity_id
+            let object_id = suggested_object_id
+                .map(String::from)
+                .unwrap_or_else(|| format!("{}_{}", platform, unique_id));
+            // Use generate_entity_id to handle conflicts (_2, _3, etc.)
+            // Pass reserved_ids to also check against state machine entity IDs
+            self.inner
+                .generate_entity_id(domain, &object_id, None, reserved_ids.as_deref())
+        };
+
+        // Get or create the base entry with the resolved entity_id
         let entry = self.inner.get_or_create(
             platform,
             &entity_id,
@@ -522,10 +557,12 @@ impl PyEntityRegistry {
                 update_optional_field(&mut e.config_entry_id, config_entry_id);
                 update_optional_field(&mut e.config_subentry_id, config_subentry_id);
                 update_optional_field(&mut e.device_id, device_id);
-                if disabled.is_some() {
+                // disabled_by and hidden_by only affect newly created entities,
+                // not existing ones (per Home Assistant's entity_registry.py behavior)
+                if is_new && disabled.is_some() {
                     e.disabled_by = disabled;
                 }
-                if hidden.is_some() {
+                if is_new && hidden.is_some() {
                     e.hidden_by = hidden;
                 }
                 // has_entity_name: always set (None, Some(true), or Some(false))
@@ -577,7 +614,8 @@ impl PyEntityRegistry {
         device_class=None,
         unit_of_measurement=None,
         labels=None,
-        aliases=None
+        aliases=None,
+        categories=None
     ))]
     fn async_update_entity(
         &self,
@@ -589,9 +627,13 @@ impl PyEntityRegistry {
         hidden_by: Option<String>,
         device_class: Option<String>,
         unit_of_measurement: Option<String>,
-        labels: Option<Vec<String>>,
-        aliases: Option<Vec<String>>,
+        labels: Option<HashSet<String>>,
+        aliases: Option<HashSet<String>>,
+        categories: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyEntityEntry> {
+        // Convert categories from Python to JSON (supports both dict and set)
+        let categories_json = categories.and_then(|c| py_to_json(c).ok());
+
         let entry = self
             .inner
             .update(entity_id, |entry| {
@@ -622,6 +664,9 @@ impl PyEntityRegistry {
                 if let Some(ref a) = aliases {
                     entry.aliases = a.clone();
                 }
+                if categories_json.is_some() {
+                    entry.categories = categories_json.clone();
+                }
             })
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyKeyError, _>(format!("{}", e)))?;
 
@@ -629,19 +674,37 @@ impl PyEntityRegistry {
     }
 
     /// Remove an entity
-    fn async_remove(&self, entity_id: &str) -> PyResult<()> {
-        self.inner.remove(entity_id).ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyKeyError, _>(format!(
-                "Entity not found: {}",
-                entity_id
-            ))
-        })?;
-        Ok(())
+    ///
+    /// This is idempotent - removing a non-existent entity is a no-op.
+    fn async_remove(&self, entity_id: &str) {
+        // Ignore result - removing non-existent entity is a no-op
+        let _ = self.inner.remove(entity_id);
     }
 
     /// Check if an entity is registered
     fn async_is_registered(&self, entity_id: &str) -> bool {
-        self.inner.get(entity_id).is_some()
+        self.inner.is_registered(entity_id)
+    }
+
+    /// Generate a unique entity_id that doesn't conflict with existing registrations
+    ///
+    /// Takes a domain and suggested object_id, and returns an entity_id that is
+    /// guaranteed not to conflict with any existing registered entity or reserved IDs.
+    /// If the preferred entity_id is taken, appends `_2`, `_3`, etc.
+    #[pyo3(signature = (domain, suggested_object_id, *, current_entity_id=None, reserved_ids=None))]
+    fn async_generate_entity_id(
+        &self,
+        domain: &str,
+        suggested_object_id: &str,
+        current_entity_id: Option<&str>,
+        reserved_ids: Option<Vec<String>>,
+    ) -> String {
+        self.inner.generate_entity_id(
+            domain,
+            suggested_object_id,
+            current_entity_id,
+            reserved_ids.as_deref(),
+        )
     }
 
     /// Get all entity IDs
@@ -658,6 +721,76 @@ impl PyEntityRegistry {
             dict.set_item(&entity_id, PyEntityEntry::from_inner(entry).into_py(py))?;
         }
         Ok(dict.unbind())
+    }
+
+    /// Get deleted entities as a dict ((domain, platform, unique_id) -> EntityEntry)
+    #[getter]
+    fn deleted_entities(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        // Collect entries, preserves IndexMap insertion order
+        let entries: Vec<_> = self
+            .inner
+            .deleted_iter()  // Now returns Vec, preserves IndexMap insertion order
+            .into_iter()
+            .map(|entry| {
+                let key = (
+                    entry.domain().to_string(),
+                    entry.platform.clone(),
+                    entry.unique_id.clone().unwrap_or_default(),
+                );
+                (key, entry)
+            })
+            .collect();
+        // No sorting needed - IndexMap preserves insertion order
+
+        let dict = PyDict::new_bound(py);
+        for (key, entry) in entries {
+            dict.set_item(key, PyEntityEntry::from_inner(entry).into_py(py))?;
+        }
+        Ok(dict.unbind())
+    }
+
+    /// Update entity options for a specific domain.
+    ///
+    /// If options is None, the domain's options are removed.
+    /// This updates the `options` dict keyed by domain name.
+    #[pyo3(signature = (entity_id, domain, options))]
+    fn async_update_entity_options(
+        &self,
+        entity_id: &str,
+        domain: &str,
+        options: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<PyEntityEntry> {
+        let entry = self
+            .inner
+            .update(entity_id, |entry| {
+                // Get or create the options object
+                let mut opts_map: serde_json::Map<String, serde_json::Value> =
+                    if let Some(serde_json::Value::Object(ref existing)) = entry.options {
+                        existing.clone()
+                    } else {
+                        serde_json::Map::new()
+                    };
+
+                if let Some(new_opts) = options {
+                    // Convert Python dict to JSON and set for this domain
+                    if let Ok(json_val) = py_to_json(new_opts) {
+                        opts_map.insert(domain.to_string(), json_val);
+                    }
+                } else {
+                    // Remove domain options
+                    opts_map.remove(domain);
+                }
+
+                // Set the options back (or None if empty)
+                if opts_map.is_empty() {
+                    entry.options = None;
+                } else {
+                    entry.options = Some(serde_json::Value::Object(opts_map));
+                }
+            })
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyKeyError, _>(format!("{}", e)))?;
+
+        Ok(PyEntityEntry::from_inner(entry))
     }
 
     fn __len__(&self) -> usize {

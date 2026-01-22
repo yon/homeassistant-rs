@@ -104,14 +104,13 @@ pub struct PyFloorRegistry {
 impl PyFloorRegistry {
     #[new]
     fn new(py: Python<'_>, hass: PyObject) -> PyResult<Self> {
-        // Extract storage path from hass.config.path('.storage')
+        // Extract config directory path from hass.config.path()
+        // Note: Storage::new() adds ".storage" internally, so we pass the config dir
         let config = hass.getattr(py, "config")?;
-        let storage_path: String = config
-            .call_method1(py, "path", (".storage",))?
-            .extract(py)?;
+        let config_dir: String = config.call_method1(py, "path", ("",))?.extract(py)?;
 
         // Create Rust storage and registry
-        let storage = Arc::new(ha_registries::storage::Storage::new(&storage_path));
+        let storage = Arc::new(ha_registries::storage::Storage::new(&config_dir));
         let registry = FloorRegistry::new(storage);
 
         Ok(Self {
@@ -122,30 +121,38 @@ impl PyFloorRegistry {
 
     /// Load floors from storage
     fn async_load(&self) -> PyResult<()> {
-        let handle = Handle::try_current().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "No Tokio runtime available: {}",
-                e
-            ))
-        })?;
-
         let inner = self.inner.clone();
-        tokio::task::block_in_place(|| handle.block_on(async { inner.load().await }))
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        if let Ok(handle) = Handle::try_current() {
+            tokio::task::block_in_place(|| handle.block_on(async { inner.load().await }))
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        } else {
+            let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to create Tokio runtime: {}",
+                    e
+                ))
+            })?;
+            rt.block_on(async { inner.load().await })
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        }
     }
 
     /// Save floors to storage
     fn async_save(&self) -> PyResult<()> {
-        let handle = Handle::try_current().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "No Tokio runtime available: {}",
-                e
-            ))
-        })?;
-
         let inner = self.inner.clone();
-        tokio::task::block_in_place(|| handle.block_on(async { inner.save().await }))
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        if let Ok(handle) = Handle::try_current() {
+            tokio::task::block_in_place(|| handle.block_on(async { inner.save().await }))
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        } else {
+            let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to create Tokio runtime: {}",
+                    e
+                ))
+            })?;
+            rt.block_on(async { inner.save().await })
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        }
     }
 
     /// Get floor by ID

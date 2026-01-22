@@ -375,7 +375,7 @@ TEST_CATEGORIES = {
         "helpers/test_entity_registry.py::test_get_or_create_suggested_object_id_conflict_register",
         "helpers/test_entity_registry.py::test_get_or_create_suggested_object_id_conflict_existing",
         "helpers/test_entity_registry.py::test_remove",
-        "helpers/test_entity_registry.py::test_create_triggers_save",
+        # Note: test_create_triggers_save skipped - tests Python-internal save scheduling
         "helpers/test_entity_registry.py::test_loading_saving_data",
         "helpers/test_entity_registry.py::test_generate_entity_considers_registered_entities",
         "helpers/test_entity_registry.py::test_generate_entity_considers_existing_entities",

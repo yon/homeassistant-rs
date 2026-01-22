@@ -2,7 +2,7 @@
 //!
 //! Individual handlers for each WebSocket command type.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use tokio::sync::{broadcast, mpsc};
@@ -551,6 +551,7 @@ pub async fn handle_entity_registry_list(
         .registries
         .entities
         .iter()
+        .into_iter()
         .map(|entry| entity_entry_to_json(&entry))
         .collect();
 
@@ -615,8 +616,8 @@ pub async fn handle_entity_registry_update(
     disabled_by: Option<String>,
     hidden_by: Option<String>,
     new_entity_id: Option<String>,
-    aliases: Option<Vec<String>>,
-    labels: Option<Vec<String>>,
+    aliases: Option<HashSet<String>>,
+    labels: Option<HashSet<String>>,
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> Result<(), String> {
     // Check if entity exists
@@ -719,6 +720,7 @@ pub async fn handle_entity_registry_list_for_display(
         .registries
         .entities
         .iter()
+        .into_iter()
         .map(|entry| {
             let mut obj = serde_json::json!({
                 "ei": entry.entity_id,

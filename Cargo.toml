@@ -56,6 +56,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Concurrent data structures
 dashmap = "6.0"
+indexmap = { version = "2.7", features = ["serde"] }
 
 # IDs and time
 chrono = { version = "0.4", features = ["serde"] }
