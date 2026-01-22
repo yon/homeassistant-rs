@@ -1044,6 +1044,20 @@ class RustEntityRegistry:
         self._storage = storage
         # Cache wrapper objects to maintain identity (for `is` checks in tests)
         self._entry_cache: dict[str, RustEntityEntry] = {}
+        # Reference to hass for firing events (set by patched async_get)
+        self._hass = None
+
+    def _fire_event(self, action: str, entity_id: str, changes: dict | None = None, old_entity_id: str | None = None) -> None:
+        """Fire entity registry updated event."""
+        if self._hass is None:
+            return
+        from homeassistant.helpers import entity_registry as er
+        data: dict = {"action": action, "entity_id": entity_id}
+        if changes:
+            data["changes"] = changes
+        if old_entity_id:
+            data["old_entity_id"] = old_entity_id
+        self._hass.bus.async_fire(er.EVENT_ENTITY_REGISTRY_UPDATED, data)
 
     async def async_load(self) -> None:
         # No-op for testing - Rust registries start empty in test context
@@ -1109,6 +1123,10 @@ class RustEntityRegistry:
         translation_key: str | None = None,
         get_initial_options: Callable | None = None,
     ) -> RustEntityEntry:
+        # Check if entity already exists (to determine if we need to fire create event)
+        existing_entity_id = self._rust_registry.async_get_entity_id(domain, platform, unique_id)
+        is_new = existing_entity_id is None
+
         # Build kwargs, only including parameters that Rust supports
         # Some parameters (known_object_ids, config_subentry_id, get_initial_options)
         # are accepted but not passed to Rust for API compatibility
@@ -1133,7 +1151,13 @@ class RustEntityRegistry:
             entity_category=entity_category,
             translation_key=translation_key,
         )
-        return self._get_or_create_wrapper(entry)
+        wrapped = self._get_or_create_wrapper(entry)
+
+        # Fire create event if this was a new entity
+        if is_new:
+            self._fire_event("create", wrapped.entity_id)
+
+        return wrapped
 
     def async_is_registered(self, entity_id: str) -> bool:
         return self._rust_registry.async_get(entity_id) is not None
@@ -1142,14 +1166,32 @@ class RustEntityRegistry:
         self._rust_registry.async_remove(entity_id)
         # Remove from cache
         self._entry_cache.pop(entity_id, None)
+        # Fire remove event
+        self._fire_event("remove", entity_id)
 
     def async_update_entity(
         self,
         entity_id: str,
         **kwargs,
     ) -> RustEntityEntry:
+        # Get old entry to track changes
+        old_entry = self._rust_registry.async_get(entity_id)
+        old_entity_id = old_entry.entity_id if old_entry else None
+
         entry = self._rust_registry.async_update_entity(entity_id, **kwargs)
-        return self._get_or_create_wrapper(entry)
+        wrapped = self._get_or_create_wrapper(entry)
+
+        # Fire update event with changes
+        changes = {k: v for k, v in kwargs.items() if v is not None}
+        if changes:
+            self._fire_event(
+                "update",
+                wrapped.entity_id,
+                changes=changes,
+                old_entity_id=old_entity_id if old_entity_id != wrapped.entity_id else None,
+            )
+
+        return wrapped
 
     @property
     def entities(self) -> dict[str, RustEntityEntry]:
@@ -2733,6 +2775,8 @@ def patch_registry_lookups(tmp_path):
 
     # Create patched versions that return Rust registries
     def patched_er_get(hass):
+        # Store hass reference for event firing
+        rust_entity_reg._hass = hass
         # Also store in hass.data for code that accesses it directly
         if er.DATA_REGISTRY not in hass.data:
             hass.data[er.DATA_REGISTRY] = rust_entity_reg
