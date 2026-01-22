@@ -638,6 +638,32 @@ TEST_CATEGORIES = {
     ],
 
     # ==========================================================================
+    # Entity Registry WebSocket API (tests/components/config/) - ha-api crate
+    # Tests the config/entity_registry/list and related WebSocket commands
+    # Note: These tests depend on Python-side fixtures (mock_registry, etc.)
+    # that set up test data. For proxy client testing against Rust server,
+    # use tests/integration/test_entity_registry_ws.py instead.
+    # ==========================================================================
+    "entity_registry_ws": [
+        "components/config/test_entity_registry.py::test_list_entities",
+        "components/config/test_entity_registry.py::test_list_entities_for_display",
+        "components/config/test_entity_registry.py::test_get_entity",
+        "components/config/test_entity_registry.py::test_get_entities",
+        "components/config/test_entity_registry.py::test_get_nonexisting_entity",
+        "components/config/test_entity_registry.py::test_update_entity",
+        "components/config/test_entity_registry.py::test_update_entity_require_restart",
+        "components/config/test_entity_registry.py::test_update_entity_no_changes",
+        "components/config/test_entity_registry.py::test_update_nonexisting_entity",
+        "components/config/test_entity_registry.py::test_update_entity_id",
+        "components/config/test_entity_registry.py::test_update_existing_entity_id",
+        "components/config/test_entity_registry.py::test_update_invalid_entity_id",
+        "components/config/test_entity_registry.py::test_remove_entity",
+        "components/config/test_entity_registry.py::test_remove_non_existing_entity",
+        "components/config/test_entity_registry.py::test_enable_entity_disabled_device",
+        "components/config/test_entity_registry.py::test_get_automatic_entity_ids",
+    ],
+
+    # ==========================================================================
     # Python Shim Layer Tests (python/homeassistant/)
     # These tests run native HA tests with our shim taking precedence
     # ==========================================================================

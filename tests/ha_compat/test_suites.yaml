@@ -1,0 +1,489 @@
+# Test Suite Tracking for TDD
+# Status: evaluate | todo | in_progress | done | skip
+#
+# Workflow: evaluate → todo → in_progress → done
+#                   ↘ skip (if not applicable)
+
+suites:
+  # ============================================================================
+  # Core Tests (tests/)
+  # ============================================================================
+  test_core.py:
+    status: in_progress
+    running: 62
+    total: 156
+    method: ha-compat
+    notes: "State, EventBus, Context, ServiceRegistry"
+
+  test_config_entries.py:
+    status: in_progress
+    running: 98
+    total: 204
+    method: ha-compat
+    notes: "ConfigEntry lifecycle"
+
+  test_exceptions.py:
+    status: done
+    running: 4
+    total: 4
+    method: ha-compat
+    notes: "Exception types"
+
+  test_config.py:
+    status: evaluate
+    running: 0
+    total: 43
+    method: unknown
+    notes: "Config loading - needs evaluation"
+
+  test_core_config.py:
+    status: todo
+    running: 0
+    total: 40
+    method: ha-compat
+    notes: "Core config validation"
+
+  test_bootstrap.py:
+    status: evaluate
+    running: 0
+    total: 43
+    method: unknown
+    notes: "Bootstrap - needs evaluation"
+
+  test_data_entry_flow.py:
+    status: todo
+    running: 0
+    total: 36
+    method: ha-compat
+    notes: "Data entry flow"
+
+  test_loader.py:
+    status: evaluate
+    running: 0
+    total: 57
+    method: unknown
+    notes: "Integration loading tests"
+
+  test_setup.py:
+    status: evaluate
+    running: 0
+    total: 49
+    method: unknown
+    notes: "Component setup tests"
+
+  test_requirements.py:
+    status: evaluate
+    running: 0
+    total: 19
+    method: unknown
+    notes: "Requirements handling"
+
+  test_backup_restore.py:
+    status: todo
+    running: 0
+    total: 10
+    method: ha-compat
+    notes: "Backup/restore system"
+
+  # ============================================================================
+  # Helper Tests (tests/helpers/)
+  # ============================================================================
+  helpers/test_entity_registry.py:
+    status: in_progress
+    running: 11
+    total: 79
+    method: ha-compat
+    notes: "HIGH PRIORITY - EntityRegistry"
+
+  helpers/test_device_registry.py:
+    status: in_progress
+    running: 10
+    total: 62
+    method: ha-compat
+    notes: "HIGH PRIORITY - DeviceRegistry"
+
+  helpers/test_area_registry.py:
+    status: in_progress
+    running: 17
+    total: 28
+    method: ha-compat
+    notes: "AreaRegistry"
+
+  helpers/test_floor_registry.py:
+    status: in_progress
+    running: 14
+    total: 22
+    method: ha-compat
+    notes: "FloorRegistry"
+
+  helpers/test_label_registry.py:
+    status: in_progress
+    running: 13
+    total: 21
+    method: ha-compat
+    notes: "LabelRegistry"
+
+  helpers/test_storage.py:
+    status: in_progress
+    running: 9
+    total: 38
+    method: ha-compat
+    notes: "Storage abstraction"
+
+  helpers/test_condition.py:
+    status: in_progress
+    running: 22
+    total: 60
+    method: ha-compat
+    notes: "Automation conditions"
+
+  helpers/test_trigger.py:
+    status: in_progress
+    running: 17
+    total: 23
+    method: ha-compat
+    notes: "Automation triggers"
+
+  helpers/test_service.py:
+    status: in_progress
+    running: 12
+    total: 64
+    method: ha-compat
+    notes: "Service calls"
+
+  helpers/test_event.py:
+    status: in_progress
+    running: 8
+    total: 87
+    method: ha-compat
+    notes: "Event tracking"
+
+  helpers/test_state.py:
+    status: in_progress
+    running: 8
+    total: 9
+    method: ha-compat
+    notes: "State helpers"
+
+  helpers/test_entity.py:
+    status: in_progress
+    running: 4
+    total: 80
+    method: ha-compat
+    notes: "Entity base class"
+
+  helpers/test_script.py:
+    status: todo
+    running: 0
+    total: 124
+    method: ha-compat
+    notes: "Script execution"
+
+  helpers/test_entity_platform.py:
+    status: todo
+    running: 0
+    total: 74
+    method: ha-compat
+    notes: "Entity platform"
+
+  helpers/test_entity_component.py:
+    status: todo
+    running: 0
+    total: 26
+    method: ha-compat
+    notes: "Entity component"
+
+  helpers/test_dispatcher.py:
+    status: todo
+    running: 0
+    total: 18
+    method: ha-compat
+    notes: "Signal dispatcher"
+
+  helpers/test_category_registry.py:
+    status: todo
+    running: 0
+    total: 16
+    method: ha-compat
+    notes: "Category registry"
+
+  helpers/test_config_entry_flow.py:
+    status: todo
+    running: 0
+    total: 18
+    method: ha-compat
+    notes: "Config entry flow"
+
+  helpers/test_json.py:
+    status: todo
+    running: 0
+    total: 20
+    method: ha-compat
+    notes: "JSON utilities"
+
+  helpers/test_debounce.py:
+    status: todo
+    running: 0
+    total: 12
+    method: ha-compat
+    notes: "Debounce helper"
+
+  helpers/test_intent.py:
+    status: todo
+    running: 0
+    total: 16
+    method: ha-compat
+    notes: "Voice intents"
+
+  helpers/test_location.py:
+    status: todo
+    running: 0
+    total: 13
+    method: ha-compat
+    notes: "Location helpers"
+
+  helpers/test_script_variables.py:
+    status: todo
+    running: 0
+    total: 13
+    method: ha-compat
+    notes: "Script variables"
+
+  helpers/test_restore_state.py:
+    status: todo
+    running: 0
+    total: 10
+    method: ha-compat
+    notes: "State restoration"
+
+  helpers/test_entityfilter.py:
+    status: todo
+    running: 0
+    total: 22
+    method: ha-compat
+    notes: "Entity filters"
+
+  helpers/test_config_validation.py:
+    status: evaluate
+    running: 0
+    total: 90
+    method: unknown
+    notes: "Config validation schemas"
+
+  helpers/test_translation.py:
+    status: evaluate
+    running: 0
+    total: 16
+    method: unknown
+    notes: "Translation system"
+
+  helpers/test_selector.py:
+    status: evaluate
+    running: 0
+    total: 53
+    method: unknown
+    notes: "UI selectors"
+
+  helpers/test_update_coordinator.py:
+    status: evaluate
+    running: 0
+    total: 34
+    method: unknown
+    notes: "Update coordinator"
+
+  helpers/test_config_entry_oauth2_flow.py:
+    status: evaluate
+    running: 0
+    total: 28
+    method: unknown
+    notes: "OAuth2 flow"
+
+  # ============================================================================
+  # Template Tests (tests/helpers/template/)
+  # ============================================================================
+  helpers/template/test_init.py:
+    status: in_progress
+    running: 24
+    total: 137
+    method: ha-compat
+    notes: "Template rendering"
+
+  helpers/template/test_render_info.py:
+    status: todo
+    running: 0
+    total: 10
+    method: ha-compat
+    notes: "Render info tracking"
+
+  helpers/template/test_context.py:
+    status: todo
+    running: 0
+    total: 5
+    method: ha-compat
+    notes: "Template context"
+
+  helpers/template/test_helpers.py:
+    status: todo
+    running: 0
+    total: 2
+    method: ha-compat
+    notes: "Template helpers"
+
+  # ============================================================================
+  # WebSocket API Tests (tests/components/websocket_api/)
+  # ============================================================================
+  components/websocket_api/test_commands.py:
+    status: in_progress
+    running: 15
+    total: 71
+    method: ha-compat
+    notes: "HIGH PRIORITY - WS commands"
+
+  components/websocket_api/test_http.py:
+    status: in_progress
+    running: 3
+    total: 15
+    method: ha-compat
+    notes: "HTTP/WS handling"
+
+  components/websocket_api/test_messages.py:
+    status: done
+    running: 4
+    total: 4
+    method: ha-compat
+    notes: "Message formatting"
+
+  components/websocket_api/test_auth.py:
+    status: evaluate
+    running: 0
+    total: 16
+    method: unknown
+    notes: "Auth flow - may need proxy"
+
+  components/websocket_api/test_init.py:
+    status: todo
+    running: 0
+    total: 6
+    method: ha-compat
+    notes: "Init setup"
+
+  components/websocket_api/test_connection.py:
+    status: todo
+    running: 0
+    total: 2
+    method: ha-compat
+    notes: "Connection handling"
+
+  # ============================================================================
+  # REST API Tests (tests/components/api/)
+  # ============================================================================
+  components/api/test_init.py:
+    status: in_progress
+    running: 20
+    total: 47
+    method: ha-compat
+    notes: "REST endpoints"
+
+  # ============================================================================
+  # Config Component Tests (tests/components/config/) - PROXY CLIENT TARGET
+  # ============================================================================
+  components/config/test_entity_registry.py:
+    status: in_progress
+    running: 16
+    total: 16
+    method: ha-compat
+    notes: "PRIORITY 1 - Entity WS API - added to run_tests.py"
+
+  components/config/test_device_registry.py:
+    status: todo
+    running: 0
+    total: 6
+    method: proxy
+    notes: "PRIORITY 2 - Device WS API"
+
+  components/config/test_area_registry.py:
+    status: todo
+    running: 0
+    total: 12
+    method: proxy
+    notes: "Area WS API"
+
+  components/config/test_floor_registry.py:
+    status: todo
+    running: 0
+    total: 11
+    method: proxy
+    notes: "Floor WS API"
+
+  components/config/test_label_registry.py:
+    status: todo
+    running: 0
+    total: 7
+    method: proxy
+    notes: "Label WS API"
+
+  components/config/test_config_entries.py:
+    status: todo
+    running: 0
+    total: 54
+    method: proxy
+    notes: "Config entries WS API"
+
+  components/config/test_automation.py:
+    status: todo
+    running: 0
+    total: 8
+    method: proxy
+    notes: "Automation config WS"
+
+  components/config/test_script.py:
+    status: todo
+    running: 0
+    total: 8
+    method: proxy
+    notes: "Script config WS"
+
+  components/config/test_scene.py:
+    status: todo
+    running: 0
+    total: 5
+    method: proxy
+    notes: "Scene config WS"
+
+  components/config/test_core.py:
+    status: todo
+    running: 0
+    total: 7
+    method: proxy
+    notes: "Core config WS"
+
+  components/config/test_category_registry.py:
+    status: todo
+    running: 0
+    total: 8
+    method: proxy
+    notes: "Category WS API"
+
+  components/config/test_auth.py:
+    status: evaluate
+    running: 0
+    total: 15
+    method: unknown
+    notes: "Auth WS API"
+
+  components/config/test_auth_provider_homeassistant.py:
+    status: evaluate
+    running: 0
+    total: 22
+    method: unknown
+    notes: "Auth provider"
+
+  # ============================================================================
+  # Application Credentials Tests
+  # ============================================================================
+  components/application_credentials/test_init.py:
+    status: in_progress
+    running: 8
+    total: 23
+    method: ha-compat
+    notes: "OAuth credentials"
