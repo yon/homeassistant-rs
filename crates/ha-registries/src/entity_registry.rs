@@ -99,8 +99,9 @@ pub struct EntityEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suggested_object_id: Option<String>,
     /// If true, name is auto-derived from device
+    /// Can be None when not explicitly set
     #[serde(default)]
-    pub has_entity_name: bool,
+    pub has_entity_name: Option<bool>,
 
     /// Component/platform that provides this entity
     pub platform: String,
@@ -185,7 +186,7 @@ impl EntityEntry {
             name: None,
             original_name: None,
             suggested_object_id: None,
-            has_entity_name: false,
+            has_entity_name: None,
             platform: platform.into(),
             entity_category: None,
             device_class: None,

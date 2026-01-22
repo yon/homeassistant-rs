@@ -740,7 +740,7 @@ pub async fn handle_entity_registry_list_for_display(
                 "lb": entry.labels,
             });
             // Add "hn" (has_entity_name) if true - frontend needs this
-            if entry.has_entity_name {
+            if entry.has_entity_name == Some(true) {
                 obj.as_object_mut()
                     .unwrap()
                     .insert("hn".to_string(), serde_json::json!(true));

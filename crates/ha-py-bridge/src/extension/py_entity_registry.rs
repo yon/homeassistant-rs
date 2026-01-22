@@ -75,7 +75,7 @@ impl PyEntityEntry {
     }
 
     #[getter]
-    fn has_entity_name(&self) -> bool {
+    fn has_entity_name(&self) -> Option<bool> {
         self.inner.has_entity_name
     }
 
@@ -386,7 +386,7 @@ impl PyEntityRegistry {
         suggested_object_id=None,
         disabled_by=None,
         hidden_by=None,
-        has_entity_name=false,
+        has_entity_name=None,
         capabilities=None,
         supported_features=None,
         device_class=None,
@@ -400,8 +400,11 @@ impl PyEntityRegistry {
         known_object_ids=None,
         get_initial_options=None,
         calculated_object_id=None,
-        // Timestamp override for tests (ISO format string)
-        created_at=None
+        // Timestamp overrides for tests (ISO format strings)
+        // created_at: only passed for new entities
+        // modified_at: passed for updates (and new entities)
+        created_at=None,
+        modified_at=None
     ))]
     fn async_get_or_create(
         &self,
@@ -414,7 +417,7 @@ impl PyEntityRegistry {
         suggested_object_id: Option<&str>,
         disabled_by: Option<&str>,
         hidden_by: Option<&str>,
-        has_entity_name: bool,
+        has_entity_name: Option<bool>,
         capabilities: Option<&Bound<'_, PyAny>>,
         supported_features: Option<u32>,
         device_class: Option<&str>,
@@ -428,8 +431,9 @@ impl PyEntityRegistry {
         #[allow(unused_variables)] known_object_ids: Option<&Bound<'_, PyAny>>,
         #[allow(unused_variables)] get_initial_options: Option<&Bound<'_, PyAny>>,
         #[allow(unused_variables)] calculated_object_id: Option<&str>,
-        // Timestamp override for tests (ISO format string)
+        // Timestamp overrides for tests (ISO format strings)
         created_at: Option<&str>,
+        modified_at: Option<&str>,
     ) -> PyEntityEntry {
         // Build entity_id from domain, platform, and unique_id
         // HA format: {domain}.{platform}_{unique_id} or {domain}.{suggested_object_id}
@@ -447,8 +451,13 @@ impl PyEntityRegistry {
             device_id,
         );
 
-        // Parse timestamp if provided
-        let timestamp = created_at.and_then(|s| {
+        // Parse timestamps if provided (ISO format strings)
+        let created_timestamp = created_at.and_then(|s| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+        });
+        let modified_timestamp = modified_at.and_then(|s| {
             chrono::DateTime::parse_from_rfc3339(s)
                 .ok()
                 .map(|dt| dt.with_timezone(&chrono::Utc))
@@ -461,7 +470,7 @@ impl PyEntityRegistry {
             || device_id.is_some()
             || disabled_by.is_some()
             || hidden_by.is_some()
-            || has_entity_name
+            || has_entity_name.is_some()
             || capabilities.is_some()
             || supported_features.is_some()
             || device_class.is_some()
@@ -471,7 +480,8 @@ impl PyEntityRegistry {
             || original_device_class.is_some()
             || entity_category.is_some()
             || translation_key.is_some()
-            || timestamp.is_some();
+            || created_timestamp.is_some()
+            || modified_timestamp.is_some();
 
         if needs_update {
             // Convert capabilities from Python dict to JSON
@@ -497,55 +507,49 @@ impl PyEntityRegistry {
                 _ => None,
             });
 
+            // Helper to handle "clear" marker: empty string means clear, non-empty means set
+            fn update_optional_field(field: &mut Option<String>, value: Option<&str>) {
+                if let Some(v) = value {
+                    if v.is_empty() {
+                        *field = None; // Empty string = clear
+                    } else {
+                        *field = Some(v.to_string());
+                    }
+                }
+            }
+
             let updated = self.inner.update(&entity_id, |e| {
-                if let Some(v) = config_entry_id {
-                    e.config_entry_id = Some(v.to_string());
-                }
-                if let Some(v) = config_subentry_id {
-                    e.config_subentry_id = Some(v.to_string());
-                }
-                if let Some(v) = device_id {
-                    e.device_id = Some(v.to_string());
-                }
+                update_optional_field(&mut e.config_entry_id, config_entry_id);
+                update_optional_field(&mut e.config_subentry_id, config_subentry_id);
+                update_optional_field(&mut e.device_id, device_id);
                 if disabled.is_some() {
                     e.disabled_by = disabled;
                 }
                 if hidden.is_some() {
                     e.hidden_by = hidden;
                 }
-                if has_entity_name {
-                    e.has_entity_name = true;
-                }
-                if let Some(v) = caps_json.clone() {
-                    e.capabilities = Some(v);
-                }
-                if let Some(v) = supported_features {
-                    e.supported_features = v;
-                }
-                if let Some(v) = device_class {
-                    e.device_class = Some(v.to_string());
-                }
-                if let Some(v) = unit_of_measurement {
-                    e.unit_of_measurement = Some(v.to_string());
-                }
-                if let Some(v) = original_name {
-                    e.original_name = Some(v.to_string());
-                }
-                if let Some(v) = original_icon {
-                    e.original_icon = Some(v.to_string());
-                }
-                if let Some(v) = original_device_class {
-                    e.original_device_class = Some(v.to_string());
-                }
-                if category.is_some() {
-                    e.entity_category = category;
-                }
-                if let Some(v) = translation_key {
-                    e.translation_key = Some(v.to_string());
-                }
-                // Set timestamps - use Python time if provided, otherwise use Rust time
-                if let Some(ts) = timestamp {
+                // has_entity_name: always set (None, Some(true), or Some(false))
+                // Python wrapper controls when to pass this based on UNDEFINED logic
+                e.has_entity_name = has_entity_name;
+                // capabilities: always set (Python controls via UNDEFINED)
+                e.capabilities = caps_json.clone();
+                // supported_features: always set (None means 0)
+                e.supported_features = supported_features.unwrap_or(0);
+                update_optional_field(&mut e.device_class, device_class);
+                update_optional_field(&mut e.unit_of_measurement, unit_of_measurement);
+                update_optional_field(&mut e.original_name, original_name);
+                update_optional_field(&mut e.original_icon, original_icon);
+                update_optional_field(&mut e.original_device_class, original_device_class);
+                // entity_category: always set (Python controls via UNDEFINED)
+                e.entity_category = category;
+                update_optional_field(&mut e.translation_key, translation_key);
+                // Set timestamps from Python (respects freezer in tests)
+                // created_at: only set for new entities (when provided)
+                // modified_at: always set (for new entities and updates)
+                if let Some(ts) = created_timestamp {
                     e.created_at = ts;
+                }
+                if let Some(ts) = modified_timestamp {
                     e.modified_at = ts;
                 } else {
                     e.modified_at = chrono::Utc::now();

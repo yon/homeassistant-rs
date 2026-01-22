@@ -20,6 +20,18 @@ from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import patch
 
+# Import UNDEFINED sentinel for distinguishing "not passed" from "None"
+try:
+    from homeassistant.helpers.typing import UNDEFINED, UndefinedType
+except ImportError:
+    # Fallback sentinel if HA not available
+    class UndefinedType:
+        _singleton = None
+        def __repr__(self):
+            return "UNDEFINED"
+    UndefinedType._singleton = UndefinedType()
+    UNDEFINED = UndefinedType._singleton
+
 import pytest
 
 # Import HA exceptions and types for API compatibility
@@ -1055,83 +1067,95 @@ class RustEntityRegistry:
         platform: str,
         unique_id: str,
         *,
-        config_entry: Any | None = None,
-        config_entry_id: str | None = None,
-        config_subentry_id: str | None = None,
-        device_id: str | None = None,
+        config_entry=UNDEFINED,
+        config_entry_id=UNDEFINED,
+        config_subentry_id=UNDEFINED,
+        device_id=UNDEFINED,
         known_object_ids: list[str] | None = None,
         suggested_object_id: str | None = None,
         disabled_by: str | None = None,
         hidden_by: str | None = None,
-        has_entity_name: bool = False,
-        capabilities: dict | None = None,
-        supported_features: int | None = None,
-        device_class: str | None = None,
-        unit_of_measurement: str | None = None,
-        original_name: str | None = None,
-        original_icon: str | None = None,
-        original_device_class: str | None = None,
-        entity_category: str | None = None,
-        translation_key: str | None = None,
+        has_entity_name=UNDEFINED,
+        capabilities=UNDEFINED,
+        supported_features=UNDEFINED,
+        device_class=UNDEFINED,
+        unit_of_measurement=UNDEFINED,
+        original_name=UNDEFINED,
+        original_icon=UNDEFINED,
+        original_device_class=UNDEFINED,
+        entity_category=UNDEFINED,
+        translation_key=UNDEFINED,
         get_initial_options: Callable | None = None,
     ):
         # Extract config_entry_id from config_entry object if provided
-        if config_entry is not None and config_entry_id is None:
-            config_entry_id = config_entry.entry_id
+        if config_entry is not UNDEFINED:
+            if config_entry is None:
+                config_entry_id = None
+            elif config_entry_id is UNDEFINED:
+                config_entry_id = config_entry.entry_id
 
         # Check if entity already exists (to determine if we need to fire create event)
         existing_entity_id = self._rust_registry.async_get_entity_id(domain, platform, unique_id)
         is_new = existing_entity_id is None
 
-        # Build kwargs, only including parameters that Rust supports
-        # Some parameters (known_object_ids, config_subentry_id, get_initial_options)
-        # are accepted but not passed to Rust for API compatibility
-        # Pass current Python time as timestamp for new entities (respects freezer in tests)
-        created_at_iso = None
-        if is_new:
-            created_at_iso = datetime.now(timezone.utc).isoformat()
+        # Pass current Python time as timestamp (respects freezer in tests)
+        timestamp_iso = datetime.now(timezone.utc).isoformat()
+        # created_at only for new entities, modified_at for all updates
+        created_at_iso = timestamp_iso if is_new else None
+        modified_at_iso = timestamp_iso
 
+        # Helper: convert UNDEFINED to None (don't change), None to "" (clear), value to value
+        def to_rust_optional(value, default_for_new=None):
+            if value is UNDEFINED:
+                # Not provided - return default for new entities, None for existing
+                return default_for_new if is_new else None
+            if value is None:
+                return ""  # Empty string = clear in Rust
+            return value
+
+        # disabled_by and hidden_by only affect newly created entities,
+        # not existing ones (see native HA entity_registry.py comments)
         entry = self._rust_registry.async_get_or_create(
             domain=domain,
             platform=platform,
             unique_id=unique_id,
-            config_entry_id=config_entry_id,
-            config_subentry_id=config_subentry_id,
-            device_id=device_id,
+            config_entry_id=to_rust_optional(config_entry_id),
+            config_subentry_id=to_rust_optional(config_subentry_id),
+            device_id=to_rust_optional(device_id),
             suggested_object_id=suggested_object_id,
-            disabled_by=disabled_by,
-            hidden_by=hidden_by,
-            has_entity_name=has_entity_name,
-            capabilities=capabilities,
-            supported_features=supported_features,
-            device_class=device_class,
-            unit_of_measurement=unit_of_measurement,
-            original_name=original_name,
-            original_icon=original_icon,
-            original_device_class=original_device_class,
-            entity_category=entity_category,
-            translation_key=translation_key,
+            disabled_by=disabled_by if is_new else None,
+            hidden_by=hidden_by if is_new else None,
+            has_entity_name=None if has_entity_name is UNDEFINED else has_entity_name,
+            capabilities=None if capabilities is UNDEFINED else capabilities,
+            supported_features=None if supported_features is UNDEFINED else supported_features,
+            device_class=to_rust_optional(device_class),
+            unit_of_measurement=to_rust_optional(unit_of_measurement),
+            original_name=to_rust_optional(original_name),
+            original_icon=to_rust_optional(original_icon),
+            original_device_class=to_rust_optional(original_device_class),
+            entity_category=None if entity_category is UNDEFINED else entity_category,
+            translation_key=to_rust_optional(translation_key),
             created_at=created_at_iso,
+            modified_at=modified_at_iso,
         )
         # Check if we need to force a new RegistryEntry
         # For new entities: always create new (timestamps just set)
         # For existing: only force new if update parameters were provided
+        # Note: disabled_by and hidden_by are NOT update params (only affect creation)
         has_update_params = (
-            config_entry_id is not None
-            or config_subentry_id is not None
-            or device_id is not None
-            or disabled_by is not None
-            or hidden_by is not None
-            or has_entity_name
-            or capabilities is not None
-            or supported_features is not None
-            or device_class is not None
-            or unit_of_measurement is not None
-            or original_name is not None
-            or original_icon is not None
-            or original_device_class is not None
-            or entity_category is not None
-            or translation_key is not None
+            config_entry_id is not UNDEFINED
+            or config_subentry_id is not UNDEFINED
+            or device_id is not UNDEFINED
+            or has_entity_name is not UNDEFINED
+            or capabilities is not UNDEFINED
+            or supported_features is not UNDEFINED
+            or device_class is not UNDEFINED
+            or unit_of_measurement is not UNDEFINED
+            or original_name is not UNDEFINED
+            or original_icon is not UNDEFINED
+            or original_device_class is not UNDEFINED
+            or entity_category is not UNDEFINED
+            or translation_key is not UNDEFINED
         )
         force_new = is_new or (not is_new and has_update_params)
         wrapped = self._get_or_create_wrapper(entry, force_new=force_new)
