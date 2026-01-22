@@ -1,0 +1,4 @@
+# Python integrations allowed to load
+# These will be loaded via the Python bridge
+integrations:
+  - wemo

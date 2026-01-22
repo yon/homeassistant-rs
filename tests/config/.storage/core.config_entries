@@ -18,6 +18,21 @@
                 "unique_id": null,
                 "disabled_by": null,
                 "discovery_keys": {}
+            },
+            {
+                "entry_id": "wemo_entry_001",
+                "version": 1,
+                "minor_version": 1,
+                "domain": "wemo",
+                "title": "Wemo",
+                "data": {},
+                "options": {},
+                "pref_disable_new_entities": false,
+                "pref_disable_polling": false,
+                "source": "user",
+                "unique_id": null,
+                "disabled_by": null,
+                "discovery_keys": {}
             }
         ]
     }

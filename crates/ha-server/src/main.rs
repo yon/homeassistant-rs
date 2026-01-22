@@ -1311,6 +1311,15 @@ async fn setup_config_entries(hass: &HomeAssistant) {
             warn!("Failed to setup entry {}: {:?}", entry_id, e);
         }
     }
+
+    // Start the Python background event loop AFTER all config entries are set up
+    // This must happen after setup because run_until_complete() can't be called
+    // while the loop is already running (from run_forever in background thread)
+    if let Some(ref bridge) = hass.python_bridge {
+        if let Err(e) = bridge.start_background_event_loop() {
+            warn!("Failed to start Python background event loop: {:?}", e);
+        }
+    }
 }
 
 #[cfg(not(feature = "python"))]

@@ -7,8 +7,15 @@ use super::states::StatesWrapper;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 
 static HASS_INSTANCE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Persistent hass.data dict
+/// This ensures data set by async_setup survives to async_setup_entry
+/// because integrations like Wemo store state in hass.data during async_setup
+/// and expect it to still be there during async_setup_entry.
+static HASS_DATA: OnceLock<Py<PyDict>> = OnceLock::new();
 
 /// Python wrapper for the Home Assistant object
 ///
@@ -61,17 +68,34 @@ impl HassWrapper {
         async_create_task: PyObject,
         timeout: PyObject,
     ) -> PyResult<Self> {
-        let data = PyDict::new_bound(py);
-        // Add integrations dict that entities expect
-        let integrations = PyDict::new_bound(py);
-        data.set_item("integrations", &integrations)?;
+        // Use persistent data dict so data set by async_setup survives to async_setup_entry
+        // This is critical for integrations like Wemo that store WemoData in hass.data["wemo"]
+        // during async_setup and expect it to be there during async_setup_entry.
+        let data_py = HASS_DATA.get_or_init(|| {
+            Python::with_gil(|py| {
+                let dict = PyDict::new_bound(py);
+                // Add integrations dict that entities expect
+                let integrations = PyDict::new_bound(py);
+                dict.set_item("integrations", &integrations)
+                    .expect("Failed to set integrations");
+                dict.unbind()
+            })
+        });
+        // Clone the Py<PyDict> so we can store it in this wrapper while the static keeps its reference
+        let data = data_py.clone_ref(py);
+        let data_bound = data.bind(py);
 
         // Initialize the network singleton - many components expect this to exist
         // The network component stores a Network object in hass.data["network"]
         // We need to initialize it so components can access network adapters
         // We create a minimal Network object with real adapter info from ifaddr
+        // Only runs once - subsequent calls will skip if network already exists
         let init_network_code = r#"
 def init_network(hass_data):
+    # Skip if already initialized (persistent data dict is reused)
+    if "network" in hass_data:
+        return
+
     try:
         import ifaddr
         from ipaddress import ip_address
@@ -157,7 +181,7 @@ def init_network(hass_data):
         py.run_bound(init_network_code, Some(&globals), None)?;
 
         let init_fn = globals.get_item("init_network")?.unwrap();
-        let _ = init_fn.call1((&data,));
+        let _ = init_fn.call1((data_bound.clone(),));
 
         Ok(Self {
             instance_id: HASS_INSTANCE_COUNTER.fetch_add(1, Ordering::SeqCst),
@@ -165,7 +189,7 @@ def init_network(hass_data):
             states,
             services,
             config,
-            data: data.unbind(),
+            data,
             config_entries,
             helpers,
             loop_,
@@ -327,5 +351,155 @@ async def _run_in_executor(func, *args):
     ) -> PyResult<Bound<'py, PyAny>> {
         // Delegate to async_add_executor_job - imports are just another blocking operation
         self.async_add_executor_job(py, func, args)
+    }
+
+    /// Create a task from a coroutine
+    ///
+    /// This wraps asyncio.create_task to match HA's API.
+    ///
+    /// # Arguments
+    /// * `target` - The coroutine to wrap in a task
+    /// * `name` - Optional name for the task
+    /// * `eager_start` - Whether to start the task eagerly
+    ///
+    /// # Returns
+    /// The created asyncio task
+    #[pyo3(signature = (target, name=None, eager_start=false))]
+    fn async_create_task<'py>(
+        &self,
+        py: Python<'py>,
+        target: PyObject,
+        name: Option<String>,
+        eager_start: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let code = r#"
+import asyncio
+import logging
+
+_LOGGER = logging.getLogger(__name__)
+
+def create_task(coro, name=None, eager_start=False):
+    """Create an async task."""
+    try:
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(coro, name=name)
+        if eager_start and hasattr(task, '__await__'):
+            # Try to start it eagerly by stepping through the coroutine once
+            try:
+                task.__await__().__next__()
+            except StopIteration:
+                pass
+            except Exception:
+                pass  # Task will complete on its own
+        _LOGGER.debug(f"Created task: {name or 'unnamed'}")
+        return task
+    except RuntimeError:
+        # No running loop - schedule it for later
+        _LOGGER.warning(f"No running loop for task: {name or 'unnamed'}")
+        return asyncio.ensure_future(coro)
+"#;
+        let globals = pyo3::types::PyDict::new_bound(py);
+        py.run_bound(code, Some(&globals), None)?;
+
+        let create_fn = globals.get_item("create_task")?.unwrap();
+
+        // Build kwargs
+        let kwargs = pyo3::types::PyDict::new_bound(py);
+        if let Some(n) = name {
+            kwargs.set_item("name", n)?;
+        }
+        kwargs.set_item("eager_start", eager_start)?;
+
+        let task = create_fn.call((target,), Some(&kwargs))?;
+        Ok(task)
+    }
+
+    /// Create a background task tied to the HomeAssistant lifecycle
+    ///
+    /// Background tasks:
+    /// - Will not block startup
+    /// - Will be automatically cancelled on shutdown
+    /// - Calls to async_block_till_done will not wait for completion
+    ///
+    /// # Arguments
+    /// * `target` - The coroutine to wrap in a background task
+    /// * `name` - Name for the task
+    /// * `eager_start` - Whether to start the task eagerly (default true)
+    ///
+    /// # Returns
+    /// The created asyncio task
+    #[pyo3(signature = (target, name, eager_start=true))]
+    fn async_create_background_task<'py>(
+        &self,
+        py: Python<'py>,
+        target: PyObject,
+        name: String,
+        eager_start: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        // Log for debugging
+        tracing::info!("Creating background task: {}", name);
+
+        // For now, background tasks are just regular tasks
+        // In a full implementation, we'd track them and cancel on shutdown
+        let result = self.async_create_task(py, target, Some(name.clone()), eager_start);
+
+        match &result {
+            Ok(_) => tracing::info!("Background task '{}' created successfully", name),
+            Err(e) => tracing::error!("Failed to create background task '{}': {:?}", name, e),
+        }
+
+        result
+    }
+
+    /// Run a HassJob from within the event loop
+    ///
+    /// HassJob is a wrapper around a callable with job_type indicating how to run it:
+    /// - Callback: Run synchronously
+    /// - Coroutinefunction: Create a task for the coroutine
+    /// - Executor: Run in executor (not implemented yet)
+    ///
+    /// # Arguments
+    /// * `hassjob` - The HassJob to run
+    /// * `args` - Arguments to pass to the job target
+    /// * `background` - Whether to run as a background task (default false)
+    ///
+    /// # Returns
+    /// The task if created, or None for callbacks
+    #[pyo3(signature = (hassjob, *args, background=false))]
+    fn async_run_hass_job<'py>(
+        &self,
+        py: Python<'py>,
+        hassjob: PyObject,
+        args: &Bound<'py, PyTuple>,
+        background: bool,
+    ) -> PyResult<PyObject> {
+        // Import HassJobType enum
+        let core_module = py.import_bound("homeassistant.core")?;
+        let hass_job_type = core_module.getattr("HassJobType")?;
+        let callback_type = hass_job_type.getattr("Callback")?;
+
+        // Get job type and target from hassjob
+        let job_type = hassjob.getattr(py, "job_type")?;
+        let target = hassjob.getattr(py, "target")?;
+
+        // Check if it's a callback type - run synchronously
+        if job_type.bind(py).eq(&callback_type)? {
+            // Call the target directly with args
+            let _ = target.call_bound(py, args, None)?;
+            return Ok(py.None());
+        }
+
+        // For coroutine types, create a task
+        // Call the target to get the coroutine
+        let coro = target.call_bound(py, args, None)?;
+
+        // Create a task for the coroutine
+        if background {
+            self.async_create_background_task(py, coro, "hass_job".to_string(), true)
+                .map(|t| t.unbind())
+        } else {
+            self.async_create_task(py, coro, Some("hass_job".to_string()), false)
+                .map(|t| t.unbind())
+        }
     }
 }
