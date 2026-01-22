@@ -6,8 +6,6 @@ use pyo3::types::PyDict;
 use std::sync::Arc;
 use tokio::runtime::Handle;
 
-use super::py_storage::PyStorage;
-
 /// Python wrapper for AreaEntry
 #[pyclass(name = "AreaEntry")]
 #[derive(Clone)]
@@ -103,15 +101,28 @@ impl PyAreaEntry {
 #[pyclass(name = "AreaRegistry")]
 pub struct PyAreaRegistry {
     inner: Arc<AreaRegistry>,
+    #[pyo3(get)]
+    hass: PyObject,
 }
 
 #[pymethods]
 impl PyAreaRegistry {
     #[new]
-    fn new(storage: &PyStorage) -> Self {
-        Self {
-            inner: Arc::new(AreaRegistry::new(storage.inner().clone())),
-        }
+    fn new(py: Python<'_>, hass: PyObject) -> PyResult<Self> {
+        // Extract storage path from hass.config.path('.storage')
+        let config = hass.getattr(py, "config")?;
+        let storage_path: String = config
+            .call_method1(py, "path", (".storage",))?
+            .extract(py)?;
+
+        // Create Rust storage and registry
+        let storage = Arc::new(ha_registries::storage::Storage::new(&storage_path));
+        let registry = AreaRegistry::new(storage);
+
+        Ok(Self {
+            inner: Arc::new(registry),
+            hass,
+        })
     }
 
     /// Load areas from storage
@@ -278,11 +289,5 @@ impl PyAreaRegistry {
 
     fn __repr__(&self) -> String {
         format!("AreaRegistry(count={})", self.inner.len())
-    }
-}
-
-impl PyAreaRegistry {
-    pub fn from_arc(inner: Arc<AreaRegistry>) -> Self {
-        Self { inner }
     }
 }

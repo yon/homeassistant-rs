@@ -20,8 +20,9 @@ for _name in dir(_native):
     globals()[_name] = getattr(_native, _name)
 
 # Import Rust classes from ha_core_rs (they take precedence)
+# Rust AreaRegistry now accepts hass like native HA does
 try:
-    from ha_core_rs.area_registry import AreaRegistry, AreaEntry
+    from ha_core_rs import AreaRegistry, AreaEntry
 
     globals()["AreaRegistry"] = AreaRegistry
     globals()["AreaEntry"] = AreaEntry
@@ -29,6 +30,9 @@ try:
         _public_names.append("AreaRegistry")
     if "AreaEntry" not in _public_names:
         _public_names.append("AreaEntry")
+
+    # Also patch the native module so async_get uses Rust
+    _native.AreaRegistry = AreaRegistry
 except ImportError:
     # ha_core_rs not available (e.g., in pure Python mode)
     pass

@@ -74,6 +74,13 @@ fn ha_core_rs(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyFloorRegistry>()?;
     m.add_class::<PyLabelRegistry>()?;
 
+    // Registry entries (also available via helpers submodules)
+    m.add_class::<PyEntityEntry>()?;
+    m.add_class::<PyDeviceEntry>()?;
+    m.add_class::<PyAreaEntry>()?;
+    m.add_class::<PyFloorEntry>()?;
+    m.add_class::<PyLabelEntry>()?;
+
     // Template
     m.add_class::<PyTemplate>()?;
     m.add_class::<PyTemplateEngine>()?;

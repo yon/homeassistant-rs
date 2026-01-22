@@ -9,8 +9,6 @@ use pyo3::types::{PyDict, PySet, PyTuple};
 use std::sync::Arc;
 use tokio::runtime::Handle;
 
-use super::py_storage::PyStorage;
-
 /// Python wrapper for DeviceEntry
 #[pyclass(name = "DeviceEntry")]
 #[derive(Clone)]
@@ -110,10 +108,11 @@ impl PyDeviceEntry {
     #[getter]
     fn disabled_by(&self) -> Option<&str> {
         self.inner.disabled_by.as_ref().map(|d| match d {
-            DisabledBy::Integration => "integration",
-            DisabledBy::User => "user",
             DisabledBy::ConfigEntry => "config_entry",
             DisabledBy::Device => "device",
+            DisabledBy::Hass => "hass",
+            DisabledBy::Integration => "integration",
+            DisabledBy::User => "user",
         })
     }
 
@@ -180,10 +179,11 @@ impl PyDeviceEntry {
 
 fn parse_disabled_by(s: Option<&str>) -> Option<DisabledBy> {
     s.and_then(|s| match s {
-        "integration" => Some(DisabledBy::Integration),
-        "user" => Some(DisabledBy::User),
         "config_entry" => Some(DisabledBy::ConfigEntry),
         "device" => Some(DisabledBy::Device),
+        "hass" => Some(DisabledBy::Hass),
+        "integration" => Some(DisabledBy::Integration),
+        "user" => Some(DisabledBy::User),
         _ => None,
     })
 }
@@ -214,19 +214,76 @@ fn parse_connections(py_set: &Bound<'_, PySet>) -> PyResult<Vec<DeviceConnection
     Ok(result)
 }
 
+/// Parse identifiers from any iterable (set, list, or frozenset)
+fn parse_identifiers_any(py_obj: &Bound<'_, PyAny>) -> PyResult<Vec<DeviceIdentifier>> {
+    let mut result = Vec::new();
+    // Try as a set first
+    if let Ok(set) = py_obj.downcast::<PySet>() {
+        return parse_identifiers(set);
+    }
+    // Try as a list
+    if let Ok(list) = py_obj.downcast::<pyo3::types::PyList>() {
+        for item in list.iter() {
+            if let Ok(tuple) = item.downcast::<PyTuple>() {
+                if tuple.len() == 2 {
+                    let domain: String = tuple.get_item(0)?.extract()?;
+                    let id: String = tuple.get_item(1)?.extract()?;
+                    result.push(DeviceIdentifier::new(domain, id));
+                }
+            }
+        }
+    }
+    Ok(result)
+}
+
+/// Parse connections from any iterable (set, list, or frozenset)
+fn parse_connections_any(py_obj: &Bound<'_, PyAny>) -> PyResult<Vec<DeviceConnection>> {
+    let mut result = Vec::new();
+    // Try as a set first
+    if let Ok(set) = py_obj.downcast::<PySet>() {
+        return parse_connections(set);
+    }
+    // Try as a list
+    if let Ok(list) = py_obj.downcast::<pyo3::types::PyList>() {
+        for item in list.iter() {
+            if let Ok(tuple) = item.downcast::<PyTuple>() {
+                if tuple.len() == 2 {
+                    let conn_type: String = tuple.get_item(0)?.extract()?;
+                    let id: String = tuple.get_item(1)?.extract()?;
+                    result.push(DeviceConnection::new(conn_type, id));
+                }
+            }
+        }
+    }
+    Ok(result)
+}
+
 /// Python wrapper for DeviceRegistry
 #[pyclass(name = "DeviceRegistry")]
 pub struct PyDeviceRegistry {
     inner: Arc<DeviceRegistry>,
+    #[pyo3(get)]
+    hass: PyObject,
 }
 
 #[pymethods]
 impl PyDeviceRegistry {
     #[new]
-    fn new(storage: &PyStorage) -> Self {
-        Self {
-            inner: Arc::new(DeviceRegistry::new(storage.inner().clone())),
-        }
+    fn new(py: Python<'_>, hass: PyObject) -> PyResult<Self> {
+        // Extract storage path from hass.config.path('.storage')
+        let config = hass.getattr(py, "config")?;
+        let storage_path: String = config
+            .call_method1(py, "path", (".storage",))?
+            .extract(py)?;
+
+        // Create Rust storage and registry
+        let storage = Arc::new(ha_registries::storage::Storage::new(&storage_path));
+        let registry = DeviceRegistry::new(storage);
+
+        Ok(Self {
+            inner: Arc::new(registry),
+            hass,
+        })
     }
 
     /// Load devices from storage
@@ -323,31 +380,156 @@ impl PyDeviceRegistry {
     }
 
     /// Get or create a device
-    #[pyo3(signature = (*, identifiers=None, connections=None, config_entry_id=None, name=None))]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        *,
+        config_entry_id,
+        identifiers=None,
+        connections=None,
+        manufacturer=None,
+        model=None,
+        model_id=None,
+        name=None,
+        serial_number=None,
+        suggested_area=None,
+        sw_version=None,
+        hw_version=None,
+        via_device=None,
+        configuration_url=None,
+        entry_type=None,
+        // Accept but ignore these - they're HA-specific
+        config_subentry_id=None,
+        default_manufacturer=None,
+        default_model=None,
+        default_name=None,
+        disabled_by=None,
+        translation_key=None,
+        translation_placeholders=None,
+        created_at=None,
+        modified_at=None
+    ))]
     fn async_get_or_create(
         &self,
-        identifiers: Option<&Bound<'_, PySet>>,
-        connections: Option<&Bound<'_, PySet>>,
-        config_entry_id: Option<&str>,
+        config_entry_id: &str,
+        identifiers: Option<&Bound<'_, PyAny>>,
+        connections: Option<&Bound<'_, PyAny>>,
+        manufacturer: Option<&str>,
+        model: Option<&str>,
+        model_id: Option<&str>,
         name: Option<&str>,
+        serial_number: Option<&str>,
+        suggested_area: Option<&str>,
+        sw_version: Option<&str>,
+        hw_version: Option<&str>,
+        via_device: Option<&Bound<'_, PyAny>>,
+        configuration_url: Option<&str>,
+        entry_type: Option<&str>,
+        // Accepted but ignored
+        #[allow(unused_variables)] config_subentry_id: Option<&str>,
+        #[allow(unused_variables)] default_manufacturer: Option<&str>,
+        #[allow(unused_variables)] default_model: Option<&str>,
+        #[allow(unused_variables)] default_name: Option<&str>,
+        #[allow(unused_variables)] disabled_by: Option<&Bound<'_, PyAny>>,
+        #[allow(unused_variables)] translation_key: Option<&str>,
+        #[allow(unused_variables)] translation_placeholders: Option<&Bound<'_, PyAny>>,
+        #[allow(unused_variables)] created_at: Option<&Bound<'_, PyAny>>,
+        #[allow(unused_variables)] modified_at: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyDeviceEntry> {
+        // Parse identifiers (can be set or list of tuples)
         let idents = if let Some(i) = identifiers {
-            parse_identifiers(i)?
+            parse_identifiers_any(i)?
         } else {
             Vec::new()
         };
 
+        // Parse connections (can be set or list of tuples)
         let conns = if let Some(c) = connections {
-            parse_connections(c)?
+            parse_connections_any(c)?
         } else {
             Vec::new()
         };
 
         let device_name = name.unwrap_or("Unknown Device");
 
+        // Get or create the base entry
         let entry = self
             .inner
-            .get_or_create(&idents, &conns, config_entry_id, device_name);
+            .get_or_create(&idents, &conns, Some(config_entry_id), device_name);
+
+        // Update with additional fields if provided
+        let needs_update = manufacturer.is_some()
+            || model.is_some()
+            || model_id.is_some()
+            || serial_number.is_some()
+            || suggested_area.is_some()
+            || sw_version.is_some()
+            || hw_version.is_some()
+            || via_device.is_some()
+            || configuration_url.is_some()
+            || entry_type.is_some();
+
+        if needs_update {
+            // Parse via_device tuple to get device ID
+            let via_device_id = if let Some(vd) = via_device {
+                // via_device is a tuple (domain, identifier) - we need to look up the device
+                if let Ok(tuple) = vd.downcast::<pyo3::types::PyTuple>() {
+                    if tuple.len() == 2 {
+                        let domain: String = tuple.get_item(0)?.extract()?;
+                        let identifier: String = tuple.get_item(1)?.extract()?;
+                        // Look up the device by identifier
+                        self.inner
+                            .get_by_identifier(&domain, &identifier)
+                            .map(|d| d.id.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            let updated = self.inner.update(&entry.id, |e| {
+                if let Some(v) = manufacturer {
+                    e.manufacturer = Some(v.to_string());
+                }
+                if let Some(v) = model {
+                    e.model = Some(v.to_string());
+                }
+                if let Some(v) = model_id {
+                    e.model_id = Some(v.to_string());
+                }
+                if let Some(v) = serial_number {
+                    e.serial_number = Some(v.to_string());
+                }
+                if let Some(v) = suggested_area {
+                    e.area_id = Some(v.to_string());
+                }
+                if let Some(v) = sw_version {
+                    e.sw_version = Some(v.to_string());
+                }
+                if let Some(v) = hw_version {
+                    e.hw_version = Some(v.to_string());
+                }
+                if via_device_id.is_some() {
+                    e.via_device_id = via_device_id.clone();
+                }
+                if let Some(v) = configuration_url {
+                    e.configuration_url = Some(v.to_string());
+                }
+                if let Some(v) = entry_type {
+                    e.entry_type = match v {
+                        "service" => Some(ha_registries::device_registry::DeviceEntryType::Service),
+                        _ => None,
+                    };
+                }
+            });
+
+            if let Some(updated_entry) = updated {
+                return Ok(PyDeviceEntry::from_inner(updated_entry));
+            }
+        }
 
         Ok(PyDeviceEntry::from_inner(entry))
     }
@@ -499,11 +681,5 @@ impl PyDeviceRegistry {
 
     fn __repr__(&self) -> String {
         format!("DeviceRegistry(count={})", self.inner.len())
-    }
-}
-
-impl PyDeviceRegistry {
-    pub fn from_arc(inner: Arc<DeviceRegistry>) -> Self {
-        Self { inner }
     }
 }

@@ -20,8 +20,9 @@ for _name in dir(_native):
     globals()[_name] = getattr(_native, _name)
 
 # Import Rust classes from ha_core_rs (they take precedence)
+# Rust LabelRegistry now accepts hass like native HA does
 try:
-    from ha_core_rs.label_registry import LabelRegistry, LabelEntry
+    from ha_core_rs import LabelRegistry, LabelEntry
 
     globals()["LabelRegistry"] = LabelRegistry
     globals()["LabelEntry"] = LabelEntry
@@ -29,6 +30,9 @@ try:
         _public_names.append("LabelRegistry")
     if "LabelEntry" not in _public_names:
         _public_names.append("LabelEntry")
+
+    # Also patch the native module so async_get uses Rust
+    _native.LabelRegistry = LabelRegistry
 except ImportError:
     # ha_core_rs not available (e.g., in pure Python mode)
     pass

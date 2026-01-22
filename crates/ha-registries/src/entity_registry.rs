@@ -33,14 +33,16 @@ pub const STORAGE_MINOR_VERSION: u32 = 19;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DisabledBy {
-    /// Disabled by the integration
-    Integration,
-    /// Disabled by the user
-    User,
     /// Disabled by a config entry
     ConfigEntry,
     /// Disabled by device
     Device,
+    /// Disabled by Home Assistant itself
+    Hass,
+    /// Disabled by the integration
+    Integration,
+    /// Disabled by the user
+    User,
 }
 
 /// Reason an entity was hidden
@@ -557,7 +559,7 @@ impl EntityRegistry {
 
             // Apply update
             f(&mut entry);
-            entry.modified_at = Utc::now();
+            // Note: modified_at should be set by the caller in the closure if needed
 
             // Re-index with new Arc
             let new_arc = Arc::new(entry);

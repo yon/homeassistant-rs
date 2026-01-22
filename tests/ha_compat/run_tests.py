@@ -1021,7 +1021,9 @@ def run_tests(categories: list[str] | None = None, verbose: bool = False) -> int
     # Setup PYTHONPATH for imports
     # vendor/ha-core must be in path for HA's test imports to work
     # Our repo root must be in path for our conftest to find ha_core_rs
-    pythonpath_parts = [str(ha_core), str(repo_root)]
+    # ha_compat directory needs to be on path for pytest to discover our conftest.py
+    ha_compat = repo_root / "tests" / "ha_compat"
+    pythonpath_parts = [str(ha_compat), str(ha_core), str(repo_root)]
     if use_shim:
         # Put our shim first so it takes precedence over site-packages
         pythonpath_parts.insert(0, str(shim_path))

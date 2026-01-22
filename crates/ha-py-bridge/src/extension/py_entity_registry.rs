@@ -8,7 +8,6 @@ use pyo3::types::PyDict;
 use std::sync::Arc;
 use tokio::runtime::Handle;
 
-use super::py_storage::PyStorage;
 use super::py_types::{json_to_py, py_to_json};
 
 /// Python wrapper for EntityEntry
@@ -93,10 +92,11 @@ impl PyEntityEntry {
     #[getter]
     fn disabled_by(&self) -> Option<&str> {
         self.inner.disabled_by.as_ref().map(|d| match d {
-            DisabledBy::Integration => "integration",
-            DisabledBy::User => "user",
             DisabledBy::ConfigEntry => "config_entry",
             DisabledBy::Device => "device",
+            DisabledBy::Hass => "hass",
+            DisabledBy::Integration => "integration",
+            DisabledBy::User => "user",
         })
     }
 
@@ -183,6 +183,16 @@ impl PyEntityEntry {
     }
 
     #[getter]
+    fn categories(&self, py: Python<'_>) -> PyResult<PyObject> {
+        use pyo3::types::PyDict;
+        let dict = PyDict::new_bound(py);
+        for (k, v) in &self.inner.categories {
+            dict.set_item(k, v)?;
+        }
+        Ok(dict.into())
+    }
+
+    #[getter]
     fn created_at(&self) -> String {
         self.inner.created_at.to_rfc3339()
     }
@@ -234,10 +244,11 @@ impl PyEntityEntry {
 
 fn parse_disabled_by(s: Option<&str>) -> Option<DisabledBy> {
     s.and_then(|s| match s {
-        "integration" => Some(DisabledBy::Integration),
-        "user" => Some(DisabledBy::User),
         "config_entry" => Some(DisabledBy::ConfigEntry),
         "device" => Some(DisabledBy::Device),
+        "hass" => Some(DisabledBy::Hass),
+        "integration" => Some(DisabledBy::Integration),
+        "user" => Some(DisabledBy::User),
         _ => None,
     })
 }
@@ -254,15 +265,28 @@ fn parse_hidden_by(s: Option<&str>) -> Option<HiddenBy> {
 #[pyclass(name = "EntityRegistry")]
 pub struct PyEntityRegistry {
     inner: Arc<EntityRegistry>,
+    #[pyo3(get)]
+    hass: PyObject,
 }
 
 #[pymethods]
 impl PyEntityRegistry {
     #[new]
-    fn new(storage: &PyStorage) -> Self {
-        Self {
-            inner: Arc::new(EntityRegistry::new(storage.inner().clone())),
-        }
+    fn new(py: Python<'_>, hass: PyObject) -> PyResult<Self> {
+        // Extract storage path from hass.config.path('.storage')
+        let config = hass.getattr(py, "config")?;
+        let storage_path: String = config
+            .call_method1(py, "path", (".storage",))?
+            .extract(py)?;
+
+        // Create Rust storage and registry
+        let storage = Arc::new(ha_registries::storage::Storage::new(&storage_path));
+        let registry = EntityRegistry::new(storage);
+
+        Ok(Self {
+            inner: Arc::new(registry),
+            hass,
+        })
     }
 
     /// Load entities from storage
@@ -375,7 +399,9 @@ impl PyEntityRegistry {
         // Accept but ignore these - they're Python-specific
         known_object_ids=None,
         get_initial_options=None,
-        calculated_object_id=None
+        calculated_object_id=None,
+        // Timestamp override for tests (ISO format string)
+        created_at=None
     ))]
     fn async_get_or_create(
         &self,
@@ -402,6 +428,8 @@ impl PyEntityRegistry {
         #[allow(unused_variables)] known_object_ids: Option<&Bound<'_, PyAny>>,
         #[allow(unused_variables)] get_initial_options: Option<&Bound<'_, PyAny>>,
         #[allow(unused_variables)] calculated_object_id: Option<&str>,
+        // Timestamp override for tests (ISO format string)
+        created_at: Option<&str>,
     ) -> PyEntityEntry {
         // Build entity_id from domain, platform, and unique_id
         // HA format: {domain}.{platform}_{unique_id} or {domain}.{suggested_object_id}
@@ -419,8 +447,18 @@ impl PyEntityRegistry {
             device_id,
         );
 
+        // Parse timestamp if provided
+        let timestamp = created_at.and_then(|s| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+        });
+
         // Update with additional fields if provided
-        let needs_update = config_subentry_id.is_some()
+        // Note: config_entry_id and device_id can be updated on existing entities
+        let needs_update = config_entry_id.is_some()
+            || config_subentry_id.is_some()
+            || device_id.is_some()
             || disabled_by.is_some()
             || hidden_by.is_some()
             || has_entity_name
@@ -432,7 +470,8 @@ impl PyEntityRegistry {
             || original_icon.is_some()
             || original_device_class.is_some()
             || entity_category.is_some()
-            || translation_key.is_some();
+            || translation_key.is_some()
+            || timestamp.is_some();
 
         if needs_update {
             // Convert capabilities from Python dict to JSON
@@ -440,10 +479,11 @@ impl PyEntityRegistry {
 
             // Parse disabled_by and hidden_by enums
             let disabled = disabled_by.and_then(|s| match s {
-                "integration" => Some(DisabledBy::Integration),
-                "user" => Some(DisabledBy::User),
                 "config_entry" => Some(DisabledBy::ConfigEntry),
                 "device" => Some(DisabledBy::Device),
+                "hass" => Some(DisabledBy::Hass),
+                "integration" => Some(DisabledBy::Integration),
+                "user" => Some(DisabledBy::User),
                 _ => None,
             });
             let hidden = hidden_by.and_then(|s| match s {
@@ -458,8 +498,14 @@ impl PyEntityRegistry {
             });
 
             let updated = self.inner.update(&entity_id, |e| {
+                if let Some(v) = config_entry_id {
+                    e.config_entry_id = Some(v.to_string());
+                }
                 if let Some(v) = config_subentry_id {
                     e.config_subentry_id = Some(v.to_string());
+                }
+                if let Some(v) = device_id {
+                    e.device_id = Some(v.to_string());
                 }
                 if disabled.is_some() {
                     e.disabled_by = disabled;
@@ -496,6 +542,13 @@ impl PyEntityRegistry {
                 }
                 if let Some(v) = translation_key {
                     e.translation_key = Some(v.to_string());
+                }
+                // Set timestamps - use Python time if provided, otherwise use Rust time
+                if let Some(ts) = timestamp {
+                    e.created_at = ts;
+                    e.modified_at = ts;
+                } else {
+                    e.modified_at = chrono::Utc::now();
                 }
             });
 
@@ -609,11 +662,5 @@ impl PyEntityRegistry {
 
     fn __repr__(&self) -> String {
         format!("EntityRegistry(count={})", self.inner.len())
-    }
-}
-
-impl PyEntityRegistry {
-    pub fn from_arc(inner: Arc<EntityRegistry>) -> Self {
-        Self { inner }
     }
 }

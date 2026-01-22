@@ -6,8 +6,6 @@ use pyo3::types::PyDict;
 use std::sync::Arc;
 use tokio::runtime::Handle;
 
-use super::py_storage::PyStorage;
-
 /// Python wrapper for FloorEntry
 #[pyclass(name = "FloorEntry")]
 #[derive(Clone)]
@@ -98,15 +96,28 @@ impl PyFloorEntry {
 #[pyclass(name = "FloorRegistry")]
 pub struct PyFloorRegistry {
     inner: Arc<FloorRegistry>,
+    #[pyo3(get)]
+    hass: PyObject,
 }
 
 #[pymethods]
 impl PyFloorRegistry {
     #[new]
-    fn new(storage: &PyStorage) -> Self {
-        Self {
-            inner: Arc::new(FloorRegistry::new(storage.inner().clone())),
-        }
+    fn new(py: Python<'_>, hass: PyObject) -> PyResult<Self> {
+        // Extract storage path from hass.config.path('.storage')
+        let config = hass.getattr(py, "config")?;
+        let storage_path: String = config
+            .call_method1(py, "path", (".storage",))?
+            .extract(py)?;
+
+        // Create Rust storage and registry
+        let storage = Arc::new(ha_registries::storage::Storage::new(&storage_path));
+        let registry = FloorRegistry::new(storage);
+
+        Ok(Self {
+            inner: Arc::new(registry),
+            hass,
+        })
     }
 
     /// Load floors from storage
@@ -253,11 +264,5 @@ impl PyFloorRegistry {
 
     fn __repr__(&self) -> String {
         format!("FloorRegistry(count={})", self.inner.len())
-    }
-}
-
-impl PyFloorRegistry {
-    pub fn from_arc(inner: Arc<FloorRegistry>) -> Self {
-        Self { inner }
     }
 }

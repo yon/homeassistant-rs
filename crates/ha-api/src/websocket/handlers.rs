@@ -651,10 +651,11 @@ pub async fn handle_entity_registry_update(
             }
             if let Some(d) = disabled_by {
                 entry.disabled_by = match d.as_str() {
-                    "user" => Some(ha_registries::DisabledBy::User),
-                    "integration" => Some(ha_registries::DisabledBy::Integration),
                     "config_entry" => Some(ha_registries::DisabledBy::ConfigEntry),
                     "device" => Some(ha_registries::DisabledBy::Device),
+                    "hass" => Some(ha_registries::DisabledBy::Hass),
+                    "integration" => Some(ha_registries::DisabledBy::Integration),
+                    "user" => Some(ha_registries::DisabledBy::User),
                     "" => None,
                     _ => entry.disabled_by,
                 };
@@ -776,10 +777,11 @@ fn entity_entry_to_json(entry: &ha_registries::EntityEntry) -> serde_json::Value
         "original_icon": entry.original_icon,
         "area_id": entry.area_id,
         "disabled_by": entry.disabled_by.map(|d| match d {
-            ha_registries::DisabledBy::User => "user",
-            ha_registries::DisabledBy::Integration => "integration",
             ha_registries::DisabledBy::ConfigEntry => "config_entry",
             ha_registries::DisabledBy::Device => "device",
+            ha_registries::DisabledBy::Hass => "hass",
+            ha_registries::DisabledBy::Integration => "integration",
+            ha_registries::DisabledBy::User => "user",
         }),
         "hidden_by": entry.hidden_by.map(|h| match h {
             ha_registries::HiddenBy::Integration => "integration",
@@ -835,10 +837,11 @@ pub async fn handle_device_registry_list(
                     ha_registries::DeviceEntryType::Service => "service",
                 }),
                 "disabled_by": device.disabled_by.as_ref().map(|d| match d {
-                    ha_registries::DisabledBy::User => "user",
-                    ha_registries::DisabledBy::Integration => "integration",
                     ha_registries::DisabledBy::ConfigEntry => "config_entry",
                     ha_registries::DisabledBy::Device => "device",
+                    ha_registries::DisabledBy::Hass => "hass",
+                    ha_registries::DisabledBy::Integration => "integration",
+                    ha_registries::DisabledBy::User => "user",
                 }),
                 "configuration_url": device.configuration_url,
                 "labels": device.labels,

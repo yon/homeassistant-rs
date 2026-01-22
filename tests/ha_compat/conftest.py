@@ -913,125 +913,68 @@ class RustStorage:
 # Rust-backed EntityRegistry wrappers
 # =============================================================================
 
-class RustEntityEntry:
-    """Wrapper for EntityEntry compatible with homeassistant.helpers.entity_registry."""
+def _rust_entry_to_registry_entry(rust_entry):
+    """Convert a Rust EntityEntry to HA's RegistryEntry.
 
-    __slots__ = ("_rust_entry",)
+    This ensures tests comparing entries work correctly since HA's RegistryEntry
+    is an attrs frozen class with proper equality comparison.
+    """
+    from homeassistant.helpers import entity_registry as er
+    from homeassistant.helpers.entity import EntityCategory
 
-    def __init__(self, rust_entry):
-        self._rust_entry = rust_entry
+    # Convert string enums to HA enum types
+    disabled_by = None
+    if rust_entry.disabled_by:
+        disabled_by = er.RegistryEntryDisabler(rust_entry.disabled_by)
 
-    @property
-    def aliases(self) -> set[str]:
-        return set(self._rust_entry.aliases)
+    hidden_by = None
+    if rust_entry.hidden_by:
+        hidden_by = er.RegistryEntryHider(rust_entry.hidden_by)
 
-    @property
-    def area_id(self) -> str | None:
-        return self._rust_entry.area_id
+    entity_category = None
+    if rust_entry.entity_category:
+        entity_category = EntityCategory(rust_entry.entity_category)
 
-    @property
-    def capabilities(self) -> dict | None:
-        return self._rust_entry.capabilities
+    # Parse timestamps
+    created_at = _parse_iso_datetime(rust_entry.created_at)
+    modified_at = _parse_iso_datetime(rust_entry.modified_at)
 
-    @property
-    def config_entry_id(self) -> str | None:
-        return self._rust_entry.config_entry_id
+    # Convert capabilities and options
+    capabilities = rust_entry.capabilities
+    options = rust_entry.options
 
-    @property
-    def created_at(self) -> datetime:
-        return _parse_iso_datetime(self._rust_entry.created_at)
-
-    @property
-    def device_class(self) -> str | None:
-        return self._rust_entry.device_class
-
-    @property
-    def device_id(self) -> str | None:
-        return self._rust_entry.device_id
-
-    @property
-    def disabled_by(self) -> str | None:
-        return self._rust_entry.disabled_by
-
-    @property
-    def domain(self) -> str:
-        return self._rust_entry.domain
-
-    @property
-    def entity_category(self) -> str | None:
-        return self._rust_entry.entity_category
-
-    @property
-    def entity_id(self) -> str:
-        return self._rust_entry.entity_id
-
-    @property
-    def hidden_by(self) -> str | None:
-        return self._rust_entry.hidden_by
-
-    @property
-    def icon(self) -> str | None:
-        return self._rust_entry.icon
-
-    @property
-    def id(self) -> str:
-        return self._rust_entry.id
-
-    @property
-    def labels(self) -> set[str]:
-        return set(self._rust_entry.labels)
-
-    @property
-    def modified_at(self) -> datetime:
-        return _parse_iso_datetime(self._rust_entry.modified_at)
-
-    @property
-    def name(self) -> str | None:
-        return self._rust_entry.name
-
-    @property
-    def options(self) -> dict:
-        return self._rust_entry.options
-
-    @property
-    def original_device_class(self) -> str | None:
-        return self._rust_entry.original_device_class
-
-    @property
-    def original_icon(self) -> str | None:
-        return self._rust_entry.original_icon
-
-    @property
-    def original_name(self) -> str | None:
-        return self._rust_entry.original_name
-
-    @property
-    def platform(self) -> str:
-        return self._rust_entry.platform
-
-    @property
-    def supported_features(self) -> int:
-        return self._rust_entry.supported_features
-
-    @property
-    def translation_key(self) -> str | None:
-        return self._rust_entry.translation_key
-
-    @property
-    def unique_id(self) -> str:
-        return self._rust_entry.unique_id
-
-    @property
-    def unit_of_measurement(self) -> str | None:
-        return self._rust_entry.unit_of_measurement
-
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, RustEntityEntry):
-            return self.entity_id == other.entity_id
-        return False
-
-    def __repr__(self) -> str:
-        return repr(self._rust_entry)
+    return er.RegistryEntry(
+        entity_id=rust_entry.entity_id,
+        unique_id=rust_entry.unique_id or "",
+        platform=rust_entry.platform,
+        previous_unique_id=rust_entry.previous_unique_id,
+        aliases=set(rust_entry.aliases),
+        area_id=rust_entry.area_id,
+        categories=dict(rust_entry.categories) if rust_entry.categories else {},
+        capabilities=capabilities,
+        config_entry_id=rust_entry.config_entry_id,
+        config_subentry_id=rust_entry.config_subentry_id,
+        created_at=created_at,
+        device_class=rust_entry.device_class,
+        device_id=rust_entry.device_id,
+        disabled_by=disabled_by,
+        entity_category=entity_category,
+        has_entity_name=rust_entry.has_entity_name,
+        hidden_by=hidden_by,
+        icon=rust_entry.icon,
+        id=rust_entry.id,
+        labels=set(rust_entry.labels),
+        modified_at=modified_at,
+        name=rust_entry.name,
+        options=options,
+        original_device_class=rust_entry.original_device_class,
+        original_icon=rust_entry.original_icon,
+        original_name=rust_entry.original_name,
+        suggested_object_id=rust_entry.suggested_object_id,
+        supported_features=rust_entry.supported_features,
+        translation_key=rust_entry.translation_key,
+        unit_of_measurement=rust_entry.unit_of_measurement,
+    )
 
 
 class RustEntityRegistry:
@@ -1068,26 +1011,36 @@ class RustEntityRegistry:
         # No-op for testing - persistence not needed for unit tests
         pass
 
-    def _get_or_create_wrapper(self, rust_entry) -> RustEntityEntry:
-        """Get cached wrapper or create and cache a new one."""
-        entity_id = rust_entry.entity_id
-        if entity_id not in self._entry_cache:
-            self._entry_cache[entity_id] = RustEntityEntry(rust_entry)
-        else:
-            # Update the underlying Rust entry in case it changed
-            self._entry_cache[entity_id]._rust_entry = rust_entry
-        return self._entry_cache[entity_id]
+    def _get_or_create_wrapper(self, rust_entry, force_new: bool = False):
+        """Get cached wrapper or create and cache a new one.
 
-    def async_get(self, entity_id_or_id: str) -> RustEntityEntry | None:
+        Returns actual HA RegistryEntry objects to ensure equality checks work correctly.
+        The force_new parameter is used when data has been updated and we need a new instance.
+        """
+        entity_id = rust_entry.entity_id
+        # Return cached entry for identity checks (is)
+        if not force_new and entity_id in self._entry_cache:
+            return self._entry_cache[entity_id]
+        # Create new RegistryEntry from current Rust state
+        entry = _rust_entry_to_registry_entry(rust_entry)
+        self._entry_cache[entity_id] = entry
+        return entry
+
+    def async_device_ids(self) -> set[str]:
+        """Return set of device IDs that have registered entities."""
+        device_ids = set()
+        for entity_id, entry in self._rust_registry.entities.items():
+            if entry.device_id:
+                device_ids.add(entry.device_id)
+        return device_ids
+
+    def async_get(self, entity_id_or_id: str):
+        """Get entity by entity_id or internal ID."""
         # Try by entity_id first
         entry = self._rust_registry.async_get(entity_id_or_id)
         if entry is not None:
             return self._get_or_create_wrapper(entry)
-        # Try by internal ID (UUID) - check cache first, then iterate
-        for cached_entry in self._entry_cache.values():
-            if cached_entry.id == entity_id_or_id:
-                return cached_entry
-        # Not in cache, check Rust registry (entities is a dict, iterate values)
+        # Try by internal ID (UUID) - search Rust registry
         for rust_entry in self._rust_registry.entities.values():
             if rust_entry.id == entity_id_or_id:
                 return self._get_or_create_wrapper(rust_entry)
@@ -1104,6 +1057,7 @@ class RustEntityRegistry:
         platform: str,
         unique_id: str,
         *,
+        config_entry: Any | None = None,
         config_entry_id: str | None = None,
         config_subentry_id: str | None = None,
         device_id: str | None = None,
@@ -1122,7 +1076,11 @@ class RustEntityRegistry:
         entity_category: str | None = None,
         translation_key: str | None = None,
         get_initial_options: Callable | None = None,
-    ) -> RustEntityEntry:
+    ):
+        # Extract config_entry_id from config_entry object if provided
+        if config_entry is not None and config_entry_id is None:
+            config_entry_id = config_entry.entry_id
+
         # Check if entity already exists (to determine if we need to fire create event)
         existing_entity_id = self._rust_registry.async_get_entity_id(domain, platform, unique_id)
         is_new = existing_entity_id is None
@@ -1130,6 +1088,11 @@ class RustEntityRegistry:
         # Build kwargs, only including parameters that Rust supports
         # Some parameters (known_object_ids, config_subentry_id, get_initial_options)
         # are accepted but not passed to Rust for API compatibility
+        # Pass current Python time as timestamp for new entities (respects freezer in tests)
+        created_at_iso = None
+        if is_new:
+            created_at_iso = datetime.now(timezone.utc).isoformat()
+
         entry = self._rust_registry.async_get_or_create(
             domain=domain,
             platform=platform,
@@ -1150,8 +1113,30 @@ class RustEntityRegistry:
             original_device_class=original_device_class,
             entity_category=entity_category,
             translation_key=translation_key,
+            created_at=created_at_iso,
         )
-        wrapped = self._get_or_create_wrapper(entry)
+        # Check if we need to force a new RegistryEntry
+        # For new entities: always create new (timestamps just set)
+        # For existing: only force new if update parameters were provided
+        has_update_params = (
+            config_entry_id is not None
+            or config_subentry_id is not None
+            or device_id is not None
+            or disabled_by is not None
+            or hidden_by is not None
+            or has_entity_name
+            or capabilities is not None
+            or supported_features is not None
+            or device_class is not None
+            or unit_of_measurement is not None
+            or original_name is not None
+            or original_icon is not None
+            or original_device_class is not None
+            or entity_category is not None
+            or translation_key is not None
+        )
+        force_new = is_new or (not is_new and has_update_params)
+        wrapped = self._get_or_create_wrapper(entry, force_new=force_new)
 
         # Fire create event if this was a new entity
         if is_new:
@@ -1173,13 +1158,14 @@ class RustEntityRegistry:
         self,
         entity_id: str,
         **kwargs,
-    ) -> RustEntityEntry:
+    ):
         # Get old entry to track changes
         old_entry = self._rust_registry.async_get(entity_id)
         old_entity_id = old_entry.entity_id if old_entry else None
 
         entry = self._rust_registry.async_update_entity(entity_id, **kwargs)
-        wrapped = self._get_or_create_wrapper(entry)
+        # Force new RegistryEntry since data was updated (RegistryEntry is frozen)
+        wrapped = self._get_or_create_wrapper(entry, force_new=True)
 
         # Fire update event with changes
         changes = {k: v for k, v in kwargs.items() if v is not None}
@@ -1194,7 +1180,8 @@ class RustEntityRegistry:
         return wrapped
 
     @property
-    def entities(self) -> dict[str, RustEntityEntry]:
+    def entities(self):
+        """Return dict of entity_id to RegistryEntry."""
         return {
             entity_id: self._get_or_create_wrapper(entry)
             for entity_id, entry in self._rust_registry.entities.items()

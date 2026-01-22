@@ -6,8 +6,6 @@ use pyo3::types::PyDict;
 use std::sync::Arc;
 use tokio::runtime::Handle;
 
-use super::py_storage::PyStorage;
-
 /// Python wrapper for LabelEntry
 #[pyclass(name = "LabelEntry")]
 #[derive(Clone)]
@@ -98,15 +96,28 @@ impl PyLabelEntry {
 #[pyclass(name = "LabelRegistry")]
 pub struct PyLabelRegistry {
     inner: Arc<LabelRegistry>,
+    #[pyo3(get)]
+    hass: PyObject,
 }
 
 #[pymethods]
 impl PyLabelRegistry {
     #[new]
-    fn new(storage: &PyStorage) -> Self {
-        Self {
-            inner: Arc::new(LabelRegistry::new(storage.inner().clone())),
-        }
+    fn new(py: Python<'_>, hass: PyObject) -> PyResult<Self> {
+        // Extract storage path from hass.config.path('.storage')
+        let config = hass.getattr(py, "config")?;
+        let storage_path: String = config
+            .call_method1(py, "path", (".storage",))?
+            .extract(py)?;
+
+        // Create Rust storage and registry
+        let storage = Arc::new(ha_registries::storage::Storage::new(&storage_path));
+        let registry = LabelRegistry::new(storage);
+
+        Ok(Self {
+            inner: Arc::new(registry),
+            hass,
+        })
     }
 
     /// Load labels from storage
@@ -245,11 +256,5 @@ impl PyLabelRegistry {
 
     fn __repr__(&self) -> String {
         format!("LabelRegistry(count={})", self.inner.len())
-    }
-}
-
-impl PyLabelRegistry {
-    pub fn from_arc(inner: Arc<LabelRegistry>) -> Self {
-        Self { inner }
     }
 }
