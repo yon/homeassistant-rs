@@ -18,12 +18,12 @@ pub enum EntityIdError {
     EmptyObjectId,
 
     #[error(
-        "domain contains invalid characters (must be lowercase alphanumeric with underscores)"
+        "domain contains invalid characters (must be lowercase alphanumeric with underscores, cannot start/end with underscore or contain double underscores)"
     )]
     InvalidDomainChars,
 
     #[error(
-        "object_id contains invalid characters (must be lowercase alphanumeric with underscores)"
+        "object_id contains invalid characters (must be lowercase alphanumeric with underscores, cannot start/end with underscore)"
     )]
     InvalidObjectIdChars,
 }
@@ -54,10 +54,10 @@ impl EntityId {
         if object_id.is_empty() {
             return Err(EntityIdError::EmptyObjectId);
         }
-        if !Self::is_valid_part(&domain) {
+        if !Self::is_valid_domain(&domain) {
             return Err(EntityIdError::InvalidDomainChars);
         }
-        if !Self::is_valid_part(&object_id) {
+        if !Self::is_valid_object_id(&object_id) {
             return Err(EntityIdError::InvalidObjectIdChars);
         }
 
@@ -74,10 +74,29 @@ impl EntityId {
         &self.object_id
     }
 
-    /// Check if a string part contains only valid characters
-    fn is_valid_part(s: &str) -> bool {
+    /// Check if an object_id is valid (lowercase alphanumeric + underscore, cannot start/end with _)
+    ///
+    /// Matches Python HA regex: `(?!_)[\da-z_]+(?<!_)`
+    fn is_valid_object_id(s: &str) -> bool {
+        // Cannot start or end with underscore
+        if s.starts_with('_') || s.ends_with('_') {
+            return false;
+        }
+        // Must contain only lowercase alphanumeric and underscores
         s.chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+    }
+
+    /// Check if a domain is valid (same as object_id, plus cannot contain __)
+    ///
+    /// Matches Python HA regex: `(?!.+__)(?!_)[\da-z_]+(?<!_)`
+    fn is_valid_domain(s: &str) -> bool {
+        // Domain cannot contain double underscores
+        if s.contains("__") {
+            return false;
+        }
+        // Otherwise same rules as object_id
+        Self::is_valid_object_id(s)
     }
 }
 
@@ -170,6 +189,39 @@ mod tests {
             "with-dash.object".parse::<EntityId>().unwrap_err(),
             EntityIdError::InvalidDomainChars
         );
+    }
+
+    #[test]
+    fn test_underscore_rules() {
+        // Leading underscore in domain - invalid
+        assert_eq!(
+            "_light.room".parse::<EntityId>().unwrap_err(),
+            EntityIdError::InvalidDomainChars
+        );
+        // Trailing underscore in domain - invalid
+        assert_eq!(
+            "light_.room".parse::<EntityId>().unwrap_err(),
+            EntityIdError::InvalidDomainChars
+        );
+        // Leading underscore in object_id - invalid
+        assert_eq!(
+            "light._room".parse::<EntityId>().unwrap_err(),
+            EntityIdError::InvalidObjectIdChars
+        );
+        // Trailing underscore in object_id - invalid
+        assert_eq!(
+            "light.room_".parse::<EntityId>().unwrap_err(),
+            EntityIdError::InvalidObjectIdChars
+        );
+        // Double underscore in domain - invalid
+        assert_eq!(
+            "my__light.room".parse::<EntityId>().unwrap_err(),
+            EntityIdError::InvalidDomainChars
+        );
+        // Double underscore in object_id - valid (Python allows this)
+        assert!("light.my__room".parse::<EntityId>().is_ok());
+        // Middle underscores are fine
+        assert!("my_light.living_room".parse::<EntityId>().is_ok());
     }
 
     #[test]

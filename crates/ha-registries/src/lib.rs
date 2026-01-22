@@ -22,7 +22,8 @@ pub mod label_registry;
 pub use storage::{Storable, Storage, StorageError, StorageFile, StorageResult};
 
 pub use entity_registry::{
-    DisabledBy, EntityCategory, EntityEntry, EntityRegistry, EntityRegistryData, HiddenBy,
+    DisabledBy, EntityCategory, EntityEntry, EntityRegistry, EntityRegistryData,
+    EntityRegistryError, HiddenBy,
 };
 
 pub use device_registry::{

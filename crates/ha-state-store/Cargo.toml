@@ -7,6 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+chrono = { workspace = true }
 dashmap = { workspace = true }
 ha-core = { workspace = true }
 ha-event-bus = { workspace = true }

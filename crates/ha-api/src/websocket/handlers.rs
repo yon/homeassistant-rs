@@ -635,41 +635,46 @@ pub async fn handle_entity_registry_update(
     }
 
     // Update the entity entry
-    let updated_entry = conn.state.registries.entities.update(entity_id, |entry| {
-        if let Some(n) = name {
-            entry.name = Some(n);
-        }
-        if let Some(i) = icon {
-            entry.icon = Some(i);
-        }
-        if let Some(a) = area_id {
-            entry.area_id = if a.is_empty() { None } else { Some(a) };
-        }
-        if let Some(d) = disabled_by {
-            entry.disabled_by = match d.as_str() {
-                "user" => Some(ha_registries::DisabledBy::User),
-                "integration" => Some(ha_registries::DisabledBy::Integration),
-                "config_entry" => Some(ha_registries::DisabledBy::ConfigEntry),
-                "device" => Some(ha_registries::DisabledBy::Device),
-                "" => None,
-                _ => entry.disabled_by,
-            };
-        }
-        if let Some(h) = hidden_by {
-            entry.hidden_by = match h.as_str() {
-                "user" => Some(ha_registries::HiddenBy::User),
-                "integration" => Some(ha_registries::HiddenBy::Integration),
-                "" => None,
-                _ => entry.hidden_by,
-            };
-        }
-        if let Some(a) = aliases {
-            entry.aliases = a;
-        }
-        if let Some(l) = labels {
-            entry.labels = l;
-        }
-    });
+    let updated_entry = conn
+        .state
+        .registries
+        .entities
+        .update(entity_id, |entry| {
+            if let Some(n) = name {
+                entry.name = Some(n);
+            }
+            if let Some(i) = icon {
+                entry.icon = Some(i);
+            }
+            if let Some(a) = area_id {
+                entry.area_id = if a.is_empty() { None } else { Some(a) };
+            }
+            if let Some(d) = disabled_by {
+                entry.disabled_by = match d.as_str() {
+                    "user" => Some(ha_registries::DisabledBy::User),
+                    "integration" => Some(ha_registries::DisabledBy::Integration),
+                    "config_entry" => Some(ha_registries::DisabledBy::ConfigEntry),
+                    "device" => Some(ha_registries::DisabledBy::Device),
+                    "" => None,
+                    _ => entry.disabled_by,
+                };
+            }
+            if let Some(h) = hidden_by {
+                entry.hidden_by = match h.as_str() {
+                    "user" => Some(ha_registries::HiddenBy::User),
+                    "integration" => Some(ha_registries::HiddenBy::Integration),
+                    "" => None,
+                    _ => entry.hidden_by,
+                };
+            }
+            if let Some(a) = aliases {
+                entry.aliases = a;
+            }
+            if let Some(l) = labels {
+                entry.labels = l;
+            }
+        })
+        .expect("Entity should exist after presence check");
 
     // Handle entity_id rename if requested
     if let Some(new_id) = new_entity_id {

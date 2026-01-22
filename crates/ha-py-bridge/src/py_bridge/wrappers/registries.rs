@@ -148,9 +148,14 @@ impl RegistriesWrapper {
 
         // Update name if provided
         if let Some(n) = name {
-            entry = self.registries.entities.update(&entry.entity_id, |e| {
-                e.name = Some(n.to_string());
-            });
+            // Safe to unwrap since we just created/retrieved the entry
+            entry = self
+                .registries
+                .entities
+                .update(&entry.entity_id, |e| {
+                    e.name = Some(n.to_string());
+                })
+                .expect("Entity should exist after get_or_create");
         }
 
         tracing::info!(

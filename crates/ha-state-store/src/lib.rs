@@ -5,11 +5,11 @@
 //! efficient queries and fires STATE_CHANGED events on the event bus.
 
 use dashmap::DashMap;
-use ha_core::events::StateChangedData;
-use ha_core::{Context, EntityId, State};
+use ha_core::events::{StateChangedData, StateReportedData};
+use ha_core::{Context, EntityId, State, MAX_STATE_LENGTH, STATE_UNKNOWN};
 use ha_event_bus::EventBus;
 use std::sync::Arc;
-use tracing::{debug, instrument, trace};
+use tracing::{debug, instrument, trace, warn};
 
 /// The state store tracks all entity states
 ///
@@ -40,9 +40,14 @@ impl StateStore {
     /// Set the state of an entity
     ///
     /// If the entity already has a state, the `last_changed` timestamp will
-    /// only be updated if the state value actually changed.
+    /// only be updated if the state value actually changed (or `force_update` is true).
     ///
-    /// Fires a STATE_CHANGED event with the old and new state.
+    /// If the state is unchanged and attributes are the same, fires a STATE_REPORTED
+    /// event instead of STATE_CHANGED. If `force_update` is true, always fires
+    /// STATE_CHANGED and updates `last_changed`.
+    ///
+    /// If the state value exceeds MAX_STATE_LENGTH (255), it is replaced with
+    /// STATE_UNKNOWN ("unknown") and a warning is logged.
     #[instrument(skip(self, state, attributes, context), fields(entity_id = %entity_id))]
     pub fn set(
         &self,
@@ -51,19 +56,105 @@ impl StateStore {
         attributes: std::collections::HashMap<String, serde_json::Value>,
         context: Context,
     ) -> State {
+        self.set_internal(entity_id, state, attributes, context, false)
+    }
+
+    /// Set the state of an entity with force_update option
+    ///
+    /// When `force_update` is true, `last_changed` is always updated even if
+    /// the state value hasn't changed.
+    #[instrument(skip(self, state, attributes, context), fields(entity_id = %entity_id))]
+    pub fn set_with_force(
+        &self,
+        entity_id: EntityId,
+        state: impl Into<String>,
+        attributes: std::collections::HashMap<String, serde_json::Value>,
+        context: Context,
+        force_update: bool,
+    ) -> State {
+        self.set_internal(entity_id, state, attributes, context, force_update)
+    }
+
+    /// Internal implementation of state setting
+    fn set_internal(
+        &self,
+        entity_id: EntityId,
+        state: impl Into<String>,
+        attributes: std::collections::HashMap<String, serde_json::Value>,
+        context: Context,
+        force_update: bool,
+    ) -> State {
         let entity_id_str = entity_id.to_string();
         let domain = entity_id.domain().to_string();
+        let mut state_str = state.into();
 
         let old_state = self.states.get(&entity_id_str).map(|s| s.clone());
 
+        // Check if state and attributes are the same
+        let same_state = old_state
+            .as_ref()
+            .map(|s| s.state == state_str && !force_update)
+            .unwrap_or(false);
+        let same_attr = old_state
+            .as_ref()
+            .map(|s| s.attributes == attributes)
+            .unwrap_or(false);
+
+        // If state and attributes are unchanged, fire STATE_REPORTED and return
+        if same_state && same_attr {
+            let existing = old_state.as_ref().unwrap();
+            let old_last_reported = existing.last_reported;
+            let now = chrono::Utc::now();
+
+            // Update last_reported on the existing state
+            let mut updated = existing.clone();
+            updated.last_reported = Some(now);
+            self.states.insert(entity_id_str.clone(), updated.clone());
+
+            debug!(
+                state = %updated.state,
+                "State unchanged, firing STATE_REPORTED"
+            );
+
+            // Fire STATE_REPORTED event
+            let event_data = StateReportedData {
+                entity_id,
+                new_state: updated.clone(),
+                old_last_reported,
+                last_reported: now,
+            };
+            self.event_bus.fire_typed(event_data, context);
+
+            return updated;
+        }
+
+        // Validate state length - replace with STATE_UNKNOWN if too long
+        if !same_state && state_str.len() > MAX_STATE_LENGTH {
+            warn!(
+                entity_id = %entity_id,
+                state_length = state_str.len(),
+                max_length = MAX_STATE_LENGTH,
+                "State exceeds maximum length, falling back to unknown"
+            );
+            state_str = STATE_UNKNOWN.to_string();
+        }
+
         let new_state = match &old_state {
-            Some(existing) => existing.with_update(state, attributes, context.clone()),
-            None => State::new(entity_id.clone(), state, attributes, context.clone()),
+            Some(existing) => {
+                if force_update {
+                    // Force update: always update last_changed
+                    State::new(entity_id.clone(), state_str, attributes, context.clone())
+                } else {
+                    existing.with_update(state_str, attributes, context.clone())
+                }
+            }
+            None => State::new(entity_id.clone(), state_str, attributes, context.clone()),
         };
 
         debug!(
             state = %new_state.state,
             changed = old_state.as_ref().map(|s| s.state != new_state.state).unwrap_or(true),
+            force_update = force_update,
             "Setting entity state"
         );
 

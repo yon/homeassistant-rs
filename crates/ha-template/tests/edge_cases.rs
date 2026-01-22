@@ -181,18 +181,22 @@ fn test_html_escaping_not_applied() {
 
 #[test]
 fn test_long_state_value() {
+    // States exceeding MAX_STATE_LENGTH (255) are stored as "unknown"
     let engine = setup_engine_with_states();
     let result = engine.render("{{ states('sensor.long_value') }}").unwrap();
-    assert_eq!(result.len(), 1000);
+    // The 1000-char state was truncated to "unknown" (7 chars)
+    assert_eq!(result, "unknown");
 }
 
 #[test]
 fn test_long_state_length() {
+    // States exceeding MAX_STATE_LENGTH (255) are stored as "unknown"
     let engine = setup_engine_with_states();
     let result = engine
         .render("{{ states('sensor.long_value') | length }}")
         .unwrap();
-    assert_eq!(result, "1000");
+    // "unknown" has 7 characters
+    assert_eq!(result, "7");
 }
 
 // ==================== Nonexistent entity tests ====================

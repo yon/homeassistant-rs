@@ -36,6 +36,9 @@ pub enum ServiceError {
 
     #[error("service does not support responses")]
     ResponseNotSupported,
+
+    #[error("service requires return_response=true")]
+    ResponseRequired,
 }
 
 /// Information about a registered service
@@ -187,6 +190,11 @@ impl ServiceRegistry {
         // Check response support
         if return_response && registered.description.supports_response == SupportsResponse::None {
             return Err(ServiceError::ResponseNotSupported);
+        }
+
+        // Check if response is required
+        if !return_response && registered.description.supports_response == SupportsResponse::Only {
+            return Err(ServiceError::ResponseRequired);
         }
 
         let call = ServiceCall::new(domain, service, service_data, context);
