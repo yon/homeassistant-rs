@@ -116,7 +116,7 @@ impl PyEventBus {
                         let result = tokio::task::spawn_blocking(move || {
                             Python::with_gil(|py| {
                                 // Convert the event to a Python Event object
-                                let py_event = PyEvent::from_inner(event);
+                                let py_event = PyEvent::from_arc(event);
                                 // Call the callback
                                 if let Err(e) = py_callback_clone.call1(py, (py_event,)) {
                                     error!("Error in event callback: {}", e);
@@ -200,7 +200,7 @@ impl PyEventBus {
                         // Call the Python callback in a blocking task
                         let _ = tokio::task::spawn_blocking(move || {
                             Python::with_gil(|py| {
-                                let py_event = PyEvent::from_inner(event);
+                                let py_event = PyEvent::from_arc(event);
                                 if let Err(e) = py_callback_clone.call1(py, (py_event,)) {
                                     error!("Error in event callback (once): {}", e);
                                 }

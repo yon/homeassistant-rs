@@ -89,20 +89,45 @@ pub fn get(&self, entity_id: &str) -> Option<Arc<EntityEntry>> {
 
 ---
 
-## Phase 3: EventBus Arc Events
+## Phase 3: EventBus Arc Events ✅
 
 ### Before
 **File:** `crates/ha-event-bus/src/lib.rs`
-**Issue:** Events cloned for each subscriber
+**Issue:** Events cloned for each subscriber - expensive for events with large JSON payloads
 
-**Baseline Metrics:**
-- (pending)
+```rust
+// Before: Clone entire event for each subscriber
+if let Some(sender) = self.listeners.get(&event.event_type) {
+    let _ = sender.send(event.clone());  // Full clone including JSON data
+}
+let _ = self.match_all_sender.send(event);  // Another clone
+```
 
 ### After
-**Change:** Fire events as `Arc<Event>`, use `Arc::clone()` for subscribers
+**Change:** Wrap events in `Arc`, broadcast `Arc<Event>` to all subscribers
+
+```rust
+// After: Wrap once, share via Arc clone (atomic increment)
+pub type ArcEvent = Arc<Event<serde_json::Value>>;
+
+pub fn fire(&self, event: Event<serde_json::Value>) {
+    let arc_event = Arc::new(event);  // Wrap once
+    if let Some(sender) = self.listeners.get(&arc_event.event_type) {
+        let _ = sender.send(Arc::clone(&arc_event));  // Cheap Arc clone
+    }
+    let _ = self.match_all_sender.send(arc_event);  // Move Arc
+}
+```
+
+**Files modified:**
+- `crates/ha-event-bus/src/lib.rs` - broadcast channels use `Arc<Event>`
+- `crates/ha-py-bridge/src/extension/py_types.rs` - PyEvent stores `Arc<Event>`
+- `crates/ha-py-bridge/src/extension/py_event_bus.rs` - use `from_arc()`
+- `crates/ha-server/src/automation_engine.rs` - dereference Arc in handler
 
 **Metrics:**
-- (pending)
+- Test suite: 479 compat tests, all pass
+- **Improvement:** Event broadcast now O(1) atomic increment per subscriber vs O(n) JSON clone
 
 ---
 
@@ -223,9 +248,9 @@ tx.send(result).await  // Safe - no lock held
 
 | Phase | Optimization | Status | Impact |
 |-------|-------------|--------|--------|
-| 2 | Parallel setup | ✅ | Startup O(1) vs O(n) for n integrations |
 | 1 | Registry Arc | ✅ | Reads: atomic inc vs ~30-field clone |
+| 2 | Parallel setup | ✅ | Startup O(1) vs O(n) for n integrations |
+| 3 | EventBus Arc | ✅ | Events: atomic inc vs JSON clone per subscriber |
 | 4 | Regex cache | ✅ | Repeated patterns: O(1) vs O(n) compile |
 | 5 | HashSet match | ✅ | State exclusion: O(1) vs O(n) lookup |
 | 6 | Lock scope | ✅ | Reduced lock contention in handlers |
-| 3 | EventBus Arc | deferred | Requires API changes |

@@ -114,6 +114,7 @@ impl AutomationEngine {
                     event_result = event_rx.recv() => {
                         match event_result {
                             Ok(event) => {
+                                // event is Arc<Event>, auto-deref to &Event
                                 Self::process_event(
                                     &event,
                                     &event_bus,

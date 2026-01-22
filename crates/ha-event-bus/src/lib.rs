@@ -3,6 +3,9 @@
 //! This crate provides the EventBus, which is the central message broker
 //! for Home Assistant. Components can subscribe to events and fire events
 //! to communicate asynchronously.
+//!
+//! Events are wrapped in `Arc` to avoid cloning event data for each subscriber.
+//! This is a significant optimization for events with large JSON payloads.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -21,6 +24,12 @@ const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ListenerId(u64);
 
+/// Arc-wrapped event type for efficient broadcasting
+///
+/// Events are wrapped in Arc to avoid cloning the entire event (including JSON data)
+/// for each subscriber. Instead, subscribers receive a cheap Arc clone.
+pub type ArcEvent = Arc<Event<serde_json::Value>>;
+
 /// The event bus for publishing and subscribing to events
 ///
 /// The EventBus is the central message broker in Home Assistant. It supports:
@@ -28,11 +37,13 @@ pub struct ListenerId(u64);
 /// - Subscribing to all events (MATCH_ALL)
 /// - Firing events to all subscribers
 /// - Typed event subscriptions for type-safe event handling
+///
+/// Events are wrapped in `Arc` to avoid cloning for each subscriber.
 pub struct EventBus {
-    /// Map of event types to their broadcast senders
-    listeners: DashMap<EventType, broadcast::Sender<Event<serde_json::Value>>>,
-    /// Special sender for MATCH_ALL subscribers
-    match_all_sender: broadcast::Sender<Event<serde_json::Value>>,
+    /// Map of event types to their broadcast senders (Arc-wrapped events)
+    listeners: DashMap<EventType, broadcast::Sender<ArcEvent>>,
+    /// Special sender for MATCH_ALL subscribers (Arc-wrapped events)
+    match_all_sender: broadcast::Sender<ArcEvent>,
     /// Counter for generating unique listener IDs
     next_listener_id: AtomicU64,
     /// Channel capacity
@@ -58,11 +69,9 @@ impl EventBus {
 
     /// Subscribe to events of a specific type
     ///
-    /// Returns a receiver that will receive all events of the given type.
-    pub fn subscribe(
-        &self,
-        event_type: impl Into<EventType>,
-    ) -> broadcast::Receiver<Event<serde_json::Value>> {
+    /// Returns a receiver that will receive Arc-wrapped events of the given type.
+    /// Using Arc avoids cloning the event data for each subscriber.
+    pub fn subscribe(&self, event_type: impl Into<EventType>) -> broadcast::Receiver<ArcEvent> {
         let event_type = event_type.into();
         trace!(event_type = %event_type, "Subscribing to event type");
 
@@ -90,7 +99,10 @@ impl EventBus {
     }
 
     /// Subscribe to all events
-    pub fn subscribe_all(&self) -> broadcast::Receiver<Event<serde_json::Value>> {
+    ///
+    /// Returns a receiver that will receive Arc-wrapped events.
+    /// Using Arc avoids cloning the event data for each subscriber.
+    pub fn subscribe_all(&self) -> broadcast::Receiver<ArcEvent> {
         self.match_all_sender.subscribe()
     }
 
@@ -100,21 +112,28 @@ impl EventBus {
     /// 1. All subscribers of the specific event type
     /// 2. All MATCH_ALL subscribers (unless event type is excluded)
     ///
+    /// The event is wrapped in Arc internally, so subscribers receive
+    /// cheap Arc clones instead of full event clones.
+    ///
     /// Certain high-frequency or internal events are excluded from MATCH_ALL
     /// to prevent unnecessary load on general subscribers.
     pub fn fire(&self, event: Event<serde_json::Value>) {
         debug!(event_type = %event.event_type, "Firing event");
 
+        // Wrap event in Arc once, then share among all subscribers
+        let arc_event = Arc::new(event);
+
         // Send to specific event type subscribers
-        if let Some(sender) = self.listeners.get(&event.event_type) {
+        if let Some(sender) = self.listeners.get(&arc_event.event_type) {
             // Ignore send errors - they just mean no active receivers
-            let _ = sender.send(event.clone());
+            // Arc::clone is cheap (atomic increment)
+            let _ = sender.send(Arc::clone(&arc_event));
         }
 
         // Send to MATCH_ALL subscribers, unless this event type is excluded
         // Matches Python HA's EVENTS_EXCLUDED_FROM_MATCH_ALL
-        if !Self::is_excluded_from_match_all(&event.event_type) {
-            let _ = self.match_all_sender.send(event);
+        if !Self::is_excluded_from_match_all(&arc_event.event_type) {
+            let _ = self.match_all_sender.send(arc_event);
         }
     }
 
@@ -160,12 +179,12 @@ impl Default for EventBus {
 
 /// A receiver for typed events
 pub struct TypedEventReceiver<T> {
-    rx: broadcast::Receiver<Event<serde_json::Value>>,
+    rx: broadcast::Receiver<ArcEvent>,
     _phantom: std::marker::PhantomData<T>,
 }
 
 impl<T: EventData + serde::de::DeserializeOwned> TypedEventReceiver<T> {
-    fn new(rx: broadcast::Receiver<Event<serde_json::Value>>) -> Self {
+    fn new(rx: broadcast::Receiver<ArcEvent>) -> Self {
         Self {
             rx,
             _phantom: std::marker::PhantomData,
@@ -177,14 +196,14 @@ impl<T: EventData + serde::de::DeserializeOwned> TypedEventReceiver<T> {
     /// Returns None if the event data couldn't be deserialized.
     pub async fn recv(&mut self) -> Result<Event<T>, broadcast::error::RecvError> {
         loop {
-            let event = self.rx.recv().await?;
-            if let Ok(data) = serde_json::from_value::<T>(event.data.clone()) {
+            let arc_event = self.rx.recv().await?;
+            if let Ok(data) = serde_json::from_value::<T>(arc_event.data.clone()) {
                 return Ok(Event {
-                    event_type: event.event_type,
+                    event_type: arc_event.event_type.clone(),
                     data,
-                    origin: event.origin,
-                    time_fired: event.time_fired,
-                    context: event.context,
+                    origin: arc_event.origin, // Copy, not Clone
+                    time_fired: arc_event.time_fired,
+                    context: arc_event.context.clone(),
                 });
             }
             // If deserialization failed, try the next event
