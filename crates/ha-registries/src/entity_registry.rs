@@ -9,9 +9,18 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use tracing::{debug, info};
 
 use crate::storage::{Storable, Storage, StorageFile, StorageResult};
+
+/// Errors that can occur in the entity registry
+#[derive(Debug, Error, Clone)]
+pub enum EntityRegistryError {
+    /// Entity was not found
+    #[error("Entity not found: {0}")]
+    NotFound(String),
+}
 
 /// Storage key for entity registry
 pub const STORAGE_KEY: &str = "core.entity_registry";
@@ -475,10 +484,12 @@ impl EntityRegistry {
         if let Some(existing) = self.get(entity_id) {
             // Update with unique_id if not set
             if existing.unique_id.is_none() && unique_id.is_some() {
-                return self.update(entity_id, |entry| {
-                    entry.unique_id = unique_id.map(String::from);
-                    entry.modified_at = Utc::now();
-                });
+                return self
+                    .update(entity_id, |entry| {
+                        entry.unique_id = unique_id.map(String::from);
+                        entry.modified_at = Utc::now();
+                    })
+                    .expect("Entity should exist after get check");
             }
             return existing;
         }
@@ -495,7 +506,9 @@ impl EntityRegistry {
     }
 
     /// Update an entity entry
-    pub fn update<F>(&self, entity_id: &str, f: F) -> EntityEntry
+    ///
+    /// Returns the updated entry, or an error if the entity was not found.
+    pub fn update<F>(&self, entity_id: &str, f: F) -> Result<EntityEntry, EntityRegistryError>
     where
         F: FnOnce(&mut EntityEntry),
     {
@@ -531,9 +544,9 @@ impl EntityRegistry {
             // Re-index
             self.index_entry(&entry);
 
-            entry
+            Ok(entry)
         } else {
-            panic!("Entity not found: {}", entity_id);
+            Err(EntityRegistryError::NotFound(entity_id.to_string()))
         }
     }
 

@@ -11,6 +11,7 @@ use dashmap::DashMap;
 use tokio::sync::broadcast;
 use tracing::{debug, trace};
 
+use ha_core::events::{HOMEASSISTANT_CLOSE, STATE_REPORTED};
 use ha_core::{Context, Event, EventData, EventType};
 
 /// Default channel capacity for event subscriptions
@@ -97,7 +98,10 @@ impl EventBus {
     ///
     /// The event will be delivered to:
     /// 1. All subscribers of the specific event type
-    /// 2. All MATCH_ALL subscribers
+    /// 2. All MATCH_ALL subscribers (unless event type is excluded)
+    ///
+    /// Certain high-frequency or internal events are excluded from MATCH_ALL
+    /// to prevent unnecessary load on general subscribers.
     pub fn fire(&self, event: Event<serde_json::Value>) {
         debug!(event_type = %event.event_type, "Firing event");
 
@@ -107,8 +111,20 @@ impl EventBus {
             let _ = sender.send(event.clone());
         }
 
-        // Send to MATCH_ALL subscribers
-        let _ = self.match_all_sender.send(event);
+        // Send to MATCH_ALL subscribers, unless this event type is excluded
+        // Matches Python HA's EVENTS_EXCLUDED_FROM_MATCH_ALL
+        if !Self::is_excluded_from_match_all(&event.event_type) {
+            let _ = self.match_all_sender.send(event);
+        }
+    }
+
+    /// Check if an event type is excluded from MATCH_ALL delivery
+    ///
+    /// Matches Python HA's EVENTS_EXCLUDED_FROM_MATCH_ALL:
+    /// - EVENT_HOMEASSISTANT_CLOSE
+    /// - EVENT_STATE_REPORTED
+    fn is_excluded_from_match_all(event_type: &EventType) -> bool {
+        matches!(event_type.as_str(), HOMEASSISTANT_CLOSE | STATE_REPORTED)
     }
 
     /// Fire a typed event

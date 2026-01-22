@@ -400,35 +400,38 @@ impl PyEntityRegistry {
         labels: Option<Vec<String>>,
         aliases: Option<Vec<String>>,
     ) -> PyResult<PyEntityEntry> {
-        let entry = self.inner.update(entity_id, |entry| {
-            if name.is_some() {
-                entry.name = name.clone();
-            }
-            if icon.is_some() {
-                entry.icon = icon.clone();
-            }
-            if area_id.is_some() {
-                entry.area_id = area_id.clone();
-            }
-            if disabled_by.is_some() {
-                entry.disabled_by = parse_disabled_by(disabled_by.as_deref());
-            }
-            if hidden_by.is_some() {
-                entry.hidden_by = parse_hidden_by(hidden_by.as_deref());
-            }
-            if device_class.is_some() {
-                entry.device_class = device_class.clone();
-            }
-            if unit_of_measurement.is_some() {
-                entry.unit_of_measurement = unit_of_measurement.clone();
-            }
-            if let Some(ref l) = labels {
-                entry.labels = l.clone();
-            }
-            if let Some(ref a) = aliases {
-                entry.aliases = a.clone();
-            }
-        });
+        let entry = self
+            .inner
+            .update(entity_id, |entry| {
+                if name.is_some() {
+                    entry.name = name.clone();
+                }
+                if icon.is_some() {
+                    entry.icon = icon.clone();
+                }
+                if area_id.is_some() {
+                    entry.area_id = area_id.clone();
+                }
+                if disabled_by.is_some() {
+                    entry.disabled_by = parse_disabled_by(disabled_by.as_deref());
+                }
+                if hidden_by.is_some() {
+                    entry.hidden_by = parse_hidden_by(hidden_by.as_deref());
+                }
+                if device_class.is_some() {
+                    entry.device_class = device_class.clone();
+                }
+                if unit_of_measurement.is_some() {
+                    entry.unit_of_measurement = unit_of_measurement.clone();
+                }
+                if let Some(ref l) = labels {
+                    entry.labels = l.clone();
+                }
+                if let Some(ref a) = aliases {
+                    entry.aliases = a.clone();
+                }
+            })
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyKeyError, _>(format!("{}", e)))?;
 
         Ok(PyEntityEntry::from_inner(entry))
     }

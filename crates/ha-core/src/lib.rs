@@ -15,12 +15,21 @@ pub use event::{Event, EventData, EventType};
 pub use service_call::{ServiceCall, SupportsResponse};
 pub use state::State;
 
+/// Maximum length for a state value (matches Python HA)
+pub const MAX_STATE_LENGTH: usize = 255;
+
+/// State value used when actual state exceeds MAX_STATE_LENGTH
+pub const STATE_UNKNOWN: &str = "unknown";
+
 /// Standard event types used by Home Assistant
 pub mod events {
     use super::*;
 
     /// Event type for state changes
     pub const STATE_CHANGED: &str = "state_changed";
+
+    /// Event type for state reported (unchanged state was written)
+    pub const STATE_REPORTED: &str = "state_reported";
 
     /// Event type for service calls
     pub const CALL_SERVICE: &str = "call_service";
@@ -48,6 +57,22 @@ pub mod events {
     impl EventData for StateChangedData {
         fn event_type() -> &'static str {
             STATE_CHANGED
+        }
+    }
+
+    /// Data for STATE_REPORTED events (when state is unchanged but reported)
+    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    pub struct StateReportedData {
+        pub entity_id: EntityId,
+        pub new_state: State,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub old_last_reported: Option<chrono::DateTime<chrono::Utc>>,
+        pub last_reported: chrono::DateTime<chrono::Utc>,
+    }
+
+    impl EventData for StateReportedData {
+        fn event_type() -> &'static str {
+            STATE_REPORTED
         }
     }
 
