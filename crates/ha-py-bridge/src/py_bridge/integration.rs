@@ -279,7 +279,7 @@ impl IntegrationLoader {
 
                 // Check if async_setup has already been called for this domain
                 if !hass_data.contains(&setup_called_key)? {
-                    debug!("Calling async_setup for integration {}", domain);
+                    info!("Calling async_setup for integration {}", domain);
 
                     // Create empty config dict
                     let config = pyo3::types::PyDict::new_bound(py);
@@ -287,11 +287,18 @@ impl IntegrationLoader {
 
                     // Call async_setup(hass, config)
                     let coro = module.call_method1("async_setup", (hass, config))?;
-                    let _: bool = async_bridge.run_coroutine(coro.unbind())?;
+                    match async_bridge.run_coroutine::<bool>(coro.unbind()) {
+                        Ok(result) => {
+                            info!("async_setup for {} returned: {}", domain, result);
+                        }
+                        Err(e) => {
+                            warn!("async_setup for {} failed: {:?}", domain, e);
+                        }
+                    }
 
                     // Mark as called
                     hass_data.set_item(&setup_called_key, true)?;
-                    debug!("async_setup completed for integration {}", domain);
+                    info!("async_setup completed for integration {}", domain);
                 }
             }
 

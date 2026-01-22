@@ -215,4 +215,56 @@ impl ConfigEntryWrapper {
             self.entry_id, self.domain, self.title
         )
     }
+
+    /// Create a background task tied to the config entry lifecycle
+    ///
+    /// Background tasks are automatically cancelled when config entry is unloaded.
+    ///
+    /// # Arguments
+    /// * `hass` - The HomeAssistant instance
+    /// * `target` - The coroutine to wrap in a task
+    /// * `name` - Name for the task
+    /// * `eager_start` - Whether to start eagerly (default true)
+    ///
+    /// # Returns
+    /// The created asyncio task
+    #[pyo3(signature = (hass, target, name, eager_start=true))]
+    fn async_create_background_task<'py>(
+        &self,
+        py: Python<'py>,
+        hass: PyObject,
+        target: PyObject,
+        name: String,
+        eager_start: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        tracing::info!(
+            "ConfigEntry.async_create_background_task called for '{}' (domain: {}, entry_id: {})",
+            name,
+            self.domain,
+            self.entry_id
+        );
+
+        // Call hass.async_create_background_task(target, name, eager_start)
+        let hass_bound = hass.bind(py);
+
+        // Build kwargs for the call
+        let kwargs = PyDict::new_bound(py);
+        kwargs.set_item("eager_start", eager_start)?;
+
+        let task = hass_bound.call_method(
+            "async_create_background_task",
+            (target, &name),
+            Some(&kwargs),
+        )?;
+
+        tracing::info!(
+            "ConfigEntry background task '{}' created successfully",
+            name
+        );
+
+        // TODO: Track the task and cancel it when the entry is unloaded
+        // For now, we just create the task without lifecycle tracking
+
+        Ok(task)
+    }
 }

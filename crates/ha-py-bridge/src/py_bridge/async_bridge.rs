@@ -7,14 +7,20 @@ use super::errors::{PyBridgeError, PyBridgeResult};
 use pyo3::prelude::*;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
+use std::thread::JoinHandle;
 use tokio::sync::oneshot;
 
 /// Bridge for running Python async code from Rust
 pub struct AsyncBridge {
     /// Python asyncio event loop (stored as PyObject for thread safety)
     event_loop: Option<PyObject>,
+    /// Flag to signal background loop to stop
+    stop_flag: Arc<AtomicBool>,
+    /// Handle to the background loop thread (Mutex for interior mutability)
+    background_thread: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl AsyncBridge {
@@ -38,8 +44,124 @@ impl AsyncBridge {
 
             Ok(Self {
                 event_loop: Some(event_loop),
+                stop_flag: Arc::new(AtomicBool::new(false)),
+                background_thread: Mutex::new(None),
             })
         })
+    }
+
+    /// Start running the event loop in a background thread
+    ///
+    /// This allows scheduled tasks (like `async_call_later`) to execute.
+    /// The loop runs until `stop_background_loop` is called.
+    pub fn start_background_loop(&self) -> PyBridgeResult<()> {
+        let mut thread_guard = self.background_thread.lock().unwrap();
+        if thread_guard.is_some() {
+            return Ok(()); // Already running
+        }
+
+        let event_loop = self
+            .event_loop
+            .as_ref()
+            .ok_or_else(|| PyBridgeError::AsyncBridge("No event loop".to_string()))?;
+
+        let loop_clone = Python::with_gil(|py| event_loop.clone_ref(py));
+        let stop_flag = self.stop_flag.clone();
+
+        // Reset stop flag
+        stop_flag.store(false, Ordering::SeqCst);
+
+        let handle = std::thread::spawn(move || {
+            Python::with_gil(|py| {
+                // Set this thread's event loop
+                if let Ok(asyncio) = py.import_bound("asyncio") {
+                    let _ = asyncio.call_method1("set_event_loop", (&loop_clone,));
+                }
+
+                // Run the event loop using run_forever() which properly processes all tasks
+                // We'll stop it from another thread using call_soon_threadsafe(loop.stop)
+                let run_code = r#"
+import asyncio
+import sys
+
+def _run_event_loop(loop, stop_flag_checker):
+    """Run the event loop, processing all scheduled tasks.
+
+    Uses a coroutine that periodically checks the stop flag and stops the loop.
+    This ensures all tasks (including those scheduled with call_later) are processed.
+    """
+    async def _stop_checker():
+        """Check stop flag every 100ms and stop loop if set."""
+        while True:
+            await asyncio.sleep(0.1)
+            if stop_flag_checker():
+                loop.stop()
+                return
+
+    # Schedule the stop checker
+    loop.create_task(_stop_checker())
+
+    # Run forever - this properly processes all scheduled tasks
+    try:
+        loop.run_forever()
+    except Exception as e:
+        print(f"Event loop error: {e}", file=sys.stderr)
+    finally:
+        # Clean up pending tasks
+        try:
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        except Exception:
+            pass
+"#;
+                let globals = pyo3::types::PyDict::new_bound(py);
+                let _ = py.run_bound(run_code, Some(&globals), None);
+
+                // Create a Python function that checks the stop flag
+                let stop_flag_for_py = stop_flag.clone();
+                let stop_checker = pyo3::types::PyCFunction::new_closure_bound(
+                    py,
+                    None,
+                    None,
+                    move |_args: &Bound<'_, pyo3::types::PyTuple>,
+                          _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>|
+                          -> bool { stop_flag_for_py.load(Ordering::SeqCst) },
+                )
+                .expect("Failed to create stop checker closure");
+
+                // Get the run function and call it
+                if let Some(run_fn) = globals.get_item("_run_event_loop").ok().flatten() {
+                    if let Err(e) = run_fn.call1((loop_clone.bind(py), stop_checker)) {
+                        tracing::warn!("Event loop run error: {:?}", e);
+                    }
+                }
+
+                tracing::debug!("Background event loop thread exiting");
+            });
+        });
+
+        *thread_guard = Some(handle);
+        tracing::info!("Started Python event loop background thread");
+        Ok(())
+    }
+
+    /// Stop the background event loop
+    pub fn stop_background_loop(&self) {
+        self.stop_flag.store(true, Ordering::SeqCst);
+
+        let mut thread_guard = self.background_thread.lock().unwrap();
+        if let Some(handle) = thread_guard.take() {
+            // Give the thread time to stop gracefully
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            // If it's still running, it will stop on next iteration
+            if !handle.is_finished() {
+                tracing::debug!("Waiting for background loop thread to finish");
+            }
+            let _ = handle.join();
+            tracing::info!("Stopped Python event loop background thread");
+        }
     }
 
     /// Run a Python coroutine to completion
@@ -116,6 +238,64 @@ impl AsyncBridge {
         })
     }
 
+    /// Process pending tasks on the event loop
+    ///
+    /// This runs `asyncio.sleep(0)` to yield to any pending tasks that were
+    /// scheduled but haven't had a chance to run yet. It also runs a short
+    /// timeout to allow blocking operations in the executor to complete.
+    ///
+    /// Call this after running coroutines that may have scheduled background tasks.
+    pub fn run_pending_tasks(&self, timeout_secs: f64) -> PyBridgeResult<()> {
+        Python::with_gil(|py| {
+            let event_loop = self
+                .event_loop
+                .as_ref()
+                .ok_or_else(|| PyBridgeError::AsyncBridge("No event loop".to_string()))?;
+
+            // Run sleep(timeout) to allow pending tasks to execute
+            // This gives background tasks time to make progress
+            let code = format!(
+                r#"
+import asyncio
+
+async def _process_pending(timeout):
+    """Run pending tasks and give them time to execute."""
+    # Yield to other tasks first
+    await asyncio.sleep(0)
+
+    # Get all tasks
+    tasks = [t for t in asyncio.all_tasks() if not t.done()]
+
+    if tasks:
+        # Give tasks some time to run
+        try:
+            await asyncio.wait(tasks, timeout=timeout)
+        except asyncio.TimeoutError:
+            pass
+
+    # Final yield
+    await asyncio.sleep(0)
+"#
+            );
+
+            let globals = pyo3::types::PyDict::new_bound(py);
+            py.run_bound(&code, Some(&globals), None)?;
+
+            let process_fn = globals.get_item("_process_pending")?.unwrap();
+            let coro = process_fn.call1((timeout_secs,))?;
+
+            // Set our event loop as current and run
+            let asyncio = py.import_bound("asyncio")?;
+            asyncio.call_method1("set_event_loop", (event_loop,))?;
+
+            event_loop
+                .bind(py)
+                .call_method1("run_until_complete", (coro,))?;
+
+            Ok(())
+        })
+    }
+
     /// Check if the event loop is running
     pub fn is_running(&self) -> bool {
         Python::with_gil(|py| {
@@ -137,6 +317,22 @@ impl AsyncBridge {
         self.event_loop
             .as_ref()
             .map(|loop_obj| loop_obj.clone_ref(py))
+    }
+
+    /// Check if background loop is running
+    pub fn is_background_loop_running(&self) -> bool {
+        self.background_thread
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|h| !h.is_finished())
+            .unwrap_or(false)
+    }
+}
+
+impl Drop for AsyncBridge {
+    fn drop(&mut self) {
+        self.stop_background_loop();
     }
 }
 

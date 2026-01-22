@@ -287,8 +287,11 @@ impl PyBridge {
             // Call setup_entry via the integration loader
             // States are now set directly via #[pyclass] StatesWrapper,
             // so no sync step is needed.
-            self.integrations
-                .setup_entry(domain, &py_hass, &py_entry, &self.async_bridge)
+            let result =
+                self.integrations
+                    .setup_entry(domain, &py_hass, &py_entry, &self.async_bridge)?;
+
+            Ok(result)
         })
     }
 
@@ -362,6 +365,31 @@ impl PyBridge {
                 Err(e) => ha_config_entries::UnloadResult::Failed(e.to_string()),
             }
         })
+    }
+
+    /// Start the background event loop for Python async tasks
+    ///
+    /// This should be called AFTER all config entries have been set up.
+    /// Once started, the loop processes scheduled tasks like `async_call_later`.
+    ///
+    /// IMPORTANT: Don't call this during setup - it will cause "event loop already
+    /// running" errors when subsequent entries try to use `run_until_complete`.
+    pub fn start_background_event_loop(&self) -> PyBridgeResult<()> {
+        if self.async_bridge.is_background_loop_running() {
+            tracing::debug!("Background event loop already running");
+            return Ok(());
+        }
+
+        tracing::info!("Starting background event loop for Python async tasks");
+        self.async_bridge.start_background_loop()
+    }
+
+    /// Process pending Python async tasks
+    ///
+    /// Runs pending tasks for the specified timeout. This gives scheduled tasks
+    /// (like discovery, coordinators) a chance to make progress.
+    pub fn run_pending_tasks(&self, timeout_secs: f64) -> PyBridgeResult<()> {
+        self.async_bridge.run_pending_tasks(timeout_secs)
     }
 }
 
