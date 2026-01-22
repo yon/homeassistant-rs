@@ -168,7 +168,7 @@ impl PyBridge {
 
         Ok(Self {
             runtime,
-            integrations: IntegrationLoader::new(),
+            integrations: IntegrationLoader::with_requirements(requirements.clone()),
             async_bridge,
             services,
             registries,
@@ -287,6 +287,7 @@ impl PyBridge {
             // Call setup_entry via the integration loader
             // States are now set directly via #[pyclass] StatesWrapper,
             // so no sync step is needed.
+            // Note: IntegrationLoader::load() automatically ensures requirements are installed.
             let result =
                 self.integrations
                     .setup_entry(domain, &py_hass, &py_entry, &self.async_bridge)?;
