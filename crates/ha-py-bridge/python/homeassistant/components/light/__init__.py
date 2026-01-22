@@ -12,8 +12,12 @@ from homeassistant.helpers.entity import RustStateMixin
 # Load native HA light module
 _native = load_native_module("homeassistant.components.light")
 
+# Get the metaclass from the native class to avoid metaclass conflicts
+# when the native module is loaded fresh with a new CachedProperties instance
+_LightEntityMeta = type(_native.LightEntity)
 
-class LightEntity(RustStateMixin, _native.LightEntity):
+
+class LightEntity(RustStateMixin, _native.LightEntity, metaclass=_LightEntityMeta):
     """Light entity that routes state writes to Rust.
 
     Inherits from:

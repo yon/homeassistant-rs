@@ -112,6 +112,13 @@ def _load_native_module_impl(module_name: str) -> Any:
         # Clear any stale import caches
         importlib.invalidate_caches()
 
+        # IMPORTANT: Restore cached native modules to sys.modules BEFORE importing
+        # This ensures that when native module A imports native module B (which we've
+        # already loaded), it gets the SAME module object with the SAME class definitions.
+        # Without this, each import creates new class definitions, causing metaclass conflicts.
+        for name, mod in _module_cache.items():
+            sys.modules[name] = mod
+
         # Now import the native module
         module = importlib.import_module(module_name)
         _module_cache[module_name] = module

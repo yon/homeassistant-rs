@@ -115,7 +115,7 @@ impl RegistriesWrapper {
             "Registered device in Rust registry"
         );
 
-        Ok(entry.id)
+        Ok(entry.id.clone())
     }
 
     /// Register an entity and return its entry info
