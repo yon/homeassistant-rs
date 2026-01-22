@@ -11,10 +11,11 @@ from homeassistant._native_loader import load_native_module
 # Load native entity_registry module
 _native = load_native_module("homeassistant.helpers.entity_registry")
 
-# Re-export everything from native
+# Re-export everything from native (including private names needed by tests)
 _public_names = []
 for _name in dir(_native):
-    if _name.startswith("_"):
+    # Skip dunder methods and internal loader attributes
+    if _name.startswith("__") and _name.endswith("__"):
         continue
     _public_names.append(_name)
     globals()[_name] = getattr(_native, _name)

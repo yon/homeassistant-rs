@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import os
+
 from homeassistant._native_loader import load_native_module
 from homeassistant.helpers.entity import RustStateMixin
 
 # Load native HA sensor module
 _native = load_native_module("homeassistant.components.sensor")
+
+# Extend __path__ to include native sensor directory for submodule imports (e.g., recorder)
+if hasattr(_native, "__path__"):
+    __path__ = list(_native.__path__) + list(__path__)
+elif hasattr(_native, "__file__") and _native.__file__:
+    __path__ = [os.path.dirname(_native.__file__)] + list(__path__)
 
 # Get the metaclass from the native class to avoid metaclass conflicts
 # when the native module is loaded fresh with a new CachedProperties instance

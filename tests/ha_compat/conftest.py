@@ -980,15 +980,13 @@ def _rust_entry_to_registry_entry(rust_entry):
 class RustEntityRegistry:
     """Wrapper that provides HA-compatible EntityRegistry API backed by Rust."""
 
-    def __init__(self, storage: RustStorage):
+    def __init__(self, hass):
         if not _rust_available:
             raise RuntimeError("ha_core_rs not available")
-        self._rust_registry = ha_core_rs.EntityRegistry(storage._rust_storage)
-        self._storage = storage
+        self._rust_registry = ha_core_rs.EntityRegistry(hass)
+        self._hass = hass
         # Cache wrapper objects to maintain identity (for `is` checks in tests)
         self._entry_cache: dict[str, RustEntityEntry] = {}
-        # Reference to hass for firing events (set by patched async_get)
-        self._hass = None
 
     def _fire_event(self, action: str, entity_id: str, changes: dict | None = None, old_entity_id: str | None = None) -> None:
         """Fire entity registry updated event."""
@@ -1302,11 +1300,11 @@ class RustDeviceEntry:
 class RustDeviceRegistry:
     """Wrapper that provides HA-compatible DeviceRegistry API backed by Rust."""
 
-    def __init__(self, storage: RustStorage):
+    def __init__(self, hass):
         if not _rust_available:
             raise RuntimeError("ha_core_rs not available")
-        self._rust_registry = ha_core_rs.DeviceRegistry(storage._rust_storage)
-        self._storage = storage
+        self._rust_registry = ha_core_rs.DeviceRegistry(hass)
+        self._hass = hass
 
     async def async_load(self) -> None:
         # No-op for testing - Rust registries start empty in test context
@@ -1472,11 +1470,11 @@ class RustAreaEntry:
 class RustAreaRegistry:
     """Wrapper that provides HA-compatible AreaRegistry API backed by Rust."""
 
-    def __init__(self, storage: RustStorage):
+    def __init__(self, hass):
         if not _rust_available:
             raise RuntimeError("ha_core_rs not available")
-        self._rust_registry = ha_core_rs.AreaRegistry(storage._rust_storage)
-        self._storage = storage
+        self._rust_registry = ha_core_rs.AreaRegistry(hass)
+        self._hass = hass
 
     async def async_load(self) -> None:
         # No-op for testing - Rust registries start empty in test context
@@ -1517,6 +1515,10 @@ class RustAreaRegistry:
         entry = self._rust_registry.async_get_area_by_name(name)
         return RustAreaEntry(entry) if entry else None
 
+    def async_list_areas(self):
+        """Get all areas."""
+        return self.areas.values()
+
     def async_update(
         self,
         area_id: str,
@@ -1527,9 +1529,10 @@ class RustAreaRegistry:
 
     @property
     def areas(self) -> dict[str, RustAreaEntry]:
+        # _rust_registry.areas returns a dict, iterate over values
         return {
             entry.id: RustAreaEntry(entry)
-            for entry in self._rust_registry.areas
+            for entry in self._rust_registry.areas.values()
         }
 
     def __iter__(self):
@@ -1595,11 +1598,11 @@ class RustFloorEntry:
 class RustFloorRegistry:
     """Wrapper that provides HA-compatible FloorRegistry API backed by Rust."""
 
-    def __init__(self, storage: RustStorage):
+    def __init__(self, hass):
         if not _rust_available:
             raise RuntimeError("ha_core_rs not available")
-        self._rust_registry = ha_core_rs.FloorRegistry(storage._rust_storage)
-        self._storage = storage
+        self._rust_registry = ha_core_rs.FloorRegistry(hass)
+        self._hass = hass
 
     async def async_load(self) -> None:
         # No-op for testing - Rust registries start empty in test context
@@ -1636,6 +1639,10 @@ class RustFloorRegistry:
         entry = self._rust_registry.async_get_floor_by_name(name)
         return RustFloorEntry(entry) if entry else None
 
+    def async_list_floors(self):
+        """Get all floors."""
+        return self.floors.values()
+
     def async_update(
         self,
         floor_id: str,
@@ -1652,9 +1659,10 @@ class RustFloorRegistry:
 
     @property
     def floors(self) -> dict[str, RustFloorEntry]:
+        # _rust_registry.floors returns a dict, iterate over values
         return {
             entry.floor_id: RustFloorEntry(entry)
-            for entry in self._rust_registry.floors
+            for entry in self._rust_registry.floors.values()
         }
 
     def __iter__(self):
@@ -1720,11 +1728,11 @@ class RustLabelEntry:
 class RustLabelRegistry:
     """Wrapper that provides HA-compatible LabelRegistry API backed by Rust."""
 
-    def __init__(self, storage: RustStorage):
+    def __init__(self, hass):
         if not _rust_available:
             raise RuntimeError("ha_core_rs not available")
-        self._rust_registry = ha_core_rs.LabelRegistry(storage._rust_storage)
-        self._storage = storage
+        self._rust_registry = ha_core_rs.LabelRegistry(hass)
+        self._hass = hass
 
     async def async_load(self) -> None:
         # No-op for testing - Rust registries start empty in test context
@@ -1761,6 +1769,10 @@ class RustLabelRegistry:
         entry = self._rust_registry.async_get_label_by_name(name)
         return RustLabelEntry(entry) if entry else None
 
+    def async_list_labels(self):
+        """Get all labels."""
+        return self.labels.values()
+
     def async_update(
         self,
         label_id: str,
@@ -1771,9 +1783,10 @@ class RustLabelRegistry:
 
     @property
     def labels(self) -> dict[str, RustLabelEntry]:
+        # _rust_registry.labels returns a dict, iterate over values
         return {
             entry.label_id: RustLabelEntry(entry)
-            for entry in self._rust_registry.labels
+            for entry in self._rust_registry.labels.values()
         }
 
     def __iter__(self):
@@ -2726,15 +2739,28 @@ def patch_registry_lookups(tmp_path):
         yield
         return
 
-    # Create Rust storage for this test
-    rust_storage = RustStorage(str(tmp_path))
+    # Create a mock hass object with config.path() for the registries
+    class MockConfig:
+        def __init__(self, base_path):
+            self._base_path = base_path
 
-    # Create Rust-backed registries
-    rust_entity_reg = RustEntityRegistry(rust_storage)
-    rust_device_reg = RustDeviceRegistry(rust_storage)
-    rust_area_reg = RustAreaRegistry(rust_storage)
-    rust_floor_reg = RustFloorRegistry(rust_storage)
-    rust_label_reg = RustLabelRegistry(rust_storage)
+        def path(self, *args):
+            import os
+            return os.path.join(self._base_path, *args)
+
+    class MockHass:
+        def __init__(self, storage_path):
+            self.config = MockConfig(storage_path)
+            self.data = {}
+
+    mock_hass = MockHass(str(tmp_path))
+
+    # Create Rust-backed registries using hass (new API)
+    rust_entity_reg = RustEntityRegistry(mock_hass)
+    rust_device_reg = RustDeviceRegistry(mock_hass)
+    rust_area_reg = RustAreaRegistry(mock_hass)
+    rust_floor_reg = RustFloorRegistry(mock_hass)
+    rust_label_reg = RustLabelRegistry(mock_hass)
 
     # Store references
     global _test_rust_registries
@@ -2761,6 +2787,7 @@ def patch_registry_lookups(tmp_path):
     orig_lr_get = lr.async_get
 
     # Create patched versions that return Rust registries
+    # Add cache_clear as no-op for compatibility with tests that call it
     def patched_er_get(hass):
         # Store hass reference for event firing
         rust_entity_reg._hass = hass
@@ -2768,26 +2795,31 @@ def patch_registry_lookups(tmp_path):
         if er.DATA_REGISTRY not in hass.data:
             hass.data[er.DATA_REGISTRY] = rust_entity_reg
         return rust_entity_reg
+    patched_er_get.cache_clear = lambda: None
 
     def patched_dr_get(hass):
         if dr.DATA_REGISTRY not in hass.data:
             hass.data[dr.DATA_REGISTRY] = rust_device_reg
         return rust_device_reg
+    patched_dr_get.cache_clear = lambda: None
 
     def patched_ar_get(hass):
         if ar.DATA_REGISTRY not in hass.data:
             hass.data[ar.DATA_REGISTRY] = rust_area_reg
         return rust_area_reg
+    patched_ar_get.cache_clear = lambda: None
 
     def patched_fr_get(hass):
         if fr.DATA_REGISTRY not in hass.data:
             hass.data[fr.DATA_REGISTRY] = rust_floor_reg
         return rust_floor_reg
+    patched_fr_get.cache_clear = lambda: None
 
     def patched_lr_get(hass):
         if lr.DATA_REGISTRY not in hass.data:
             hass.data[lr.DATA_REGISTRY] = rust_label_reg
         return rust_label_reg
+    patched_lr_get.cache_clear = lambda: None
 
     # Apply patches
     er.async_get = patched_er_get
