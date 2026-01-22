@@ -1690,48 +1690,50 @@ pub async fn handle_config_entries_get(
     domain: Option<&str>,
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> Result<(), String> {
-    // Get the config entry from state
-    let config_entries = conn.state.config_entries.read().await;
+    // Extract data from lock, then release before awaiting channel send
+    let result_json = {
+        let config_entries = conn.state.config_entries.read().await;
 
-    let result_json = if let Some(entry_id) = entry_id {
-        // Get single entry by ID
-        if let Some(entry) = config_entries.get(entry_id) {
-            config_entry_to_json(&entry)
+        if let Some(entry_id) = entry_id {
+            // Get single entry by ID
+            if let Some(entry) = config_entries.get(entry_id) {
+                config_entry_to_json(&entry)
+            } else {
+                // Return a stub entry if not found to prevent frontend errors
+                serde_json::json!({
+                    "entry_id": entry_id,
+                    "domain": "unknown",
+                    "title": "Unknown",
+                    "source": "user",
+                    "state": "not_loaded",
+                    "supports_options": false,
+                    "supports_remove_device": false,
+                    "supports_unload": true,
+                    "supports_reconfigure": false,
+                    "pref_disable_new_entities": false,
+                    "pref_disable_polling": false,
+                    "disabled_by": null,
+                    "reason": null,
+                    "supported_subentry_types": {},
+                })
+            }
+        } else if let Some(domain) = domain {
+            // Filter by domain
+            let entries: Vec<serde_json::Value> = config_entries
+                .iter()
+                .filter(|entry| entry.domain == domain)
+                .map(|entry| config_entry_to_json(&entry))
+                .collect();
+            serde_json::Value::Array(entries)
         } else {
-            // Return a stub entry if not found to prevent frontend errors
-            serde_json::json!({
-                "entry_id": entry_id,
-                "domain": "unknown",
-                "title": "Unknown",
-                "source": "user",
-                "state": "not_loaded",
-                "supports_options": false,
-                "supports_remove_device": false,
-                "supports_unload": true,
-                "supports_reconfigure": false,
-                "pref_disable_new_entities": false,
-                "pref_disable_polling": false,
-                "disabled_by": null,
-                "reason": null,
-                "supported_subentry_types": {},
-            })
+            // Return all entries when no filter specified
+            let entries: Vec<serde_json::Value> = config_entries
+                .iter()
+                .map(|entry| config_entry_to_json(&entry))
+                .collect();
+            serde_json::Value::Array(entries)
         }
-    } else if let Some(domain) = domain {
-        // Filter by domain
-        let entries: Vec<serde_json::Value> = config_entries
-            .iter()
-            .filter(|entry| entry.domain == domain)
-            .map(|entry| config_entry_to_json(&entry))
-            .collect();
-        serde_json::Value::Array(entries)
-    } else {
-        // Return all entries when no filter specified
-        let entries: Vec<serde_json::Value> = config_entries
-            .iter()
-            .map(|entry| config_entry_to_json(&entry))
-            .collect();
-        serde_json::Value::Array(entries)
-    };
+    }; // Lock released here
 
     let result = OutgoingMessage::Result(ResultMessage {
         id,
@@ -1750,9 +1752,6 @@ pub async fn handle_config_entries_subscribe(
     type_filter: Option<Vec<String>>,
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> Result<(), String> {
-    // Get all config entries from state
-    let config_entries = conn.state.config_entries.read().await;
-
     // Filter entries by integration type if type_filter is provided
     // For now, we only have device integrations (like "demo"), not helpers
     // If type_filter is ["helper"], return empty since we have no helpers
@@ -1761,21 +1760,26 @@ pub async fn handle_config_entries_subscribe(
         .map(|f| f.len() == 1 && f[0] == "helper")
         .unwrap_or(false);
 
-    // Format entries as {"type": null, "entry": {...}} per native HA
-    let entries: Vec<serde_json::Value> = if is_helper_only_filter {
-        // No helper integrations currently
-        vec![]
-    } else {
-        config_entries
-            .iter()
-            .map(|entry| {
-                serde_json::json!({
-                    "type": serde_json::Value::Null,
-                    "entry": config_entry_to_json(&entry)
+    // Extract data from lock, then release before awaiting channel sends
+    let entries: Vec<serde_json::Value> = {
+        let config_entries = conn.state.config_entries.read().await;
+
+        // Format entries as {"type": null, "entry": {...}} per native HA
+        if is_helper_only_filter {
+            // No helper integrations currently
+            vec![]
+        } else {
+            config_entries
+                .iter()
+                .map(|entry| {
+                    serde_json::json!({
+                        "type": serde_json::Value::Null,
+                        "entry": config_entry_to_json(&entry)
+                    })
                 })
-            })
-            .collect()
-    };
+                .collect()
+        }
+    }; // Lock released here
 
     // Native HA sends result FIRST, then event
     let result = OutgoingMessage::Result(ResultMessage {
@@ -2034,9 +2038,13 @@ pub async fn handle_config_entries_delete(
 ) -> Result<(), String> {
     info!("Deleting config entry: {}", entry_id);
 
-    // Remove the config entry
-    let config_entries = conn.state.config_entries.write().await;
-    match config_entries.remove(entry_id).await {
+    // Remove the config entry, then release lock before sending response
+    let remove_result = {
+        let config_entries = conn.state.config_entries.write().await;
+        config_entries.remove(entry_id).await
+    }; // Write lock released here
+
+    match remove_result {
         Ok(_entry) => {
             info!("Config entry {} deleted successfully", entry_id);
             let result = OutgoingMessage::Result(ResultMessage {

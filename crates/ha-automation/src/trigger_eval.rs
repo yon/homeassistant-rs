@@ -782,6 +782,7 @@ mod tests {
     use super::*;
     use ha_core::{Context, EntityId};
     use ha_event_bus::EventBus;
+    use std::collections::HashSet;
 
     fn make_test_evaluator() -> (TriggerEvaluator, Arc<StateStore>, Arc<EventBus>) {
         let event_bus = Arc::new(EventBus::new());
@@ -826,8 +827,8 @@ mod tests {
             to: Some(crate::trigger::StateMatch::Single("on".to_string())),
             attribute: None,
             r#for: None,
-            not_from: vec![],
-            not_to: vec![],
+            not_from: HashSet::new(),
+            not_to: HashSet::new(),
         });
 
         let event = make_state_change_event("light.living_room", Some("off"), Some("on"));
@@ -852,8 +853,8 @@ mod tests {
             to: Some(crate::trigger::StateMatch::Single("on".to_string())),
             attribute: None,
             r#for: None,
-            not_from: vec![],
-            not_to: vec![],
+            not_from: HashSet::new(),
+            not_to: HashSet::new(),
         });
 
         // Different entity
@@ -879,8 +880,8 @@ mod tests {
             to: Some(crate::trigger::StateMatch::Single("on".to_string())),
             attribute: None,
             r#for: None,
-            not_from: vec![],
-            not_to: vec![],
+            not_from: HashSet::new(),
+            not_to: HashSet::new(),
         });
 
         let ctx = TriggerEvalContext::new();

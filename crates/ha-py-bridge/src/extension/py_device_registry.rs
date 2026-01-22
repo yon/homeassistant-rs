@@ -166,8 +166,11 @@ impl PyDeviceEntry {
 }
 
 impl PyDeviceEntry {
-    pub fn from_inner(inner: DeviceEntry) -> Self {
-        Self { inner }
+    /// Create from Arc<DeviceEntry> - clones the inner value for Python ownership
+    pub fn from_inner(inner: Arc<DeviceEntry>) -> Self {
+        Self {
+            inner: (*inner).clone(),
+        }
     }
 
     pub fn inner(&self) -> &DeviceEntry {

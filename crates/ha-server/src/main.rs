@@ -1769,6 +1769,7 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
     use std::fs;
     use tempfile::TempDir;
 
@@ -2114,8 +2115,8 @@ script: []
                 attribute: None,
                 from: Some(StateMatch::Single("off".to_string())),
                 to: Some(StateMatch::Single("on".to_string())),
-                not_from: vec![],
-                not_to: vec![],
+                not_from: HashSet::new(),
+                not_to: HashSet::new(),
                 r#for: None,
             })],
             conditions: vec![],

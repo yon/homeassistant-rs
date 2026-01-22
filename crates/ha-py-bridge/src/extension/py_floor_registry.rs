@@ -82,8 +82,11 @@ impl PyFloorEntry {
 }
 
 impl PyFloorEntry {
-    pub fn from_inner(inner: FloorEntry) -> Self {
-        Self { inner }
+    /// Create from Arc<FloorEntry> - clones the inner value for Python ownership
+    pub fn from_inner(inner: Arc<FloorEntry>) -> Self {
+        Self {
+            inner: (*inner).clone(),
+        }
     }
 
     pub fn inner(&self) -> &FloorEntry {

@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use dashmap::DashMap;
+use futures::future::join_all;
 use ha_event_bus::EventBus;
 use ha_registries::{Storable, Storage, StorageFile, StorageResult};
 use ha_service_registry::ServiceRegistry;
@@ -593,16 +594,15 @@ impl ConfigEntries {
         self.entries.iter().map(|r| r.value().clone())
     }
 
-    /// Setup all entries
+    /// Setup all entries in parallel
+    ///
+    /// Each entry has its own setup lock, allowing concurrent setup of different
+    /// integrations. This significantly improves startup time when multiple
+    /// integrations are configured.
     pub async fn setup_all(&self) -> Vec<ConfigEntriesResult<()>> {
         let entry_ids: Vec<_> = self.entry_ids();
-        let mut results = Vec::new();
-
-        for entry_id in entry_ids {
-            results.push(self.setup(&entry_id).await);
-        }
-
-        results
+        let futures: Vec<_> = entry_ids.iter().map(|id| self.setup(id)).collect();
+        join_all(futures).await
     }
 }
 
