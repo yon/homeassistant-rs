@@ -13,18 +13,20 @@ A Rust implementation of Home Assistant's core, designed as a drop-in replacemen
 
 | Component | Status |
 |-----------|--------|
-| Core (EventBus, StateMachine, ServiceRegistry) | ✅ |
+| Core (EventBus, StateStore, ServiceRegistry) | ✅ |
 | Configuration (YAML, !include, !secret) | ✅ |
 | Registries (Entity, Device, Area, Floor, Label) | ✅ |
 | Template Engine (Jinja2-compatible) | ✅ |
-| Config Entries | ✅ |
+| Config Entries (with FSM lifecycle) | ✅ |
 | Automation & Script Engine | ✅ |
 | REST API | ✅ |
 | WebSocket API | ✅ |
 | Frontend Serving | ✅ |
 | Config Flows (via Python bridge) | ✅ |
-| Python Integration Setup | 🚧 |
+| Python Shim Layer (ModuleRegistry) | ✅ |
+| Auto-install Integration Dependencies | ✅ |
 | Authentication | 🔶 (OAuth2 works, tokens in-memory) |
+| Python Integration Entity Setup | 🚧 |
 
 ## Quick Start
 
@@ -35,22 +37,26 @@ A Rust implementation of Home Assistant's core, designed as a drop-in replacemen
 git clone --recursive https://github.com/yon/homeassistant-rs.git
 cd homeassistant-rs
 
-# Create Python venv
-python3 -m venv .venv
-.venv/bin/pip install home-assistant-frontend
-.venv/bin/pip install -e vendor/ha-core
+# Setup Python environment with all dependencies
+make ha-compat-setup
 ```
 
 ### Build
 
 ```bash
-PYO3_PYTHON=$(pwd)/.venv/bin/python cargo build -p ha-server --features python
+make build          # Debug build
+make build-release  # Release build
 ```
 
 ### Run
 
 ```bash
-PYTHONPATH="$(pwd)/.venv/lib/python3.13/site-packages:$(pwd)/vendor/ha-core" \
+make run  # or: make run-release for optimized build
+```
+
+Or manually:
+```bash
+PYTHONPATH="$(pwd)/crates/ha-py-bridge/python:$(pwd)/.venv/lib/python3.13/site-packages" \
   HA_CONFIG_DIR="$(pwd)/tests/config" \
   HA_FRONTEND_PATH="$(pwd)/.venv/lib/python3.13/site-packages/hass_frontend" \
   ./target/debug/homeassistant
@@ -72,14 +78,10 @@ Open http://localhost:8123
 ### Testing
 
 ```bash
-# Run all Rust tests
-cargo test --workspace --exclude ha-py-bridge
-
-# Run tests with Python support
-PYO3_PYTHON=$(pwd)/.venv/bin/python cargo test -p ha-py-bridge --features py_bridge --no-default-features --lib
-
-# Run HA compatibility tests
-.venv/bin/python tests/ha_compat/run_tests.py --all -v
+make test              # Run all Rust tests
+make python-test       # Build wheel and run pytest
+make ha-compat-test    # Run HA compatibility tests (76/77 passing)
+make dev               # Run all dev checks (fmt, clippy, test)
 ```
 
 ### Project Structure
@@ -88,16 +90,18 @@ PYO3_PYTHON=$(pwd)/.venv/bin/python cargo test -p ha-py-bridge --features py_bri
 crates/
 ├── ha-api/               # REST + WebSocket API (axum)
 ├── ha-automation/        # Trigger-Condition-Action engine
-├── ha-config-entries/    # ConfigEntry lifecycle
+├── ha-components/        # Built-in components (persistent_notification, system_log, input_*)
 ├── ha-config/            # YAML loading, !include, !secret
+├── ha-config-entries/    # ConfigEntry lifecycle with FSM
 ├── ha-core/              # Core types (EntityId, State, Event, Context)
 ├── ha-event-bus/         # Pub/sub event system
 ├── ha-py-bridge/         # PyO3 bridge and Python shim layer
+├── ha-recorder/          # SQLite history storage
 ├── ha-registries/        # Entity/Device/Area/Floor/Label registries
 ├── ha-script/            # Script executor
 ├── ha-server/            # Main binary
 ├── ha-service-registry/  # Service registration and dispatch
-├── ha-state-machine/     # Entity state management
+├── ha-state-store/       # Entity state management with domain indexing
 ├── ha-template/          # Jinja2-compatible templates (minijinja)
 └── ha-test-comparison/   # Comparison test infrastructure
 ```
@@ -112,7 +116,7 @@ The server runs as a standalone Rust binary with an embedded Python interpreter 
 ├─────────────────────────────────────────────────────────────┤
 │  Frontend Serving     │  REST API         │  WebSocket API  │
 ├─────────────────────────────────────────────────────────────┤
-│  EventBus  │  StateMachine  │  ServiceRegistry  │  Config   │
+│  EventBus  │  StateStore    │  ServiceRegistry  │  Config   │
 ├─────────────────────────────────────────────────────────────┤
 │                 Python Bridge (PyO3)                        │
 │  Loads integrations from homeassistant.components.*         │
