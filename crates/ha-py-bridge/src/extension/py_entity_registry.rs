@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tokio::runtime::Handle;
 
 use super::py_storage::PyStorage;
-use super::py_types::json_to_py;
+use super::py_types::{json_to_py, py_to_json};
 
 /// Python wrapper for EntityEntry
 #[pyclass(name = "EntityEntry")]
@@ -350,20 +350,67 @@ impl PyEntityRegistry {
     }
 
     /// Get or create an entity
-    #[pyo3(signature = (domain, platform, unique_id, *, config_entry_id=None, device_id=None, suggested_object_id=None))]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        domain,
+        platform,
+        unique_id,
+        *,
+        config_entry_id=None,
+        config_subentry_id=None,
+        device_id=None,
+        suggested_object_id=None,
+        disabled_by=None,
+        hidden_by=None,
+        has_entity_name=false,
+        capabilities=None,
+        supported_features=None,
+        device_class=None,
+        unit_of_measurement=None,
+        original_name=None,
+        original_icon=None,
+        original_device_class=None,
+        entity_category=None,
+        translation_key=None,
+        // Accept but ignore these - they're Python-specific
+        known_object_ids=None,
+        get_initial_options=None,
+        calculated_object_id=None
+    ))]
     fn async_get_or_create(
         &self,
         domain: &str,
         platform: &str,
         unique_id: &str,
         config_entry_id: Option<&str>,
+        config_subentry_id: Option<&str>,
         device_id: Option<&str>,
         suggested_object_id: Option<&str>,
+        disabled_by: Option<&str>,
+        hidden_by: Option<&str>,
+        has_entity_name: bool,
+        capabilities: Option<&Bound<'_, PyAny>>,
+        supported_features: Option<u32>,
+        device_class: Option<&str>,
+        unit_of_measurement: Option<&str>,
+        original_name: Option<&str>,
+        original_icon: Option<&str>,
+        original_device_class: Option<&str>,
+        entity_category: Option<&str>,
+        translation_key: Option<&str>,
+        // Accepted but ignored
+        #[allow(unused_variables)] known_object_ids: Option<&Bound<'_, PyAny>>,
+        #[allow(unused_variables)] get_initial_options: Option<&Bound<'_, PyAny>>,
+        #[allow(unused_variables)] calculated_object_id: Option<&str>,
     ) -> PyEntityEntry {
-        // Build entity_id from domain and suggested_object_id or unique_id
-        let object_id = suggested_object_id.unwrap_or(unique_id);
+        // Build entity_id from domain, platform, and unique_id
+        // HA format: {domain}.{platform}_{unique_id} or {domain}.{suggested_object_id}
+        let object_id = suggested_object_id
+            .map(String::from)
+            .unwrap_or_else(|| format!("{}_{}", platform, unique_id));
         let entity_id = format!("{}.{}", domain, object_id);
 
+        // Get or create the base entry
         let entry = self.inner.get_or_create(
             platform,
             &entity_id,
@@ -371,6 +418,91 @@ impl PyEntityRegistry {
             config_entry_id,
             device_id,
         );
+
+        // Update with additional fields if provided
+        let needs_update = config_subentry_id.is_some()
+            || disabled_by.is_some()
+            || hidden_by.is_some()
+            || has_entity_name
+            || capabilities.is_some()
+            || supported_features.is_some()
+            || device_class.is_some()
+            || unit_of_measurement.is_some()
+            || original_name.is_some()
+            || original_icon.is_some()
+            || original_device_class.is_some()
+            || entity_category.is_some()
+            || translation_key.is_some();
+
+        if needs_update {
+            // Convert capabilities from Python dict to JSON
+            let caps_json = capabilities.and_then(|c| py_to_json(c).ok());
+
+            // Parse disabled_by and hidden_by enums
+            let disabled = disabled_by.and_then(|s| match s {
+                "integration" => Some(DisabledBy::Integration),
+                "user" => Some(DisabledBy::User),
+                "config_entry" => Some(DisabledBy::ConfigEntry),
+                "device" => Some(DisabledBy::Device),
+                _ => None,
+            });
+            let hidden = hidden_by.and_then(|s| match s {
+                "integration" => Some(HiddenBy::Integration),
+                "user" => Some(HiddenBy::User),
+                _ => None,
+            });
+            let category = entity_category.and_then(|s| match s {
+                "config" => Some(EntityCategory::Config),
+                "diagnostic" => Some(EntityCategory::Diagnostic),
+                _ => None,
+            });
+
+            let updated = self.inner.update(&entity_id, |e| {
+                if let Some(v) = config_subentry_id {
+                    e.config_subentry_id = Some(v.to_string());
+                }
+                if disabled.is_some() {
+                    e.disabled_by = disabled;
+                }
+                if hidden.is_some() {
+                    e.hidden_by = hidden;
+                }
+                if has_entity_name {
+                    e.has_entity_name = true;
+                }
+                if let Some(v) = caps_json.clone() {
+                    e.capabilities = Some(v);
+                }
+                if let Some(v) = supported_features {
+                    e.supported_features = v;
+                }
+                if let Some(v) = device_class {
+                    e.device_class = Some(v.to_string());
+                }
+                if let Some(v) = unit_of_measurement {
+                    e.unit_of_measurement = Some(v.to_string());
+                }
+                if let Some(v) = original_name {
+                    e.original_name = Some(v.to_string());
+                }
+                if let Some(v) = original_icon {
+                    e.original_icon = Some(v.to_string());
+                }
+                if let Some(v) = original_device_class {
+                    e.original_device_class = Some(v.to_string());
+                }
+                if category.is_some() {
+                    e.entity_category = category;
+                }
+                if let Some(v) = translation_key {
+                    e.translation_key = Some(v.to_string());
+                }
+            });
+
+            if let Ok(updated_entry) = updated {
+                return PyEntityEntry::from_inner(updated_entry);
+            }
+        }
 
         PyEntityEntry::from_inner(entry)
     }

@@ -974,6 +974,10 @@ class RustEntityEntry:
         return self._rust_entry.icon
 
     @property
+    def id(self) -> str:
+        return self._rust_entry.id
+
+    @property
     def labels(self) -> set[str]:
         return set(self._rust_entry.labels)
 
@@ -1038,6 +1042,8 @@ class RustEntityRegistry:
             raise RuntimeError("ha_core_rs not available")
         self._rust_registry = ha_core_rs.EntityRegistry(storage._rust_storage)
         self._storage = storage
+        # Cache wrapper objects to maintain identity (for `is` checks in tests)
+        self._entry_cache: dict[str, RustEntityEntry] = {}
 
     async def async_load(self) -> None:
         # No-op for testing - Rust registries start empty in test context
@@ -1048,9 +1054,30 @@ class RustEntityRegistry:
         # No-op for testing - persistence not needed for unit tests
         pass
 
-    def async_get(self, entity_id: str) -> RustEntityEntry | None:
-        entry = self._rust_registry.async_get(entity_id)
-        return RustEntityEntry(entry) if entry else None
+    def _get_or_create_wrapper(self, rust_entry) -> RustEntityEntry:
+        """Get cached wrapper or create and cache a new one."""
+        entity_id = rust_entry.entity_id
+        if entity_id not in self._entry_cache:
+            self._entry_cache[entity_id] = RustEntityEntry(rust_entry)
+        else:
+            # Update the underlying Rust entry in case it changed
+            self._entry_cache[entity_id]._rust_entry = rust_entry
+        return self._entry_cache[entity_id]
+
+    def async_get(self, entity_id_or_id: str) -> RustEntityEntry | None:
+        # Try by entity_id first
+        entry = self._rust_registry.async_get(entity_id_or_id)
+        if entry is not None:
+            return self._get_or_create_wrapper(entry)
+        # Try by internal ID (UUID) - check cache first, then iterate
+        for cached_entry in self._entry_cache.values():
+            if cached_entry.id == entity_id_or_id:
+                return cached_entry
+        # Not in cache, check Rust registry (entities is a dict, iterate values)
+        for rust_entry in self._rust_registry.entities.values():
+            if rust_entry.id == entity_id_or_id:
+                return self._get_or_create_wrapper(rust_entry)
+        return None
 
     def async_get_entity_id(
         self, domain: str, platform: str, unique_id: str
@@ -1090,6 +1117,7 @@ class RustEntityRegistry:
             platform=platform,
             unique_id=unique_id,
             config_entry_id=config_entry_id,
+            config_subentry_id=config_subentry_id,
             device_id=device_id,
             suggested_object_id=suggested_object_id,
             disabled_by=disabled_by,
@@ -1105,10 +1133,15 @@ class RustEntityRegistry:
             entity_category=entity_category,
             translation_key=translation_key,
         )
-        return RustEntityEntry(entry)
+        return self._get_or_create_wrapper(entry)
+
+    def async_is_registered(self, entity_id: str) -> bool:
+        return self._rust_registry.async_get(entity_id) is not None
 
     def async_remove(self, entity_id: str) -> None:
         self._rust_registry.async_remove(entity_id)
+        # Remove from cache
+        self._entry_cache.pop(entity_id, None)
 
     def async_update_entity(
         self,
@@ -1116,13 +1149,13 @@ class RustEntityRegistry:
         **kwargs,
     ) -> RustEntityEntry:
         entry = self._rust_registry.async_update_entity(entity_id, **kwargs)
-        return RustEntityEntry(entry)
+        return self._get_or_create_wrapper(entry)
 
     @property
     def entities(self) -> dict[str, RustEntityEntry]:
         return {
-            entry.entity_id: RustEntityEntry(entry)
-            for entry in self._rust_registry.entities
+            entity_id: self._get_or_create_wrapper(entry)
+            for entity_id, entry in self._rust_registry.entities.items()
         }
 
     def __iter__(self):
