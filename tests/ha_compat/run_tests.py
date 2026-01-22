@@ -12,6 +12,7 @@ Usage:
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import subprocess
@@ -967,6 +968,16 @@ def list_categories():
     print("")
     print(f"Total: {total} tests across {len(TEST_CATEGORIES)} categories")
 
+def load_rust_conftest():
+    """Load our Rust conftest module by file path to avoid namespace conflicts."""
+    conftest_path = get_repo_root() / "tests" / "ha_compat" / "conftest.py"
+    spec = importlib.util.spec_from_file_location("rust_conftest", conftest_path)
+    rust_conftest = importlib.util.module_from_spec(spec)
+    sys.modules["rust_conftest"] = rust_conftest
+    spec.loader.exec_module(rust_conftest)
+    return rust_conftest
+
+
 def run_tests(categories: list[str] | None = None, verbose: bool = False) -> int:
     """Run the compatibility tests against Rust implementations.
 
@@ -979,7 +990,6 @@ def run_tests(categories: list[str] | None = None, verbose: bool = False) -> int
     """
     repo_root = get_repo_root()
     ha_core = get_ha_core_dir()
-    venv = repo_root / ".venv"
     shim_path = repo_root / "crates" / "ha-py-bridge" / "python"
 
     if not ha_core.exists():
@@ -1008,38 +1018,59 @@ def run_tests(categories: list[str] | None = None, verbose: bool = False) -> int
         for cat, tests in TEST_CATEGORIES.items():
             patterns.extend(tests)
 
-    # Build pytest command
-    pytest_args = [
-        str(venv / "bin" / "pytest"),
-        "-v" if verbose else "-q",
-        "--tb=short",
-        "-x",  # Stop on first failure
-    ]
-
-    for pattern in patterns:
-        pytest_args.append(f"tests/{pattern}")
-
-    if use_shim:
-        print(f"Running {len(patterns)} tests with Python shim layer...")
-    else:
-        print(f"Running {len(patterns)} tests against Rust extension...")
-    print("")
-
-    # Run pytest with PYTHONPATH set
-    env = os.environ.copy()
-
+    # Setup PYTHONPATH for imports
+    # vendor/ha-core must be in path for HA's test imports to work
+    # Our repo root must be in path for our conftest to find ha_core_rs
+    pythonpath_parts = [str(ha_core), str(repo_root)]
     if use_shim:
         # Put our shim first so it takes precedence over site-packages
-        pythonpath_parts = [str(shim_path), str(repo_root)]
+        pythonpath_parts.insert(0, str(shim_path))
+
+    # Prepend to sys.path
+    for path in reversed(pythonpath_parts):
+        if path not in sys.path:
+            sys.path.insert(0, path)
+
+    # Set environment variable for Rust components
+    os.environ["USE_RUST_COMPONENTS"] = "1"
+
+    # Load our Rust conftest as a plugin
+    # This must be done AFTER setting up sys.path
+    rust_conftest = load_rust_conftest()
+
+    if rust_conftest._rust_available:
+        print(f"Running {len(patterns)} tests against Rust extension...")
+        print("=" * 60)
+        print("  Rust components ENABLED via ha_core_rs")
+        print("  Core types (State, Event, Context) are Rust-backed")
+        print("=" * 60)
     else:
-        pythonpath_parts = [str(repo_root)]
+        print(f"Running {len(patterns)} tests (Rust NOT available, using Python)...")
+    print("")
 
-    if "PYTHONPATH" in env:
-        pythonpath_parts.append(env["PYTHONPATH"])
-    env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
+    # Change to ha-core directory for test discovery
+    original_cwd = os.getcwd()
+    os.chdir(ha_core)
 
-    result = subprocess.run(pytest_args, cwd=ha_core, env=env)
-    return result.returncode
+    try:
+        # Import pytest here (after PYTHONPATH is set up)
+        import pytest
+
+        # Build pytest args
+        pytest_args = [
+            "-v" if verbose else "-q",
+            "--tb=short",
+            "-x",  # Stop on first failure
+        ]
+
+        for pattern in patterns:
+            pytest_args.append(f"tests/{pattern}")
+
+        # Run pytest with our conftest as a plugin
+        exit_code = pytest.main(pytest_args, plugins=[rust_conftest])
+        return exit_code
+    finally:
+        os.chdir(original_cwd)
 
 def main():
     parser = argparse.ArgumentParser(description="Run HA compatibility tests against Rust")
