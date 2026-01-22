@@ -366,10 +366,13 @@ TEST_CATEGORIES = {
     # Entity Registry (tests/helpers/test_entity_registry.py) - ha-registries crate
     # ==========================================================================
     "entity_registry": [
+        # Basic CRUD operations
         "helpers/test_entity_registry.py::test_get",
         "helpers/test_entity_registry.py::test_get_or_create_returns_same_entry",
         "helpers/test_entity_registry.py::test_get_or_create_suggested_object_id",
         "helpers/test_entity_registry.py::test_get_or_create_updates_data",
+        "helpers/test_entity_registry.py::test_get_or_create_suggested_object_id_conflict_register",
+        "helpers/test_entity_registry.py::test_get_or_create_suggested_object_id_conflict_existing",
         "helpers/test_entity_registry.py::test_remove",
         "helpers/test_entity_registry.py::test_create_triggers_save",
         "helpers/test_entity_registry.py::test_loading_saving_data",
@@ -377,22 +380,129 @@ TEST_CATEGORIES = {
         "helpers/test_entity_registry.py::test_generate_entity_considers_existing_entities",
         "helpers/test_entity_registry.py::test_is_registered",
         "helpers/test_entity_registry.py::test_async_get_entity_id",
+        # Config entry management
+        "helpers/test_entity_registry.py::test_updating_config_entry_id",
+        "helpers/test_entity_registry.py::test_removing_config_entry_id",
+        "helpers/test_entity_registry.py::test_deleted_entity_removing_config_entry_id",
+        "helpers/test_entity_registry.py::test_removing_config_subentry_id",
+        "helpers/test_entity_registry.py::test_deleted_entity_removing_config_subentry_id",
+        # Area management
+        "helpers/test_entity_registry.py::test_removing_area_id",
+        "helpers/test_entity_registry.py::test_removing_area_id_deleted_entity",
+        # Entity updates
+        "helpers/test_entity_registry.py::test_update_entity_unique_id",
+        "helpers/test_entity_registry.py::test_update_entity_unique_id_conflict",
+        "helpers/test_entity_registry.py::test_update_entity_entity_id",
+        "helpers/test_entity_registry.py::test_update_entity_entity_id_without_state",
+        "helpers/test_entity_registry.py::test_update_entity_entity_id_entity_id",
+        "helpers/test_entity_registry.py::test_update_entity",
+        "helpers/test_entity_registry.py::test_update_entity_options",
+        # Disabled/hidden state
+        "helpers/test_entity_registry.py::test_disabled_by",
+        "helpers/test_entity_registry.py::test_disabled_by_config_entry_pref",
+        "helpers/test_entity_registry.py::test_hidden_by",
+        "helpers/test_entity_registry.py::test_update_entity_disabled_by",
+        "helpers/test_entity_registry.py::test_update_entity_disabled_by_2",
+        "helpers/test_entity_registry.py::test_disabled_entities_excluded_from_entity_list",
+        # Device interaction
+        "helpers/test_entity_registry.py::test_remove_device_removes_entities",
+        "helpers/test_entity_registry.py::test_remove_config_entry_from_device_removes_entities",
+        "helpers/test_entity_registry.py::test_remove_config_entry_from_device_removes_entities_2",
+        "helpers/test_entity_registry.py::test_remove_config_subentry_from_device_removes_entities",
+        "helpers/test_entity_registry.py::test_remove_config_subentry_from_device_removes_entities_2",
+        "helpers/test_entity_registry.py::test_disable_device_disables_entities",
+        "helpers/test_entity_registry.py::test_disable_config_entry_disables_entities",
+        # Labels and categories
+        "helpers/test_entity_registry.py::test_removing_labels",
+        "helpers/test_entity_registry.py::test_removing_labels_deleted_entity",
+        "helpers/test_entity_registry.py::test_entries_for_label",
+        "helpers/test_entity_registry.py::test_removing_categories",
+        "helpers/test_entity_registry.py::test_removing_categories_deleted_entity",
+        "helpers/test_entity_registry.py::test_entries_for_category",
+        # Validation
+        "helpers/test_entity_registry.py::test_entity_max_length_exceeded",
+        "helpers/test_entity_registry.py::test_resolve_entity_ids",
+        "helpers/test_entity_registry.py::test_entity_registry_items",
+        "helpers/test_entity_registry.py::test_config_entry_does_not_exist",
+        "helpers/test_entity_registry.py::test_device_does_not_exist",
+        "helpers/test_entity_registry.py::test_disabled_by_str_not_allowed",
+        "helpers/test_entity_registry.py::test_entity_category_str_not_allowed",
+        "helpers/test_entity_registry.py::test_hidden_by_str_not_allowed",
+        "helpers/test_entity_registry.py::test_unique_id_non_hashable",
+        "helpers/test_entity_registry.py::test_unique_id_non_string",
+        # Restore and migration
+        "helpers/test_entity_registry.py::test_restore_states",
+        "helpers/test_entity_registry.py::test_restore_entity",
+        "helpers/test_entity_registry.py::test_restore_entity_disabled_by",
+        "helpers/test_entity_registry.py::test_restore_entity_disabled_by_2",
+        "helpers/test_entity_registry.py::test_migrate_entity_to_new_platform",
+        "helpers/test_entity_registry.py::test_migrate_entity_to_new_platform_error_handling",
+        "helpers/test_entity_registry.py::test_async_migrate_entry_delete_self",
+        "helpers/test_entity_registry.py::test_async_migrate_entry_delete_other",
+        # Subentry
+        "helpers/test_entity_registry.py::test_subentry",
     ],
 
     # ==========================================================================
     # Device Registry (tests/helpers/test_device_registry.py) - ha-registries crate
     # ==========================================================================
     "device_registry": [
+        # Basic CRUD operations
         "helpers/test_device_registry.py::test_get_or_create_returns_same_entry",
         "helpers/test_device_registry.py::test_requirement_for_identifier_or_connection",
         "helpers/test_device_registry.py::test_multiple_config_entries",
-        "helpers/test_device_registry.py::test_removing_config_entries",
-        "helpers/test_device_registry.py::test_removing_area_id",
+        "helpers/test_device_registry.py::test_multiple_config_subentries",
+        "helpers/test_device_registry.py::test_loading_from_storage",
         "helpers/test_device_registry.py::test_loading_saving_data",
-        "helpers/test_device_registry.py::test_update",
-        "helpers/test_device_registry.py::test_update_connection",
         "helpers/test_device_registry.py::test_format_mac",
         "helpers/test_device_registry.py::test_no_unnecessary_changes",
+        # Config entry management
+        "helpers/test_device_registry.py::test_removing_config_entries",
+        "helpers/test_device_registry.py::test_deleted_device_removing_config_entries",
+        "helpers/test_device_registry.py::test_removing_config_subentries",
+        "helpers/test_device_registry.py::test_deleted_device_removing_config_subentries",
+        # Area management
+        "helpers/test_device_registry.py::test_removing_area_id",
+        "helpers/test_device_registry.py::test_removing_area_id_deleted_device",
+        # Via device
+        "helpers/test_device_registry.py::test_specifying_via_device_create",
+        "helpers/test_device_registry.py::test_specifying_via_device_update",
+        # Updates
+        "helpers/test_device_registry.py::test_update",
+        "helpers/test_device_registry.py::test_update_connection",
+        "helpers/test_device_registry.py::test_update_remove_config_entries",
+        "helpers/test_device_registry.py::test_update_remove_config_subentries",
+        "helpers/test_device_registry.py::test_update_suggested_area",
+        "helpers/test_device_registry.py::test_update_add_config_entry_disabled_by",
+        "helpers/test_device_registry.py::test_update_remove_config_entry_disabled_by",
+        # Cleanup
+        "helpers/test_device_registry.py::test_cleanup_device_registry",
+        "helpers/test_device_registry.py::test_cleanup_device_registry_removes_expired_orphaned_devices",
+        "helpers/test_device_registry.py::test_cleanup_startup",
+        "helpers/test_device_registry.py::test_cleanup_entity_registry_change",
+        # Restore
+        "helpers/test_device_registry.py::test_restore_device",
+        "helpers/test_device_registry.py::test_restore_disabled_by",
+        "helpers/test_device_registry.py::test_restore_shared_device",
+        # Creation patterns
+        "helpers/test_device_registry.py::test_get_or_create_empty_then_set_default_values",
+        "helpers/test_device_registry.py::test_get_or_create_empty_then_update",
+        "helpers/test_device_registry.py::test_get_or_create_sets_default_values",
+        "helpers/test_device_registry.py::test_verify_suggested_area_does_not_overwrite_area_id",
+        # Disable handling
+        "helpers/test_device_registry.py::test_disable_config_entry_disables_devices",
+        "helpers/test_device_registry.py::test_only_disable_device_if_all_config_entries_are_disabled",
+        # Labels
+        "helpers/test_device_registry.py::test_removing_labels",
+        "helpers/test_device_registry.py::test_removing_labels_deleted_device",
+        "helpers/test_device_registry.py::test_entries_for_label",
+        # Primary config entry
+        "helpers/test_device_registry.py::test_primary_config_entry",
+        "helpers/test_device_registry.py::test_update_device_no_connections_or_identifiers",
+        # Collision handling
+        "helpers/test_device_registry.py::test_device_registry_connections_collision",
+        "helpers/test_device_registry.py::test_device_registry_identifiers_collision",
+        "helpers/test_device_registry.py::test_device_registry_deleted_device_collision",
     ],
 
     # ==========================================================================
@@ -500,21 +610,82 @@ TEST_CATEGORIES = {
     # WebSocket API (tests/components/websocket_api/) - ha-api crate
     # ==========================================================================
     "websocket_commands": [
+        # Event commands
         "components/websocket_api/test_commands.py::test_fire_event",
         "components/websocket_api/test_commands.py::test_fire_event_without_data",
+        # Service commands
         "components/websocket_api/test_commands.py::test_call_service",
         "components/websocket_api/test_commands.py::test_call_service_blocking",
         "components/websocket_api/test_commands.py::test_call_service_target",
+        "components/websocket_api/test_commands.py::test_call_service_target_template",
+        "components/websocket_api/test_commands.py::test_call_service_schema_validation_error",
+        "components/websocket_api/test_commands.py::test_call_service_error",
         # test_call_service_not_found - tests HA's translation caching, not Rust impl
+        # test_call_service_child_not_found - tests HA's translation caching, not Rust impl
+        # Subscription commands
         "components/websocket_api/test_commands.py::test_subscribe_unsubscribe_events",
+        "components/websocket_api/test_commands.py::test_subscribe_unsubscribe_events_whitelist",
+        "components/websocket_api/test_commands.py::test_subscribe_unsubscribe_events_state_changed",
+        "components/websocket_api/test_commands.py::test_subscribe_unsubscribe_entities",
+        "components/websocket_api/test_commands.py::test_subscribe_unsubscribe_entities_specific_entities",
+        "components/websocket_api/test_commands.py::test_subscribe_unsubscribe_entities_with_filter",
+        "components/websocket_api/test_commands.py::test_subscribe_entities_with_unserializable_state",
+        "components/websocket_api/test_commands.py::test_subscribe_entities_chained_state_change",
+        "components/websocket_api/test_commands.py::test_subscribe_unsubscribe_bootstrap_integrations",
+        "components/websocket_api/test_commands.py::test_subscribe_conditions",
+        "components/websocket_api/test_commands.py::test_subscribe_triggers",
+        "components/websocket_api/test_commands.py::test_subscribe_trigger",
+        # State commands
         "components/websocket_api/test_commands.py::test_get_states",
+        "components/websocket_api/test_commands.py::test_states_filters_visible",
+        "components/websocket_api/test_commands.py::test_get_states_not_allows_nan",
+        # Service/config commands
         "components/websocket_api/test_commands.py::test_get_services",
         "components/websocket_api/test_commands.py::test_get_config",
         "components/websocket_api/test_commands.py::test_ping",
-        "components/websocket_api/test_commands.py::test_subscribe_unsubscribe_events_state_changed",
-        "components/websocket_api/test_commands.py::test_subscribe_unsubscribe_entities",
+        "components/websocket_api/test_commands.py::test_call_service_context_with_user",
+        "components/websocket_api/test_commands.py::test_subscribe_requires_admin",
+        # Template commands
         "components/websocket_api/test_commands.py::test_render_template_renders_template",
+        "components/websocket_api/test_commands.py::test_render_template_with_timeout_and_variables",
+        "components/websocket_api/test_commands.py::test_render_template_manual_entity_ids_no_longer_needed",
         "components/websocket_api/test_commands.py::test_render_template_with_error",
+        "components/websocket_api/test_commands.py::test_render_template_with_timeout_and_error",
+        "components/websocket_api/test_commands.py::test_render_template_strict_with_timeout_and_error",
+        "components/websocket_api/test_commands.py::test_render_template_strict_with_timeout_and_error_2",
+        "components/websocket_api/test_commands.py::test_render_template_error_in_template_code",
+        "components/websocket_api/test_commands.py::test_render_template_error_in_template_code_2",
+        "components/websocket_api/test_commands.py::test_render_template_with_delayed_error",
+        "components/websocket_api/test_commands.py::test_render_template_with_delayed_error_2",
+        "components/websocket_api/test_commands.py::test_render_template_with_timeout",
+        "components/websocket_api/test_commands.py::test_render_template_returns_with_match_all",
+        # Condition/trigger commands
+        "components/websocket_api/test_commands.py::test_test_condition",
+        # Script execution
+        "components/websocket_api/test_commands.py::test_execute_script",
+        # test_execute_script_complex_response - requires hassil/calendar dependency
+        "components/websocket_api/test_commands.py::test_execute_script_with_dynamically_validated_action",
+        # Config validation
+        "components/websocket_api/test_commands.py::test_validate_config_works",
+        "components/websocket_api/test_commands.py::test_validate_config_invalid",
+        # Message coalescing
+        "components/websocket_api/test_commands.py::test_message_coalescing",
+        "components/websocket_api/test_commands.py::test_message_coalescing_not_supported_by_websocket_client",
+        "components/websocket_api/test_commands.py::test_client_message_coalescing",
+        # Integration wait
+        "components/websocket_api/test_commands.py::test_wait_integration",
+        "components/websocket_api/test_commands.py::test_wait_integration_startup",
+        # Target extraction
+        "components/websocket_api/test_commands.py::test_extract_from_target",
+        "components/websocket_api/test_commands.py::test_extract_from_target_expand_group",
+        "components/websocket_api/test_commands.py::test_extract_from_target_missing_entities",
+        "components/websocket_api/test_commands.py::test_extract_from_target_empty_target",
+        "components/websocket_api/test_commands.py::test_extract_from_target_validation_error",
+        # Service lookup
+        "components/websocket_api/test_commands.py::test_get_triggers_conditions_for_target",
+        "components/websocket_api/test_commands.py::test_get_services_for_target",
+        "components/websocket_api/test_commands.py::test_get_services_for_target_caching",
+        "components/websocket_api/test_commands.py::test_integration_setup_info",
     ],
     "websocket_messages": [
         "components/websocket_api/test_messages.py::test_cached_event_message",
@@ -661,6 +832,57 @@ TEST_CATEGORIES = {
         "components/config/test_entity_registry.py::test_remove_non_existing_entity",
         "components/config/test_entity_registry.py::test_enable_entity_disabled_device",
         "components/config/test_entity_registry.py::test_get_automatic_entity_ids",
+    ],
+
+    # ==========================================================================
+    # Area Registry WebSocket API (tests/components/config/) - ha-api crate
+    # Tests the config/area_registry/list and related WebSocket commands
+    # ==========================================================================
+    "area_registry_ws": [
+        "components/config/test_area_registry.py::test_list_areas",
+        "components/config/test_area_registry.py::test_create_area",
+        "components/config/test_area_registry.py::test_create_area_with_name_already_in_use",
+        "components/config/test_area_registry.py::test_delete_area",
+        "components/config/test_area_registry.py::test_delete_non_existing_area",
+        "components/config/test_area_registry.py::test_update_area",
+        "components/config/test_area_registry.py::test_update_area_with_same_name",
+        "components/config/test_area_registry.py::test_update_area_with_name_already_in_use",
+        "components/config/test_area_registry.py::test_reorder_areas",
+        "components/config/test_area_registry.py::test_reorder_areas_invalid_area_ids",
+        "components/config/test_area_registry.py::test_reorder_areas_with_nonexistent_id",
+        "components/config/test_area_registry.py::test_reorder_areas_persistence",
+    ],
+
+    # ==========================================================================
+    # Floor Registry WebSocket API (tests/components/config/) - ha-api crate
+    # Tests the config/floor_registry/list and related WebSocket commands
+    # ==========================================================================
+    "floor_registry_ws": [
+        "components/config/test_floor_registry.py::test_list_floors",
+        "components/config/test_floor_registry.py::test_create_floor",
+        "components/config/test_floor_registry.py::test_create_floor_with_name_already_in_use",
+        "components/config/test_floor_registry.py::test_delete_floor",
+        "components/config/test_floor_registry.py::test_delete_non_existing_floor",
+        "components/config/test_floor_registry.py::test_update_floor",
+        "components/config/test_floor_registry.py::test_update_with_name_already_in_use",
+        "components/config/test_floor_registry.py::test_reorder_floors",
+        "components/config/test_floor_registry.py::test_reorder_floors_invalid_floor_ids",
+        "components/config/test_floor_registry.py::test_reorder_floors_with_nonexistent_id",
+        "components/config/test_floor_registry.py::test_reorder_floors_persistence",
+    ],
+
+    # ==========================================================================
+    # Label Registry WebSocket API (tests/components/config/) - ha-api crate
+    # Tests the config/label_registry/list and related WebSocket commands
+    # ==========================================================================
+    "label_registry_ws": [
+        "components/config/test_label_registry.py::test_list_labels",
+        "components/config/test_label_registry.py::test_create_label",
+        "components/config/test_label_registry.py::test_create_label_with_name_already_in_use",
+        "components/config/test_label_registry.py::test_delete_label",
+        "components/config/test_label_registry.py::test_delete_non_existing_label",
+        "components/config/test_label_registry.py::test_update_label",
+        "components/config/test_label_registry.py::test_update_with_name_already_in_use",
     ],
 
     # ==========================================================================

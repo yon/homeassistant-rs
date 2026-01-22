@@ -90,17 +90,17 @@ suites:
   # ============================================================================
   helpers/test_entity_registry.py:
     status: in_progress
-    running: 11
+    running: 65
     total: 79
     method: ha-compat
-    notes: "HIGH PRIORITY - EntityRegistry"
+    notes: "HIGH PRIORITY - EntityRegistry - 103 parameterized tests passing"
 
   helpers/test_device_registry.py:
     status: in_progress
-    running: 10
+    running: 44
     total: 62
     method: ha-compat
-    notes: "HIGH PRIORITY - DeviceRegistry"
+    notes: "HIGH PRIORITY - DeviceRegistry - 73 parameterized tests passing"
 
   helpers/test_area_registry.py:
     status: in_progress
@@ -334,10 +334,10 @@ suites:
   # ============================================================================
   components/websocket_api/test_commands.py:
     status: in_progress
-    running: 15
+    running: 60
     total: 71
     method: ha-compat
-    notes: "HIGH PRIORITY - WS commands"
+    notes: "HIGH PRIORITY - WS commands - 87 parameterized tests passing"
 
   components/websocket_api/test_http.py:
     status: in_progress
@@ -388,39 +388,39 @@ suites:
   # Config Component Tests (tests/components/config/) - PROXY CLIENT TARGET
   # ============================================================================
   components/config/test_entity_registry.py:
-    status: in_progress
+    status: done
     running: 16
     total: 16
     method: ha-compat
-    notes: "PRIORITY 1 - Entity WS API - added to run_tests.py"
+    notes: "Entity WS API - all tests passing"
 
   components/config/test_device_registry.py:
-    status: todo
-    running: 0
-    total: 6
-    method: proxy
-    notes: "PRIORITY 2 - Device WS API"
+    status: done
+    running: 12
+    total: 12
+    method: ha-compat
+    notes: "Device WS API - all tests passing (includes parameterized)"
 
   components/config/test_area_registry.py:
-    status: todo
-    running: 0
+    status: done
+    running: 12
     total: 12
-    method: proxy
-    notes: "Area WS API"
+    method: ha-compat
+    notes: "Area WS API - all tests passing"
 
   components/config/test_floor_registry.py:
-    status: todo
-    running: 0
+    status: done
+    running: 11
     total: 11
-    method: proxy
-    notes: "Floor WS API"
+    method: ha-compat
+    notes: "Floor WS API - all tests passing"
 
   components/config/test_label_registry.py:
-    status: todo
-    running: 0
+    status: done
+    running: 7
     total: 7
-    method: proxy
-    notes: "Label WS API"
+    method: ha-compat
+    notes: "Label WS API - all tests passing"
 
   components/config/test_config_entries.py:
     status: todo
