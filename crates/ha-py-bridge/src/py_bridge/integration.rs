@@ -4,10 +4,12 @@
 //! that aren't yet implemented in Rust.
 
 use super::errors::{PyBridgeError, PyBridgeResult};
+use super::requirements::RequirementsManager;
+use ha_api::manifest::get_manifest;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::collections::{HashMap, HashSet};
-use std::sync::{LazyLock, RwLock};
+use std::sync::{Arc, LazyLock, RwLock};
 use tracing::{debug, info, warn};
 
 /// Components implemented in Rust - NEVER load from Python
@@ -84,6 +86,8 @@ pub struct IntegrationLoader {
     components: ComponentRegistry,
     /// Whitelist of allowed Python integrations (empty = none allowed)
     allowlist: RwLock<HashSet<String>>,
+    /// Requirements manager for installing Python packages (optional)
+    requirements: Option<Arc<RequirementsManager>>,
 }
 
 impl IntegrationLoader {
@@ -93,6 +97,17 @@ impl IntegrationLoader {
             loaded: RwLock::new(HashMap::new()),
             components: ComponentRegistry::new(),
             allowlist: RwLock::new(HashSet::new()),
+            requirements: None,
+        }
+    }
+
+    /// Create a new integration loader with a requirements manager
+    pub fn with_requirements(requirements: Arc<RequirementsManager>) -> Self {
+        Self {
+            loaded: RwLock::new(HashMap::new()),
+            components: ComponentRegistry::new(),
+            allowlist: RwLock::new(HashSet::new()),
+            requirements: Some(requirements),
         }
     }
 
@@ -158,6 +173,19 @@ impl IntegrationLoader {
             if loaded.contains_key(domain) {
                 debug!("Integration already loaded: {}", domain);
                 return Ok(());
+            }
+        }
+
+        // Ensure requirements are installed before importing
+        if let Some(ref requirements) = self.requirements {
+            if let Some(manifest) = get_manifest(domain) {
+                if !manifest.requirements.is_empty() {
+                    if let Err(e) = requirements.ensure_requirements(domain, &manifest.requirements)
+                    {
+                        warn!("Failed to install requirements for {}: {}", domain, e);
+                        // Continue anyway - the integration might still work or fail with a clearer error
+                    }
+                }
             }
         }
 
