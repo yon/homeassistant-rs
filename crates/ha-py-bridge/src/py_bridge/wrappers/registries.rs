@@ -87,6 +87,7 @@ impl RegistriesWrapper {
             Some(config_entry_id),
             None, // No subentry tracking in standalone mode
             Some(name),
+            None, // Use current time
         );
 
         // Update additional fields
