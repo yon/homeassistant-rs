@@ -85,7 +85,8 @@ impl RegistriesWrapper {
             &device_identifiers,
             &device_connections,
             Some(config_entry_id),
-            name,
+            None, // No subentry tracking in standalone mode
+            Some(name),
         );
 
         // Update additional fields

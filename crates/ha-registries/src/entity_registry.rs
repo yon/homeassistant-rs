@@ -167,6 +167,10 @@ pub struct EntityEntry {
     /// Last modified timestamp
     #[serde(default = "Utc::now")]
     pub modified_at: DateTime<Utc>,
+    /// Timestamp when deleted entity became orphaned (no config entry)
+    /// Only used for deleted entities
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orphaned_timestamp: Option<f64>,
 }
 
 impl EntityEntry {
@@ -178,7 +182,7 @@ impl EntityEntry {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: ulid::Ulid::new().to_string().to_lowercase(),
+            id: uuid::Uuid::new_v4().simple().to_string(),
             entity_id: entity_id.into(),
             unique_id,
             previous_unique_id: None,
@@ -208,6 +212,7 @@ impl EntityEntry {
             categories: None,
             created_at: now,
             modified_at: now,
+            orphaned_timestamp: None,
         }
     }
 
@@ -370,10 +375,10 @@ impl EntityRegistry {
     fn index_entry(&self, entry: Arc<EntityEntry>) {
         let entity_id = entry.entity_id.clone();
 
-        // unique_id index
+        // unique_id index (keyed by "platform\0unique_id" for uniqueness)
         if let Some(ref unique_id) = entry.unique_id {
-            self.by_unique_id
-                .insert(unique_id.clone(), entity_id.clone());
+            let key = format!("{}\0{}", entry.platform, unique_id);
+            self.by_unique_id.insert(key, entity_id.clone());
         }
 
         // device_id index
@@ -418,7 +423,8 @@ impl EntityRegistry {
 
         // Remove from unique_id index
         if let Some(ref unique_id) = entry.unique_id {
-            self.by_unique_id.remove(unique_id);
+            let key = format!("{}\0{}", entry.platform, unique_id);
+            self.by_unique_id.remove(&key);
         }
 
         // Remove from device_id index
@@ -463,10 +469,27 @@ impl EntityRegistry {
             .and_then(|idx| idx.get(entity_id).cloned())
     }
 
-    /// Get entity by unique_id
+    /// Get entity by (platform, unique_id) composite key
     pub fn get_by_unique_id(&self, unique_id: &str) -> Option<Arc<EntityEntry>> {
+        // Search all platform+unique_id combinations (backward compat)
+        // This iterates but is only used when platform is unknown
+        for entry in self.by_unique_id.iter() {
+            if entry.key().ends_with(&format!("\0{}", unique_id)) {
+                return self.get(entry.value());
+            }
+        }
+        None
+    }
+
+    /// Get entity by platform and unique_id (preferred - uses index directly)
+    pub fn get_by_platform_unique_id(
+        &self,
+        platform: &str,
+        unique_id: &str,
+    ) -> Option<Arc<EntityEntry>> {
+        let key = format!("{}\0{}", platform, unique_id);
         self.by_unique_id
-            .get(unique_id)
+            .get(&key)
             .and_then(|entity_id| self.get(&entity_id))
     }
 
@@ -516,9 +539,9 @@ impl EntityRegistry {
         config_entry_id: Option<&str>,
         device_id: Option<&str>,
     ) -> Arc<EntityEntry> {
-        // Check if unique_id exists
+        // Check if unique_id exists for this platform
         if let Some(uid) = unique_id {
-            if let Some(existing) = self.get_by_unique_id(uid) {
+            if let Some(existing) = self.get_by_platform_unique_id(platform, uid) {
                 debug!("Found existing entity by unique_id: {}", existing.entity_id);
                 return existing;
             }
@@ -597,7 +620,8 @@ impl EntityRegistry {
 
             // Unindex the old entry from secondary indexes
             if let Some(ref unique_id) = entry.unique_id {
-                self.by_unique_id.remove(unique_id);
+                let key = format!("{}\0{}", entry.platform, unique_id);
+                self.by_unique_id.remove(&key);
             }
             if let Some(ref device_id) = entry.device_id {
                 if let Some(mut ids) = self.by_device_id.get_mut(device_id) {
@@ -711,7 +735,16 @@ impl EntityRegistry {
         current_entity_id: Option<&str>,
         reserved_ids: Option<&[String]>,
     ) -> String {
-        let preferred = format!("{}.{}", domain, suggested_object_id);
+        const MAX_LENGTH_STATE_ENTITY_ID: usize = 255;
+
+        let slugified = slugify(suggested_object_id);
+        let preferred_full = format!("{}.{}", domain, slugified);
+        // Truncate to max entity_id length for the initial check
+        let preferred = if preferred_full.len() > MAX_LENGTH_STATE_ENTITY_ID {
+            &preferred_full[..MAX_LENGTH_STATE_ENTITY_ID]
+        } else {
+            &preferred_full[..]
+        };
 
         // Helper to check if an entity_id is available
         let is_available = |entity_id: &str| -> bool {
@@ -729,14 +762,14 @@ impl EntityRegistry {
         };
 
         // Check if preferred is available
-        if is_available(&preferred) {
-            return preferred;
+        if is_available(preferred) {
+            return preferred.to_string();
         }
 
         // If current_entity_id matches preferred, it's available for this entity
         if let Some(current) = current_entity_id {
             if current == preferred {
-                return preferred;
+                return preferred.to_string();
             }
         }
 
@@ -744,7 +777,14 @@ impl EntityRegistry {
         let mut tries = 1;
         loop {
             tries += 1;
-            let test_id = format!("{}_{}", preferred, tries);
+            let len_suffix = format!("{}", tries).len() + 1; // "_N"
+            let base_len = MAX_LENGTH_STATE_ENTITY_ID - len_suffix;
+            let base = if preferred_full.len() > base_len {
+                &preferred_full[..base_len]
+            } else {
+                &preferred_full[..]
+            };
+            let test_id = format!("{}_{}", base, tries);
 
             // Check if available
             if is_available(&test_id) {
@@ -811,6 +851,103 @@ impl EntityRegistry {
             .map(|d| d.contains_key(&key))
             .unwrap_or(false)
     }
+
+    /// Clear config_entry_id from deleted entities that match the given config_entry_id.
+    /// Sets orphaned_timestamp to the provided timestamp.
+    pub fn clear_deleted_config_entry(&self, config_entry_id: &str, orphaned_timestamp: f64) {
+        if let Ok(mut deleted) = self.deleted.write() {
+            for entry in deleted.values_mut() {
+                if entry.config_entry_id.as_deref() == Some(config_entry_id) {
+                    let mut updated = (**entry).clone();
+                    updated.config_entry_id = None;
+                    updated.orphaned_timestamp = Some(orphaned_timestamp);
+                    *entry = Arc::new(updated);
+                }
+            }
+        }
+    }
+
+    /// Clear area_id from deleted entities that match.
+    pub fn clear_deleted_area_id(&self, area_id: &str) {
+        if let Ok(mut deleted) = self.deleted.write() {
+            for entry in deleted.values_mut() {
+                if entry.area_id.as_deref() == Some(area_id) {
+                    let mut updated = (**entry).clone();
+                    updated.area_id = None;
+                    *entry = Arc::new(updated);
+                }
+            }
+        }
+    }
+
+    /// Clear a label from deleted entities that have it.
+    pub fn clear_deleted_label_id(&self, label_id: &str) {
+        if let Ok(mut deleted) = self.deleted.write() {
+            for entry in deleted.values_mut() {
+                if entry.labels.contains(label_id) {
+                    let mut updated = (**entry).clone();
+                    updated.labels.remove(label_id);
+                    *entry = Arc::new(updated);
+                }
+            }
+        }
+    }
+
+    /// Clear a category from deleted entities matching scope and category_id.
+    pub fn clear_deleted_category_id(&self, scope: &str, category_id: &str) {
+        if let Ok(mut deleted) = self.deleted.write() {
+            for entry in deleted.values_mut() {
+                if let Some(serde_json::Value::Object(ref cats)) = entry.categories {
+                    if cats.get(scope).and_then(|v| v.as_str()) == Some(category_id) {
+                        let mut updated = (**entry).clone();
+                        if let Some(serde_json::Value::Object(ref mut map)) = updated.categories {
+                            map.remove(scope);
+                            if map.is_empty() {
+                                updated.categories = None;
+                            }
+                        }
+                        *entry = Arc::new(updated);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Clear config_subentry_id from deleted entities that match.
+    /// Also clears config_entry_id and sets orphaned_timestamp.
+    pub fn clear_deleted_config_subentry(
+        &self,
+        _config_entry_id: &str,
+        config_subentry_id: &str,
+        orphaned_timestamp: f64,
+    ) {
+        if let Ok(mut deleted) = self.deleted.write() {
+            for entry in deleted.values_mut() {
+                if entry.config_subentry_id.as_deref() == Some(config_subentry_id) {
+                    let mut updated = (**entry).clone();
+                    updated.config_entry_id = None;
+                    updated.config_subentry_id = None;
+                    updated.orphaned_timestamp = Some(orphaned_timestamp);
+                    *entry = Arc::new(updated);
+                }
+            }
+        }
+    }
+}
+
+/// Slugify a string for use as an entity object_id.
+/// Converts to lowercase, replaces non-alphanumeric chars with underscore,
+/// collapses consecutive underscores, and strips leading/trailing underscores.
+fn slugify(name: &str) -> String {
+    let mut result = String::new();
+    for c in name.chars() {
+        if c.is_alphanumeric() {
+            result.extend(c.to_lowercase());
+        } else if !result.is_empty() && !result.ends_with('_') {
+            result.push('_');
+        }
+    }
+    result.trim_end_matches('_').to_string()
 }
 
 // Unit tests removed - covered by HA native tests via `make ha-compat-test`

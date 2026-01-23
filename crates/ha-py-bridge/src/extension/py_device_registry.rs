@@ -54,8 +54,8 @@ impl PyDeviceEntry {
     }
 
     #[getter]
-    fn name(&self) -> &str {
-        &self.inner.name
+    fn name(&self) -> Option<&str> {
+        self.inner.name.as_deref()
     }
 
     #[getter]
@@ -132,6 +132,16 @@ impl PyDeviceEntry {
     }
 
     #[getter]
+    fn config_entries_subentries(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        let dict = PyDict::new_bound(py);
+        for (config_entry_id, subentries) in &self.inner.config_entries_subentries {
+            let py_list: Vec<Option<String>> = subentries.clone();
+            dict.set_item(config_entry_id, py_list)?;
+        }
+        Ok(dict.unbind())
+    }
+
+    #[getter]
     fn created_at(&self) -> String {
         self.inner.created_at.to_rfc3339()
     }
@@ -141,6 +151,23 @@ impl PyDeviceEntry {
         self.inner.modified_at.to_rfc3339()
     }
 
+    #[getter]
+    fn created_at_timestamp(&self) -> f64 {
+        self.inner.created_at.timestamp() as f64
+            + self.inner.created_at.timestamp_subsec_nanos() as f64 / 1_000_000_000.0
+    }
+
+    #[getter]
+    fn modified_at_timestamp(&self) -> f64 {
+        self.inner.modified_at.timestamp() as f64
+            + self.inner.modified_at.timestamp_subsec_nanos() as f64 / 1_000_000_000.0
+    }
+
+    #[getter]
+    fn insertion_order(&self) -> u64 {
+        self.inner.insertion_order
+    }
+
     fn is_disabled(&self) -> bool {
         self.inner.is_disabled()
     }
@@ -148,7 +175,8 @@ impl PyDeviceEntry {
     fn __repr__(&self) -> String {
         format!(
             "DeviceEntry(id='{}', name='{}')",
-            self.inner.id, self.inner.name
+            self.inner.id,
+            self.inner.name.as_deref().unwrap_or("<unnamed>")
         )
     }
 
@@ -425,23 +453,27 @@ impl PyDeviceRegistry {
         model_id: Option<&str>,
         name: Option<&str>,
         serial_number: Option<&str>,
-        suggested_area: Option<&str>,
+        #[allow(unused_variables)] suggested_area: Option<&str>,
         sw_version: Option<&str>,
         hw_version: Option<&str>,
         via_device: Option<&Bound<'_, PyAny>>,
         configuration_url: Option<&str>,
         entry_type: Option<&str>,
-        // Accepted but ignored
-        #[allow(unused_variables)] config_subentry_id: Option<&str>,
-        #[allow(unused_variables)] default_manufacturer: Option<&str>,
-        #[allow(unused_variables)] default_model: Option<&str>,
-        #[allow(unused_variables)] default_name: Option<&str>,
+        config_subentry_id: Option<&str>,
+        default_manufacturer: Option<&str>,
+        default_model: Option<&str>,
+        default_name: Option<&str>,
         #[allow(unused_variables)] disabled_by: Option<&Bound<'_, PyAny>>,
         #[allow(unused_variables)] translation_key: Option<&str>,
         #[allow(unused_variables)] translation_placeholders: Option<&Bound<'_, PyAny>>,
-        #[allow(unused_variables)] created_at: Option<&Bound<'_, PyAny>>,
-        #[allow(unused_variables)] modified_at: Option<&Bound<'_, PyAny>>,
+        created_at: Option<f64>,
+        #[allow(unused_variables)] modified_at: Option<f64>,
     ) -> PyResult<PyDeviceEntry> {
+        // Parse timestamp (seconds since epoch from Python's time.time())
+        let timestamp = created_at.and_then(|ts| {
+            chrono::DateTime::from_timestamp(ts as i64, ((ts % 1.0) * 1_000_000_000.0) as u32)
+        });
+
         // Parse identifiers (can be set or list of tuples)
         let idents = if let Some(i) = identifiers {
             parse_identifiers_any(i)?
@@ -456,24 +488,32 @@ impl PyDeviceRegistry {
             Vec::new()
         };
 
-        let device_name = name.unwrap_or("Unknown Device");
-
         // Get or create the base entry
-        let entry = self
-            .inner
-            .get_or_create(&idents, &conns, Some(config_entry_id), device_name);
+        let entry = self.inner.get_or_create(
+            &idents,
+            &conns,
+            Some(config_entry_id),
+            Some(config_subentry_id),
+            name,
+            timestamp,
+        );
 
         // Update with additional fields if provided
-        let needs_update = manufacturer.is_some()
+        // Note: suggested_area is NOT handled here - it's handled by the Python wrapper
+        // which creates/looks up the area in the area registry and sets area_id properly
+        let needs_update = name.is_some()
+            || manufacturer.is_some()
             || model.is_some()
             || model_id.is_some()
             || serial_number.is_some()
-            || suggested_area.is_some()
             || sw_version.is_some()
             || hw_version.is_some()
             || via_device.is_some()
             || configuration_url.is_some()
-            || entry_type.is_some();
+            || entry_type.is_some()
+            || default_name.is_some()
+            || default_manufacturer.is_some()
+            || default_model.is_some();
 
         if needs_update {
             // Parse via_device tuple to get device ID
@@ -497,41 +537,60 @@ impl PyDeviceRegistry {
                 None
             };
 
-            let updated = self.inner.update(&entry.id, |e| {
-                if let Some(v) = manufacturer {
-                    e.manufacturer = Some(v.to_string());
-                }
-                if let Some(v) = model {
-                    e.model = Some(v.to_string());
-                }
-                if let Some(v) = model_id {
-                    e.model_id = Some(v.to_string());
-                }
-                if let Some(v) = serial_number {
-                    e.serial_number = Some(v.to_string());
-                }
-                if let Some(v) = suggested_area {
-                    e.area_id = Some(v.to_string());
-                }
-                if let Some(v) = sw_version {
-                    e.sw_version = Some(v.to_string());
-                }
-                if let Some(v) = hw_version {
-                    e.hw_version = Some(v.to_string());
-                }
-                if via_device_id.is_some() {
-                    e.via_device_id = via_device_id.clone();
-                }
-                if let Some(v) = configuration_url {
-                    e.configuration_url = Some(v.to_string());
-                }
-                if let Some(v) = entry_type {
-                    e.entry_type = match v {
-                        "service" => Some(ha_registries::device_registry::DeviceEntryType::Service),
-                        _ => None,
-                    };
-                }
-            });
+            let updated = self.inner.update_at(
+                &entry.id,
+                |e| {
+                    if let Some(n) = name {
+                        e.name = Some(n.to_string());
+                    } else if let Some(dn) = default_name {
+                        // default_name only sets if name is currently None
+                        if e.name.is_none() {
+                            e.name = Some(dn.to_string());
+                        }
+                    }
+                    if let Some(v) = manufacturer {
+                        e.manufacturer = Some(v.to_string());
+                    } else if let Some(dm) = default_manufacturer {
+                        if e.manufacturer.is_none() {
+                            e.manufacturer = Some(dm.to_string());
+                        }
+                    }
+                    if let Some(v) = model {
+                        e.model = Some(v.to_string());
+                    } else if let Some(dm) = default_model {
+                        if e.model.is_none() {
+                            e.model = Some(dm.to_string());
+                        }
+                    }
+                    if let Some(v) = model_id {
+                        e.model_id = Some(v.to_string());
+                    }
+                    if let Some(v) = serial_number {
+                        e.serial_number = Some(v.to_string());
+                    }
+                    if let Some(v) = sw_version {
+                        e.sw_version = Some(v.to_string());
+                    }
+                    if let Some(v) = hw_version {
+                        e.hw_version = Some(v.to_string());
+                    }
+                    if via_device_id.is_some() {
+                        e.via_device_id = via_device_id.clone();
+                    }
+                    if let Some(v) = configuration_url {
+                        e.configuration_url = Some(v.to_string());
+                    }
+                    if let Some(v) = entry_type {
+                        e.entry_type = match v {
+                            "service" => {
+                                Some(ha_registries::device_registry::DeviceEntryType::Service)
+                            }
+                            _ => None,
+                        };
+                    }
+                },
+                timestamp,
+            );
 
             if let Some(updated_entry) = updated {
                 return Ok(PyDeviceEntry::from_inner(updated_entry));
@@ -560,7 +619,9 @@ impl PyDeviceRegistry {
         configuration_url=None,
         labels=None,
         identifiers=None,
-        connections=None
+        connections=None,
+        config_entries=None,
+        modified_at=None
     ))]
     fn async_update_device(
         &self,
@@ -580,6 +641,8 @@ impl PyDeviceRegistry {
         labels: Option<Vec<String>>,
         identifiers: Option<&Bound<'_, PySet>>,
         connections: Option<&Bound<'_, PySet>>,
+        config_entries: Option<Vec<String>>,
+        modified_at: Option<f64>,
     ) -> PyResult<PyDeviceEntry> {
         // Parse identifiers/connections outside the closure
         let parsed_identifiers = if let Some(i) = identifiers {
@@ -594,53 +657,72 @@ impl PyDeviceRegistry {
             None
         };
 
-        let entry = self.inner.update(device_id, |entry| {
-            if let Some(ref n) = name {
-                entry.name = n.clone();
-            }
-            if name_by_user.is_some() {
-                entry.name_by_user = name_by_user.clone();
-            }
-            if manufacturer.is_some() {
-                entry.manufacturer = manufacturer.clone();
-            }
-            if model.is_some() {
-                entry.model = model.clone();
-            }
-            if model_id.is_some() {
-                entry.model_id = model_id.clone();
-            }
-            if hw_version.is_some() {
-                entry.hw_version = hw_version.clone();
-            }
-            if sw_version.is_some() {
-                entry.sw_version = sw_version.clone();
-            }
-            if serial_number.is_some() {
-                entry.serial_number = serial_number.clone();
-            }
-            if via_device_id.is_some() {
-                entry.via_device_id = via_device_id.clone();
-            }
-            if area_id.is_some() {
-                entry.area_id = area_id.clone();
-            }
-            if disabled_by.is_some() {
-                entry.disabled_by = parse_disabled_by(disabled_by.as_deref());
-            }
-            if configuration_url.is_some() {
-                entry.configuration_url = configuration_url.clone();
-            }
-            if let Some(ref l) = labels {
-                entry.labels = l.clone();
-            }
-            if let Some(ref i) = parsed_identifiers {
-                entry.identifiers = i.clone();
-            }
-            if let Some(ref c) = parsed_connections {
-                entry.connections = c.clone();
-            }
+        let timestamp = modified_at.and_then(|ts| {
+            chrono::DateTime::from_timestamp(ts as i64, ((ts % 1.0) * 1_000_000_000.0) as u32)
         });
+
+        let entry = self.inner.update_at(
+            device_id,
+            |entry| {
+                if let Some(ref n) = name {
+                    entry.name = Some(n.clone());
+                }
+                if name_by_user.is_some() {
+                    entry.name_by_user = name_by_user.clone();
+                }
+                if manufacturer.is_some() {
+                    entry.manufacturer = manufacturer.clone();
+                }
+                if model.is_some() {
+                    entry.model = model.clone();
+                }
+                if model_id.is_some() {
+                    entry.model_id = model_id.clone();
+                }
+                if hw_version.is_some() {
+                    entry.hw_version = hw_version.clone();
+                }
+                if sw_version.is_some() {
+                    entry.sw_version = sw_version.clone();
+                }
+                if serial_number.is_some() {
+                    entry.serial_number = serial_number.clone();
+                }
+                if let Some(ref vid) = via_device_id {
+                    if vid.is_empty() {
+                        entry.via_device_id = None; // Empty string = clear
+                    } else {
+                        entry.via_device_id = Some(vid.clone());
+                    }
+                }
+                if area_id.is_some() {
+                    entry.area_id = area_id.clone();
+                }
+                if disabled_by.is_some() {
+                    entry.disabled_by = parse_disabled_by(disabled_by.as_deref());
+                }
+                if configuration_url.is_some() {
+                    entry.configuration_url = configuration_url.clone();
+                }
+                if let Some(ref l) = labels {
+                    entry.labels = l.clone();
+                }
+                if let Some(ref i) = parsed_identifiers {
+                    entry.identifiers = i.clone();
+                }
+                if let Some(ref c) = parsed_connections {
+                    entry.connections = c.clone();
+                }
+                if let Some(ref ces) = config_entries {
+                    entry.config_entries = ces.clone();
+                    // Clean up config_entries_subentries for removed entries
+                    entry
+                        .config_entries_subentries
+                        .retain(|k, _| ces.contains(k));
+                }
+            },
+            timestamp,
+        );
 
         entry.map(PyDeviceEntry::from_inner).ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyKeyError, _>(format!(
@@ -648,6 +730,11 @@ impl PyDeviceRegistry {
                 device_id
             ))
         })
+    }
+
+    /// Clear a config entry from all devices
+    fn async_clear_config_entry(&self, config_entry_id: &str) {
+        self.inner.clear_config_entry(config_entry_id);
     }
 
     /// Remove a device

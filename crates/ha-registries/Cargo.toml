@@ -19,6 +19,7 @@ indexmap = { workspace = true }
 # IDs and time
 chrono = { workspace = true }
 ulid = { workspace = true }
+uuid = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }

@@ -4,6 +4,7 @@
 //! and multiple indexes for fast lookups.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -16,6 +17,7 @@ use crate::storage::{Storable, Storage, StorageFile, StorageResult};
 
 /// Storage key for device registry
 pub const STORAGE_KEY: &str = "core.device_registry";
+pub const CONNECTION_NETWORK_MAC: &str = "mac";
 /// Current storage version
 pub const STORAGE_VERSION: u32 = 1;
 /// Current minor version
@@ -125,6 +127,60 @@ impl DeviceConnection {
     pub fn key(&self) -> String {
         format!("{}:{}", self.0, self.1)
     }
+
+    /// Create a normalized connection (MAC addresses lowercased and formatted)
+    pub fn normalized(conn_type: impl Into<String>, id: impl Into<String>) -> Self {
+        let ct = conn_type.into();
+        let raw_id = id.into();
+        let normalized_id = if ct == CONNECTION_NETWORK_MAC {
+            format_mac(&raw_id)
+        } else {
+            raw_id
+        };
+        Self(ct, normalized_id)
+    }
+}
+
+/// Format a MAC address string for storage (matches HA's format_mac).
+/// Normalizes to lowercase colon-separated format.
+pub fn format_mac(mac: &str) -> String {
+    let to_test = mac;
+
+    // Already colon-separated (17 chars, 5 colons) - just lowercase
+    if to_test.len() == 17 && to_test.chars().filter(|c| *c == ':').count() == 5 {
+        return to_test.to_lowercase();
+    }
+
+    // Dash-separated (17 chars, 5 dashes) - remove dashes, format
+    let stripped = if to_test.len() == 17 && to_test.chars().filter(|c| *c == '-').count() == 5 {
+        to_test.replace('-', "")
+    } else if to_test.len() == 14 && to_test.chars().filter(|c| *c == '.').count() == 2 {
+        // Dot-separated (14 chars, 2 dots) - remove dots, format
+        to_test.replace('.', "")
+    } else if to_test.len() == 12 && to_test.chars().all(|c| c.is_ascii_hexdigit()) {
+        // No separators (12 hex chars) - format with colons
+        to_test.to_string()
+    } else {
+        // Unknown format - return as-is
+        return mac.to_string();
+    };
+
+    // Format as colon-separated lowercase
+    stripped
+        .to_lowercase()
+        .as_bytes()
+        .chunks(2)
+        .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
+/// Normalize a slice of connections (MAC addresses formatted to lowercase)
+pub fn normalize_connections(connections: &[DeviceConnection]) -> Vec<DeviceConnection> {
+    connections
+        .iter()
+        .map(|c| DeviceConnection::normalized(c.connection_type(), c.id()))
+        .collect()
 }
 
 /// A registered device entry
@@ -154,8 +210,8 @@ pub struct DeviceEntry {
     pub primary_config_entry: Option<String>,
 
     /// Device name
-    #[serde(default)]
-    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 
     /// User-set name
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -216,20 +272,28 @@ pub struct DeviceEntry {
     /// Last modified timestamp
     #[serde(default = "Utc::now")]
     pub modified_at: DateTime<Utc>,
+
+    /// Insertion order (for stable iteration when timestamps are equal)
+    #[serde(skip)]
+    pub insertion_order: u64,
 }
 
 impl DeviceEntry {
-    /// Create a new device entry
-    pub fn new(name: impl Into<String>) -> Self {
-        let now = Utc::now();
+    /// Create a new device entry with the current time
+    pub fn new(name: Option<&str>) -> Self {
+        Self::new_at(name, Utc::now())
+    }
+
+    /// Create a new device entry with a specific timestamp
+    pub fn new_at(name: Option<&str>, now: DateTime<Utc>) -> Self {
         Self {
-            id: ulid::Ulid::new().to_string().to_lowercase(),
+            id: uuid::Uuid::new_v4().simple().to_string(),
             identifiers: Vec::new(),
             connections: Vec::new(),
             config_entries: Vec::new(),
             config_entries_subentries: HashMap::new(),
             primary_config_entry: None,
-            name: name.into(),
+            name: name.map(|s| s.to_string()),
             name_by_user: None,
             manufacturer: None,
             model: None,
@@ -245,12 +309,16 @@ impl DeviceEntry {
             labels: Vec::new(),
             created_at: now,
             modified_at: now,
+            insertion_order: 0,
         }
     }
 
     /// Get display name (user name or device name)
     pub fn display_name(&self) -> &str {
-        self.name_by_user.as_deref().unwrap_or(&self.name)
+        self.name_by_user
+            .as_deref()
+            .or(self.name.as_deref())
+            .unwrap_or("")
     }
 
     /// Check if device is disabled
@@ -334,6 +402,9 @@ pub struct DeviceRegistry {
 
     /// Deleted devices (soft delete, Arc-wrapped)
     deleted: DashMap<String, Arc<DeviceEntry>>,
+
+    /// Counter for insertion ordering
+    insertion_counter: AtomicU64,
 }
 
 impl DeviceRegistry {
@@ -348,6 +419,7 @@ impl DeviceRegistry {
             by_area_id: DashMap::new(),
             by_via_device_id: DashMap::new(),
             deleted: DashMap::new(),
+            insertion_counter: AtomicU64::new(0),
         }
     }
 
@@ -361,7 +433,11 @@ impl DeviceRegistry {
                 storage_file.minor_version
             );
 
-            for entry in storage_file.data.devices {
+            // Sort by created_at for stable insertion order on load
+            let mut devices = storage_file.data.devices;
+            devices.sort_by_key(|e| e.created_at);
+            for mut entry in devices {
+                entry.insertion_order = self.insertion_counter.fetch_add(1, Ordering::Relaxed);
                 self.index_entry(Arc::new(entry));
             }
 
@@ -489,7 +565,13 @@ impl DeviceRegistry {
 
     /// Get device by connection
     pub fn get_by_connection(&self, conn_type: &str, id: &str) -> Option<Arc<DeviceEntry>> {
-        let key = format!("{}:{}", conn_type, id);
+        // Normalize the connection value for lookup (e.g., MAC addresses to lowercase)
+        let normalized_id = if conn_type == CONNECTION_NETWORK_MAC {
+            format_mac(id)
+        } else {
+            id.to_string()
+        };
+        let key = format!("{}:{}", conn_type, normalized_id);
         self.by_connection
             .get(&key)
             .and_then(|device_id| self.get(&device_id))
@@ -528,12 +610,60 @@ impl DeviceRegistry {
         identifiers: &[DeviceIdentifier],
         connections: &[DeviceConnection],
         config_entry_id: Option<&str>,
-        name: &str,
+        config_subentry_id: Option<Option<&str>>,
+        name: Option<&str>,
+        timestamp: Option<DateTime<Utc>>,
     ) -> Arc<DeviceEntry> {
+        // Normalize connections (e.g., MAC addresses to lowercase)
+        let connections = normalize_connections(connections);
+        let connections = connections.as_slice();
+
+        // Determine the subentry value to add
+        // config_subentry_id: None = not specified (default to None subentry)
+        //                     Some(None) = explicitly None subentry
+        //                     Some(Some("id")) = specific subentry id
+        let subentry_val: Option<String> = match config_subentry_id {
+            None => None,                           // Default: None subentry
+            Some(None) => None,                     // Explicit None subentry
+            Some(Some(id)) => Some(id.to_string()), // Specific subentry
+        };
+
         // Check by identifiers
         for identifier in identifiers {
             if let Some(existing) = self.get_by_identifier(identifier.domain(), identifier.id()) {
                 debug!("Found existing device by identifier: {}", existing.id);
+                let device_id = existing.id.clone();
+                let (ce_needs_add, subentry_needs_add, conns_to_add, idents_to_add) = self
+                    .compute_merge_needs(
+                        &existing,
+                        config_entry_id,
+                        &subentry_val,
+                        connections,
+                        identifiers,
+                    );
+                if ce_needs_add
+                    || subentry_needs_add
+                    || !conns_to_add.is_empty()
+                    || !idents_to_add.is_empty()
+                {
+                    if let Some(updated) = self.update_at(
+                        &device_id,
+                        |e| {
+                            self.apply_merge(
+                                e,
+                                config_entry_id,
+                                &subentry_val,
+                                ce_needs_add,
+                                subentry_needs_add,
+                                conns_to_add.clone(),
+                                idents_to_add.clone(),
+                            );
+                        },
+                        timestamp,
+                    ) {
+                        return updated;
+                    }
+                }
                 return existing;
             }
         }
@@ -544,31 +674,147 @@ impl DeviceRegistry {
                 self.get_by_connection(connection.connection_type(), connection.id())
             {
                 debug!("Found existing device by connection: {}", existing.id);
+                let device_id = existing.id.clone();
+                let (ce_needs_add, subentry_needs_add, conns_to_add, idents_to_add) = self
+                    .compute_merge_needs(
+                        &existing,
+                        config_entry_id,
+                        &subentry_val,
+                        connections,
+                        identifiers,
+                    );
+                if ce_needs_add
+                    || subentry_needs_add
+                    || !conns_to_add.is_empty()
+                    || !idents_to_add.is_empty()
+                {
+                    if let Some(updated) = self.update_at(
+                        &device_id,
+                        |e| {
+                            self.apply_merge(
+                                e,
+                                config_entry_id,
+                                &subentry_val,
+                                ce_needs_add,
+                                subentry_needs_add,
+                                conns_to_add.clone(),
+                                idents_to_add.clone(),
+                            );
+                        },
+                        timestamp,
+                    ) {
+                        return updated;
+                    }
+                }
                 return existing;
             }
         }
 
         // Create new device
-        let mut entry = DeviceEntry::new(name);
+        let mut entry = DeviceEntry::new_at(name, timestamp.unwrap_or_else(Utc::now));
+        entry.insertion_order = self.insertion_counter.fetch_add(1, Ordering::Relaxed);
         entry.identifiers = identifiers.to_vec();
         entry.connections = connections.to_vec();
 
         if let Some(config_id) = config_entry_id {
             entry.config_entries.push(config_id.to_string());
             entry.primary_config_entry = Some(config_id.to_string());
+            entry
+                .config_entries_subentries
+                .insert(config_id.to_string(), vec![subentry_val.clone()]);
         }
 
         let arc_entry = Arc::new(entry);
         self.index_entry(Arc::clone(&arc_entry));
 
-        info!("Registered new device: {} ({})", name, arc_entry.id);
+        info!("Registered new device: {:?} ({})", name, arc_entry.id);
         arc_entry
+    }
+
+    /// Compute what needs to be merged into an existing device
+    fn compute_merge_needs(
+        &self,
+        existing: &DeviceEntry,
+        config_entry_id: Option<&str>,
+        subentry_val: &Option<String>,
+        connections: &[DeviceConnection],
+        identifiers: &[DeviceIdentifier],
+    ) -> (bool, bool, Vec<DeviceConnection>, Vec<DeviceIdentifier>) {
+        let ce_needs_add = config_entry_id
+            .map(|ce| !existing.config_entries.contains(&ce.to_string()))
+            .unwrap_or(false);
+
+        // Check if subentry needs to be added (config entry exists but subentry is new)
+        let subentry_needs_add = if !ce_needs_add {
+            if let Some(ce_id) = config_entry_id {
+                existing
+                    .config_entries_subentries
+                    .get(ce_id)
+                    .map(|subs| !subs.contains(subentry_val))
+                    .unwrap_or(true)
+            } else {
+                false
+            }
+        } else {
+            false // Will be added with the config entry
+        };
+
+        let conns_to_add: Vec<_> = connections
+            .iter()
+            .filter(|c| !existing.connections.contains(c))
+            .cloned()
+            .collect();
+        let idents_to_add: Vec<_> = identifiers
+            .iter()
+            .filter(|i| !existing.identifiers.contains(i))
+            .cloned()
+            .collect();
+
+        (
+            ce_needs_add,
+            subentry_needs_add,
+            conns_to_add,
+            idents_to_add,
+        )
+    }
+
+    /// Apply merge operations to a device entry
+    #[allow(clippy::too_many_arguments)]
+    fn apply_merge(
+        &self,
+        e: &mut DeviceEntry,
+        config_entry_id: Option<&str>,
+        subentry_val: &Option<String>,
+        ce_needs_add: bool,
+        subentry_needs_add: bool,
+        conns_to_add: Vec<DeviceConnection>,
+        idents_to_add: Vec<DeviceIdentifier>,
+    ) {
+        if let Some(ce_id) = config_entry_id {
+            if ce_needs_add {
+                e.config_entries.push(ce_id.to_string());
+                e.config_entries_subentries
+                    .insert(ce_id.to_string(), vec![subentry_val.clone()]);
+            } else if subentry_needs_add {
+                e.config_entries_subentries
+                    .entry(ce_id.to_string())
+                    .or_default()
+                    .push(subentry_val.clone());
+            }
+        }
+        e.connections.extend(conns_to_add);
+        e.identifiers.extend(idents_to_add);
     }
 
     /// Update a device entry
     ///
     /// Returns the updated entry as `Arc<DeviceEntry>`.
-    pub fn update<F>(&self, device_id: &str, f: F) -> Option<Arc<DeviceEntry>>
+    pub fn update_at<F>(
+        &self,
+        device_id: &str,
+        f: F,
+        timestamp: Option<DateTime<Utc>>,
+    ) -> Option<Arc<DeviceEntry>>
     where
         F: FnOnce(&mut DeviceEntry),
     {
@@ -600,9 +846,31 @@ impl DeviceRegistry {
                 }
             }
 
-            // Apply update
+            // Apply update - only set modified_at if data fields actually changed
+            let old = entry.clone();
             f(&mut entry);
-            entry.modified_at = Utc::now();
+            let changed = old.identifiers != entry.identifiers
+                || old.connections != entry.connections
+                || old.config_entries != entry.config_entries
+                || old.config_entries_subentries != entry.config_entries_subentries
+                || old.primary_config_entry != entry.primary_config_entry
+                || old.name != entry.name
+                || old.name_by_user != entry.name_by_user
+                || old.manufacturer != entry.manufacturer
+                || old.model != entry.model
+                || old.model_id != entry.model_id
+                || old.hw_version != entry.hw_version
+                || old.sw_version != entry.sw_version
+                || old.serial_number != entry.serial_number
+                || old.via_device_id != entry.via_device_id
+                || old.entry_type != entry.entry_type
+                || old.disabled_by != entry.disabled_by
+                || old.configuration_url != entry.configuration_url
+                || old.area_id != entry.area_id
+                || old.labels != entry.labels;
+            if changed {
+                entry.modified_at = timestamp.unwrap_or_else(Utc::now);
+            }
 
             // Re-index with new Arc
             let new_arc = Arc::new(entry);
@@ -612,6 +880,14 @@ impl DeviceRegistry {
         } else {
             None
         }
+    }
+
+    /// Update a device entry using the current time
+    pub fn update<F>(&self, device_id: &str, f: F) -> Option<Arc<DeviceEntry>>
+    where
+        F: FnOnce(&mut DeviceEntry),
+    {
+        self.update_at(device_id, f, None)
     }
 
     /// Remove a device
@@ -627,6 +903,44 @@ impl DeviceRegistry {
             Some(arc_entry)
         } else {
             None
+        }
+    }
+
+    /// Clear a config entry from all devices.
+    ///
+    /// For each device with this config_entry_id:
+    /// - Removes the config_entry_id from the device's config_entries
+    /// - Removes from config_entries_subentries
+    /// - Updates primary_config_entry if it was the removed one
+    /// - If the device has no remaining config entries, removes the device
+    pub fn clear_config_entry(&self, config_entry_id: &str) {
+        // Collect device IDs first to avoid holding locks during modification
+        let device_ids: Vec<String> = self
+            .get_by_config_entry_id(config_entry_id)
+            .iter()
+            .map(|d| d.id.clone())
+            .collect();
+
+        for device_id in device_ids {
+            // Check if this is the only config entry
+            let should_remove = if let Some(entry) = self.get(&device_id) {
+                entry.config_entries.len() <= 1
+            } else {
+                continue;
+            };
+
+            if should_remove {
+                self.remove(&device_id);
+            } else {
+                let ce_id = config_entry_id.to_string();
+                self.update(&device_id, |entry| {
+                    entry.config_entries.retain(|id| id != &ce_id);
+                    entry.config_entries_subentries.remove(&ce_id);
+                    if entry.primary_config_entry.as_deref() == Some(&ce_id) {
+                        entry.primary_config_entry = entry.config_entries.first().cloned();
+                    }
+                });
+            }
         }
     }
 

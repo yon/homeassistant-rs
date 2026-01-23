@@ -205,6 +205,11 @@ impl PyEntityEntry {
         self.inner.modified_at.to_rfc3339()
     }
 
+    #[getter]
+    fn orphaned_timestamp(&self) -> Option<f64> {
+        self.inner.orphaned_timestamp
+    }
+
     fn is_disabled(&self) -> bool {
         self.inner.is_disabled()
     }
@@ -339,14 +344,49 @@ impl PyEntityRegistry {
     /// Get entity ID by unique_id lookup
     fn async_get_entity_id(&self, domain: &str, platform: &str, unique_id: &str) -> Option<String> {
         self.inner
-            .get_by_unique_id(unique_id)
-            .filter(|e| e.domain() == domain && e.platform == platform)
+            .get_by_platform_unique_id(platform, unique_id)
+            .filter(|e| e.domain() == domain)
             .map(|e| e.entity_id.clone())
     }
 
     /// Check if an entity with the given (domain, platform, unique_id) is in deleted_entities
     fn is_deleted(&self, domain: &str, platform: &str, unique_id: &str) -> bool {
         self.inner.is_deleted(domain, platform, unique_id)
+    }
+
+    /// Clear area_id from deleted entities matching the given area_id
+    fn clear_deleted_area_id(&self, area_id: &str) {
+        self.inner.clear_deleted_area_id(area_id)
+    }
+
+    /// Clear label_id from deleted entities that have it
+    fn clear_deleted_label_id(&self, label_id: &str) {
+        self.inner.clear_deleted_label_id(label_id)
+    }
+
+    /// Clear category from deleted entities matching scope and category_id
+    fn clear_deleted_category_id(&self, scope: &str, category_id: &str) {
+        self.inner.clear_deleted_category_id(scope, category_id)
+    }
+
+    /// Clear config_entry_id from deleted entities matching the given config_entry_id
+    fn clear_deleted_config_entry(&self, config_entry_id: &str, orphaned_timestamp: f64) {
+        self.inner
+            .clear_deleted_config_entry(config_entry_id, orphaned_timestamp)
+    }
+
+    /// Clear config_subentry_id from deleted entities matching the given config_entry_id and subentry_id
+    fn clear_deleted_config_subentry(
+        &self,
+        config_entry_id: &str,
+        config_subentry_id: &str,
+        orphaned_timestamp: f64,
+    ) {
+        self.inner.clear_deleted_config_subentry(
+            config_entry_id,
+            config_subentry_id,
+            orphaned_timestamp,
+        )
     }
 
     /// Get entity by unique_id
@@ -458,8 +498,8 @@ impl PyEntityRegistry {
         created_at: Option<&str>,
         modified_at: Option<&str>,
     ) -> PyEntityEntry {
-        // Check if entity with this unique_id already exists
-        let existing = self.inner.get_by_unique_id(unique_id);
+        // Check if entity with this (platform, unique_id) already exists
+        let existing = self.inner.get_by_platform_unique_id(platform, unique_id);
         let is_new = existing.is_none();
 
         // Determine the entity_id to use
@@ -557,6 +597,10 @@ impl PyEntityRegistry {
                 update_optional_field(&mut e.config_entry_id, config_entry_id);
                 update_optional_field(&mut e.config_subentry_id, config_subentry_id);
                 update_optional_field(&mut e.device_id, device_id);
+                // Store suggested_object_id for new entities
+                if is_new {
+                    e.suggested_object_id = suggested_object_id.map(|s| s.to_string());
+                }
                 // disabled_by and hidden_by only affect newly created entities,
                 // not existing ones (per Home Assistant's entity_registry.py behavior)
                 if is_new && disabled.is_some() {
@@ -609,13 +653,26 @@ impl PyEntityRegistry {
         name=None,
         icon=None,
         area_id=None,
+        new_entity_id=None,
+        new_unique_id=None,
         disabled_by=None,
         hidden_by=None,
         device_class=None,
         unit_of_measurement=None,
         labels=None,
         aliases=None,
-        categories=None
+        categories=None,
+        capabilities=None,
+        config_entry_id=None,
+        config_subentry_id=None,
+        device_id=None,
+        entity_category=None,
+        has_entity_name=None,
+        original_device_class=None,
+        original_icon=None,
+        original_name=None,
+        supported_features=None,
+        translation_key=None
     ))]
     fn async_update_entity(
         &self,
@@ -623,6 +680,8 @@ impl PyEntityRegistry {
         name: Option<String>,
         icon: Option<String>,
         area_id: Option<String>,
+        new_entity_id: Option<String>,
+        new_unique_id: Option<String>,
         disabled_by: Option<String>,
         hidden_by: Option<String>,
         device_class: Option<String>,
@@ -630,9 +689,21 @@ impl PyEntityRegistry {
         labels: Option<HashSet<String>>,
         aliases: Option<HashSet<String>>,
         categories: Option<&Bound<'_, PyAny>>,
+        capabilities: Option<&Bound<'_, PyAny>>,
+        config_entry_id: Option<String>,
+        config_subentry_id: Option<String>,
+        device_id: Option<String>,
+        entity_category: Option<String>,
+        has_entity_name: Option<bool>,
+        original_device_class: Option<String>,
+        original_icon: Option<String>,
+        original_name: Option<String>,
+        supported_features: Option<u32>,
+        translation_key: Option<String>,
     ) -> PyResult<PyEntityEntry> {
-        // Convert categories from Python to JSON (supports both dict and set)
+        // Convert categories/capabilities from Python to JSON
         let categories_json = categories.and_then(|c| py_to_json(c).ok());
+        let capabilities_json = capabilities.and_then(|c| py_to_json(c).ok());
 
         let entry = self
             .inner
@@ -643,8 +714,19 @@ impl PyEntityRegistry {
                 if icon.is_some() {
                     entry.icon = icon.clone();
                 }
-                if area_id.is_some() {
-                    entry.area_id = area_id.clone();
+                if let Some(ref aid) = area_id {
+                    entry.area_id = if aid.is_empty() {
+                        None
+                    } else {
+                        Some(aid.clone())
+                    };
+                }
+                if let Some(ref new_eid) = new_entity_id {
+                    entry.entity_id = new_eid.clone();
+                }
+                if let Some(ref new_uid) = new_unique_id {
+                    entry.previous_unique_id = entry.unique_id.clone();
+                    entry.unique_id = Some(new_uid.clone());
                 }
                 if disabled_by.is_some() {
                     entry.disabled_by = parse_disabled_by(disabled_by.as_deref());
@@ -666,6 +748,59 @@ impl PyEntityRegistry {
                 }
                 if categories_json.is_some() {
                     entry.categories = categories_json.clone();
+                }
+                if capabilities_json.is_some() {
+                    entry.capabilities = capabilities_json.clone();
+                }
+                if let Some(ref ceid) = config_entry_id {
+                    entry.config_entry_id = if ceid.is_empty() {
+                        None
+                    } else {
+                        Some(ceid.clone())
+                    };
+                }
+                if let Some(ref csid) = config_subentry_id {
+                    entry.config_subentry_id = if csid.is_empty() {
+                        None
+                    } else {
+                        Some(csid.clone())
+                    };
+                }
+                if let Some(ref did) = device_id {
+                    entry.device_id = if did.is_empty() {
+                        None
+                    } else {
+                        Some(did.clone())
+                    };
+                }
+                if let Some(ref ec) = entity_category {
+                    entry.entity_category = if ec.is_empty() {
+                        None
+                    } else {
+                        match ec.as_str() {
+                            "config" => Some(EntityCategory::Config),
+                            "diagnostic" => Some(EntityCategory::Diagnostic),
+                            _ => None,
+                        }
+                    };
+                }
+                if let Some(hen) = has_entity_name {
+                    entry.has_entity_name = Some(hen);
+                }
+                if original_device_class.is_some() {
+                    entry.original_device_class = original_device_class.clone();
+                }
+                if original_icon.is_some() {
+                    entry.original_icon = original_icon.clone();
+                }
+                if original_name.is_some() {
+                    entry.original_name = original_name.clone();
+                }
+                if let Some(sf) = supported_features {
+                    entry.supported_features = sf;
+                }
+                if translation_key.is_some() {
+                    entry.translation_key = translation_key.clone();
                 }
             })
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyKeyError, _>(format!("{}", e)))?;

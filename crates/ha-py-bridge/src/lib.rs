@@ -170,8 +170,7 @@ fn split_entity_id(entity_id: &str) -> PyResult<(String, String)> {
 #[cfg(feature = "extension")]
 #[pyfunction]
 fn valid_entity_id(entity_id: &str) -> bool {
-    let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
-    parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty()
+    entity_id.parse::<ha_core::EntityId>().is_ok()
 }
 
 /// Decorator to mark a function as safe to call from the event loop

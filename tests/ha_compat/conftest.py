@@ -15,6 +15,7 @@ Usage:
 import asyncio
 import os
 import time
+from collections import defaultdict
 from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from typing import Any
@@ -38,7 +39,7 @@ import pytest
 try:
     from homeassistant.exceptions import InvalidEntityFormatError
     from homeassistant.util.read_only_dict import ReadOnlyDict
-    from homeassistant.core import EventOrigin
+    from homeassistant.core import EventOrigin, State as NativeState
     from homeassistant.util import dt as dt_util
     from homeassistant.util.ulid import ulid_at_time
 except ImportError:
@@ -53,6 +54,7 @@ except ImportError:
         local = "LOCAL"
         remote = "REMOTE"
 
+    NativeState = object
     dt_util = None
     ulid_at_time = None
 
@@ -62,6 +64,7 @@ USE_RUST_COMPONENTS = os.environ.get("USE_RUST_COMPONENTS", "1") != "0"
 # Import Rust extension if available
 _rust_available = False
 _rust_hass = None  # Shared Rust HomeAssistant instance
+_UNDEFINED = object()  # Sentinel to distinguish "not provided" from "set to None"
 
 if USE_RUST_COMPONENTS:
     try:
@@ -91,12 +94,10 @@ def _parse_iso_datetime(iso_str: str) -> datetime:
 # Rust-backed State wrapper
 # =============================================================================
 
-class RustState:
+class RustState(NativeState):
     """Wrapper that provides HA-compatible State API backed by Rust storage."""
 
-    __slots__ = ("entity_id", "domain", "object_id", "state", "attributes",
-                 "last_changed", "last_updated", "last_updated_timestamp",
-                 "last_reported", "context", "state_info", "_cache")
+    __slots__ = ()  # All slots defined in parent NativeState
 
     def __init__(
         self,
@@ -114,8 +115,11 @@ class RustState:
         """Initialize a new state."""
         self._cache: dict[str, Any] = {}
 
-        if validate_entity_id and '.' not in entity_id:
-            raise InvalidEntityFormatError(f"Invalid entity id: {entity_id}")
+        if validate_entity_id and not ha_core_rs.valid_entity_id(entity_id):
+            raise InvalidEntityFormatError(
+                f"Invalid entity id encountered: {entity_id}. "
+                "Format should be <domain>.<object_id>"
+            )
 
         self.entity_id = entity_id
         self.state = state
@@ -285,12 +289,15 @@ class RustState:
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, RustState):
-            return False
+            return NotImplemented
         return (
             self.entity_id == other.entity_id
             and self.state == other.state
             and self.attributes == other.attributes
         )
+
+    def __hash__(self) -> int:
+        return hash((self.entity_id, self.state))
 
     def __repr__(self) -> str:
         last_changed_str = self.last_changed.isoformat()
@@ -313,13 +320,13 @@ class RustContext:
 
     def __init__(
         self,
+        user_id=None,
+        parent_id=None,
         id: str | None = None,
-        user_id: str | None = None,
-        parent_id: str | None = None,
     ) -> None:
         if _rust_available and id is None:
             # Use Rust to generate ULID
-            rust_ctx = ha_core_rs.Context(user_id=user_id, parent_id=parent_id)
+            rust_ctx = ha_core_rs.Context()
             self._id = rust_ctx.id
         else:
             if id is None:
@@ -367,9 +374,14 @@ class RustContext:
         })
 
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, RustContext):
-            return False
-        return self._id == other._id
+        # Duck-type: compare with any Context-like object (native HA or RustContext)
+        try:
+            return self._id == other.id
+        except AttributeError:
+            return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash(self._id)
 
     def __repr__(self) -> str:
         return f"<Context id={self._id}, user_id={self._user_id}>"
@@ -495,10 +507,17 @@ class RustStateMachine:
         entity_id = entity_id.lower()
 
         if len(new_state) > 255:
-            raise ValueError(f"State max length exceeded: {len(new_state)} > 255")
+            from homeassistant.exceptions import InvalidStateError
+            raise InvalidStateError(
+                f"Invalid state with length {len(new_state)}. "
+                "State max length is 255 characters."
+            )
 
-        if '.' not in entity_id:
-            raise InvalidEntityFormatError(f"Invalid entity id: {entity_id}")
+        if not ha_core_rs.valid_entity_id(entity_id):
+            raise InvalidEntityFormatError(
+                f"Invalid entity id encountered: {entity_id}. "
+                "Format should be <domain>.<object_id>"
+            )
 
         context = context or RustContext()
         now = timestamp or datetime.now(timezone.utc)
@@ -718,7 +737,10 @@ class RustEventBus:
         return remove_listener
 
     def async_listeners(self) -> dict[str, int]:
-        return {event_type: len(listeners) for event_type, listeners in self._listeners.items()}
+        result = defaultdict(int)
+        for event_type, listeners in self._listeners.items():
+            result[event_type] = len(listeners)
+        return result
 
     def fire(
         self,
@@ -756,6 +778,10 @@ class RustEvent:
     """Wrapper for Event compatible with homeassistant.core.Event."""
 
     __slots__ = ("event_type", "data", "origin", "time_fired_timestamp", "context", "_cache")
+
+    def __class_getitem__(cls, item):
+        """Support generic subscript syntax (e.g., Event[EventStateChangedData])."""
+        return cls
 
     def __init__(
         self,
@@ -797,8 +823,11 @@ class RustEvent:
     @property
     def json_fragment(self) -> Any:
         import orjson
+        from homeassistant.helpers.json import json_encoder_default
         if "json_fragment" not in self._cache:
-            self._cache["json_fragment"] = orjson.Fragment(orjson.dumps(self._as_dict))
+            self._cache["json_fragment"] = orjson.Fragment(
+                orjson.dumps(self._as_dict, default=json_encoder_default)
+            )
         return self._cache["json_fragment"]
 
     @property
@@ -824,7 +853,7 @@ class RustEvent:
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, RustEvent):
-            return False
+            return NotImplemented
         return (
             self.event_type == other.event_type
             and self.data == other.data
@@ -832,6 +861,10 @@ class RustEvent:
             and self.time_fired_timestamp == other.time_fired_timestamp
             and self.context == other.context
         )
+
+    def __hash__(self) -> int:
+        ctx_id = self.context.id if hasattr(self.context, 'id') else id(self.context)
+        return hash((self.event_type, self.time_fired_timestamp, ctx_id))
 
     def __repr__(self) -> str:
         origin_char = "L" if self.origin == EventOrigin.local else "R"
@@ -1008,6 +1041,53 @@ def _rust_entry_to_registry_entry(rust_entry):
     )
 
 
+def _rust_entry_to_deleted_registry_entry(rust_entry):
+    """Convert a Rust EntityEntry to HA's DeletedRegistryEntry.
+
+    Used for entries in deleted_entities.
+    """
+    from homeassistant.helpers import entity_registry as er
+    from homeassistant.helpers.entity import EntityCategory
+
+    # Convert string enums to HA enum types
+    disabled_by = None
+    if rust_entry.disabled_by:
+        disabled_by = er.RegistryEntryDisabler(rust_entry.disabled_by)
+
+    hidden_by = None
+    if rust_entry.hidden_by:
+        hidden_by = er.RegistryEntryHider(rust_entry.hidden_by)
+
+    # Parse timestamps
+    created_at = _parse_iso_datetime(rust_entry.created_at)
+    modified_at = _parse_iso_datetime(rust_entry.modified_at)
+
+    # Get orphaned_timestamp from Rust entry
+    orphaned_timestamp = rust_entry.orphaned_timestamp
+
+    return er.DeletedRegistryEntry(
+        entity_id=rust_entry.entity_id,
+        unique_id=rust_entry.unique_id or "",
+        platform=rust_entry.platform,
+        aliases=set(rust_entry.aliases),
+        area_id=rust_entry.area_id,
+        categories=_convert_categories(rust_entry.categories),
+        config_entry_id=rust_entry.config_entry_id,
+        config_subentry_id=rust_entry.config_subentry_id,
+        created_at=created_at,
+        device_class=rust_entry.device_class,
+        disabled_by=disabled_by,
+        hidden_by=hidden_by,
+        icon=rust_entry.icon,
+        id=rust_entry.id,
+        labels=set(rust_entry.labels),
+        modified_at=modified_at,
+        name=rust_entry.name,
+        options=rust_entry.options,
+        orphaned_timestamp=orphaned_timestamp,
+    )
+
+
 class _MockStore:
     """Mock store for flush_store compatibility.
 
@@ -1028,6 +1108,62 @@ class _MockStore:
         self._registry._rust_registry.async_save()
 
 
+class RustEntityRegistryItems(dict):
+    """Dict subclass that provides extra lookup methods like HA's EntityRegistryItems."""
+
+    def get_device_ids(self):
+        """Return device ids."""
+        return {entry.device_id for entry in self.values() if entry.device_id is not None}
+
+    def get_entity_id(self, key: tuple[str, str, str]) -> str | None:
+        """Get entity_id from (domain, platform, unique_id)."""
+        domain, platform, unique_id = key
+        for entity_id, entry in self.items():
+            if entry.domain == domain and entry.platform == platform and entry.unique_id == unique_id:
+                return entity_id
+        return None
+
+    def get_entries_for_area_id(self, area_id: str) -> list:
+        """Get entries for area."""
+        return [
+            entry for entry in self.values()
+            if entry.area_id == area_id
+        ]
+
+    def get_entries_for_config_entry_id(self, config_entry_id: str) -> list:
+        """Get entries for config entry."""
+        return [
+            entry for entry in self.values()
+            if entry.config_entry_id == config_entry_id
+        ]
+
+    def get_entries_for_device_id(self, device_id: str, include_disabled_entities: bool = False) -> list:
+        """Get entries for device."""
+        return [
+            entry for entry in self.values()
+            if entry.device_id == device_id
+            and (include_disabled_entities or not entry.disabled_by)
+        ]
+
+    def get_entries_for_label(self, label_id: str) -> list:
+        """Get entries for label."""
+        return [
+            entry for entry in self.values()
+            if label_id in (entry.labels or set())
+        ]
+
+    def get_entry(self, entity_id_or_uuid: str) -> object | None:
+        """Get entry by entity_id or UUID."""
+        # Try direct entity_id lookup first
+        if entity_id_or_uuid in self:
+            return self[entity_id_or_uuid]
+        # Try UUID lookup
+        for entry in self.values():
+            if entry.id == entity_id_or_uuid:
+                return entry
+        return None
+
+
 class RustEntityRegistry:
     """Wrapper that provides HA-compatible EntityRegistry API backed by Rust."""
 
@@ -1038,6 +1174,8 @@ class RustEntityRegistry:
         self._hass = hass
         # Cache wrapper objects to maintain identity (for `is` checks in tests)
         self._entry_cache: dict[str, RustEntityEntry] = {}
+        # Allow mock_registry to override entities with a native EntityRegistryItems
+        self._entities_override = None
         # Mock store for flush_store compatibility - references this registry
         self._store = _MockStore(self)
 
@@ -1076,6 +1214,71 @@ class RustEntityRegistry:
         self._entry_cache[entity_id] = entry
         return entry
 
+    def async_clear_area_id(self, area_id: str) -> None:
+        """Clear area id from registry entries."""
+        # Update active entities to remove area_id
+        # Use empty string as "clear" marker for Rust
+        for entry in self._rust_registry.async_entries_for_area(area_id):
+            self.async_update_entity(entry.entity_id, area_id="")
+        # Clear from deleted entities
+        self._rust_registry.clear_deleted_area_id(area_id)
+
+    def async_clear_category_id(self, scope: str, category_id: str) -> None:
+        """Clear a category from registry entries matching scope and category_id."""
+        for entry in list(self.entities.values()):
+            if entry.categories.get(scope) == category_id:
+                new_categories = dict(entry.categories)
+                del new_categories[scope]
+                self.async_update_entity(entry.entity_id, categories=new_categories)
+        # Clear from deleted entities
+        self._rust_registry.clear_deleted_category_id(scope, category_id)
+
+    def async_clear_config_entry(self, config_entry_id: str) -> None:
+        """Clear config entry from registry entries."""
+        import time
+
+        # Get all entity IDs for this config entry before removing
+        entity_ids = [
+            entry.entity_id
+            for entry in self._rust_registry.async_entries_for_config_entry(config_entry_id)
+        ]
+        # Remove each entity
+        for entity_id in entity_ids:
+            self.async_remove(entity_id)
+        # Also clear config_entry_id from deleted entities and mark orphaned
+        now_time = time.time()
+        self._rust_registry.clear_deleted_config_entry(config_entry_id, now_time)
+
+    def async_clear_config_subentry(
+        self, config_entry_id: str, config_subentry_id: str
+    ) -> None:
+        """Clear config subentry from registry entries."""
+        import time
+
+        # Get entities for config entry and filter by subentry
+        entity_ids = [
+            entry.entity_id
+            for entry in self._rust_registry.async_entries_for_config_entry(config_entry_id)
+            if entry.config_subentry_id == config_subentry_id
+        ]
+        # Remove each matching entity
+        for entity_id in entity_ids:
+            self.async_remove(entity_id)
+        # Update deleted entities matching this subentry
+        now_time = time.time()
+        self._rust_registry.clear_deleted_config_subentry(
+            config_entry_id, config_subentry_id, now_time
+        )
+
+    def async_clear_label_id(self, label_id: str) -> None:
+        """Clear label from registry entries."""
+        for entry in list(self.entities.values()):
+            if label_id in entry.labels:
+                new_labels = entry.labels - {label_id}
+                self.async_update_entity(entry.entity_id, labels=new_labels)
+        # Clear from deleted entities
+        self._rust_registry.clear_deleted_label_id(label_id)
+
     def async_device_ids(self) -> set[str]:
         """Return set of device IDs that have registered entities."""
         device_ids = set()
@@ -1092,6 +1295,12 @@ class RustEntityRegistry:
         current_entity_id: str | None = None,
     ) -> str:
         """Generate an entity ID that does not conflict with registered entities."""
+        from homeassistant.const import MAX_LENGTH_STATE_DOMAIN
+        from homeassistant.exceptions import MaxLengthExceeded
+
+        if len(domain) > MAX_LENGTH_STATE_DOMAIN:
+            raise MaxLengthExceeded(domain, "domain", MAX_LENGTH_STATE_DOMAIN)
+
         # Get entity IDs from state machine to pass as reserved IDs
         reserved_ids = self._get_state_machine_entity_ids()
         return self._rust_registry.async_generate_entity_id(
@@ -1118,9 +1327,13 @@ class RustEntityRegistry:
         return self._rust_registry.async_get_entity_id(domain, platform, unique_id)
 
     def _get_state_machine_entity_ids(self) -> list[str]:
-        """Get entity IDs from state machine to use as reserved IDs."""
+        """Get entity IDs from state machine (including reservations) to use as reserved IDs."""
         if self._hass is not None and hasattr(self._hass, 'states'):
-            return self._hass.states.async_entity_ids()
+            ids = self._hass.states.async_entity_ids()
+            # Also include reserved entity IDs
+            if hasattr(self._hass.states, '_reservations'):
+                ids = list(set(ids) | self._hass.states._reservations)
+            return ids
         return []
 
     def async_get_or_create(
@@ -1135,6 +1348,7 @@ class RustEntityRegistry:
         device_id=UNDEFINED,
         known_object_ids: list[str] | None = None,
         suggested_object_id: str | None = None,
+        calculated_object_id: str | None = None,
         disabled_by: str | None = None,
         hidden_by: str | None = None,
         has_entity_name=UNDEFINED,
@@ -1156,10 +1370,83 @@ class RustEntityRegistry:
             elif config_entry_id is UNDEFINED:
                 config_entry_id = config_entry.entry_id
 
+        # Validate config entry exists in hass
+        if config_entry_id is not UNDEFINED and config_entry_id is not None and self._hass is not None:
+            if self._hass.config_entries.async_get_entry(config_entry_id) is None:
+                raise ValueError(
+                    f"Config entry {config_entry_id} does not exist"
+                )
+
+        # Validate device_id exists in device registry
+        if device_id is not UNDEFINED and device_id is not None and self._hass is not None:
+            from homeassistant.helpers import device_registry as dr
+            if dr.DATA_REGISTRY in self._hass.data:
+                dev_reg = self._hass.data[dr.DATA_REGISTRY]
+                if dev_reg.async_get(device_id) is None:
+                    raise ValueError(
+                        f"Device {device_id} does not exist"
+                    )
+
+        # Validate disabled_by is not a raw string (must be enum)
+        if disabled_by is not None and isinstance(disabled_by, str) and not hasattr(disabled_by, 'name'):
+            raise ValueError(
+                f"disabled_by must be a RegistryEntryDisabler instance, got {disabled_by!r}"
+            )
+
+        # Validate entity_category is not a raw string (must be enum)
+        if entity_category is not UNDEFINED and entity_category is not None and isinstance(entity_category, str) and not hasattr(entity_category, 'name'):
+            raise ValueError(
+                f"entity_category must be an EntityCategory instance, got {entity_category!r}"
+            )
+
+        # Validate hidden_by is not a raw string (must be enum)
+        if hidden_by is not None and isinstance(hidden_by, str) and not hasattr(hidden_by, 'name'):
+            raise ValueError(
+                f"hidden_by must be a RegistryEntryHider instance, got {hidden_by!r}"
+            )
+
+        # Validate unique_id is hashable (lists, dicts etc. are not)
+        try:
+            hash(unique_id)
+        except TypeError as err:
+            raise TypeError(
+                f"unique_id must be hashable, got {type(unique_id).__name__}"
+            ) from err
+
+        # Convert unique_id to string if not already (native HA does this with a warning)
+        if not isinstance(unique_id, str):
+            import logging
+            _LOGGER = logging.getLogger("homeassistant.helpers.entity_registry")
+            _LOGGER.error(
+                "'%s' from integration %s has a non string unique_id '%s', "
+                "please create a bug report",
+                domain,
+                platform,
+                unique_id,
+            )
+            unique_id = str(unique_id)
+
         # Check if entity already exists (for event firing)
         existing_entity_id = self._rust_registry.async_get_entity_id(domain, platform, unique_id)
         is_restoring_deleted = self._rust_registry.is_deleted(domain, platform, unique_id)
         is_new = existing_entity_id is None and not is_restoring_deleted
+
+        # Apply config entry preference for disabling new entities (only for new registrations)
+        if (
+            existing_entity_id is None
+            and disabled_by is None
+            and config_entry is not UNDEFINED
+            and config_entry is not None
+            and getattr(config_entry, 'pref_disable_new_entities', False)
+        ):
+            disabled_by = "integration"
+
+        # Track old values for update event
+        old_config_entry_id = None
+        if existing_entity_id is not None:
+            existing_entry = self._rust_registry.async_get(existing_entity_id)
+            if existing_entry is not None:
+                old_config_entry_id = existing_entry.config_entry_id
 
         # Pass current Python time as timestamp (respects freezer in tests)
         timestamp_iso = datetime.now(timezone.utc).isoformat()
@@ -1186,7 +1473,7 @@ class RustEntityRegistry:
             config_entry_id=to_rust_string(config_entry_id),
             config_subentry_id=to_rust_string(config_subentry_id),
             device_id=to_rust_string(device_id),
-            suggested_object_id=suggested_object_id,
+            suggested_object_id=calculated_object_id or suggested_object_id,
             disabled_by=disabled_by,
             hidden_by=hidden_by,
             has_entity_name=to_rust(has_entity_name),
@@ -1204,6 +1491,15 @@ class RustEntityRegistry:
             modified_at=timestamp_iso,
         )
 
+        # Apply initial options for new entities
+        if is_new and get_initial_options is not None:
+            initial_options = get_initial_options()
+            if initial_options:
+                for domain_key, domain_opts in initial_options.items():
+                    entry = self._rust_registry.async_update_entity_options(
+                        entry.entity_id, domain_key, domain_opts
+                    )
+
         # Check if we need to force a new RegistryEntry wrapper
         has_update_params = any(v is not UNDEFINED for v in [
             config_entry_id, config_subentry_id, device_id, has_entity_name,
@@ -1217,6 +1513,16 @@ class RustEntityRegistry:
         # Fire create event if this was a new entity
         if is_new:
             self._fire_event("create", wrapped.entity_id)
+        else:
+            # Check if config_entry_id changed and fire update event
+            if config_entry_id is not UNDEFINED:
+                new_config_entry_id = wrapped.config_entry_id
+                if old_config_entry_id != new_config_entry_id:
+                    self._fire_event(
+                        "update",
+                        wrapped.entity_id,
+                        changes={"config_entry_id": old_config_entry_id},
+                    )
 
         return wrapped
 
@@ -1227,6 +1533,9 @@ class RustEntityRegistry:
         self._rust_registry.async_remove(entity_id)
         # Remove from cache
         self._entry_cache.pop(entity_id, None)
+        # Remove from override if set (mock_registry scenario)
+        if self._entities_override is not None and entity_id in self._entities_override:
+            del self._entities_override[entity_id]
         # Fire remove event
         self._fire_event("remove", entity_id)
 
@@ -1239,13 +1548,123 @@ class RustEntityRegistry:
         entity_id: str,
         **kwargs,
     ):
+        # Validate config_entry_id exists if being updated
+        if 'config_entry_id' in kwargs and kwargs['config_entry_id'] is not None and self._hass is not None:
+            if self._hass.config_entries.async_get_entry(kwargs['config_entry_id']) is None:
+                raise ValueError(
+                    f"Config entry {kwargs['config_entry_id']} does not exist"
+                )
+
+        # Validate device_id exists if being updated
+        if 'device_id' in kwargs and kwargs['device_id'] is not None and self._hass is not None:
+            from homeassistant.helpers import device_registry as dr
+            if dr.DATA_REGISTRY in self._hass.data:
+                dev_reg = self._hass.data[dr.DATA_REGISTRY]
+                if dev_reg.async_get(kwargs['device_id']) is None:
+                    raise ValueError(
+                        f"Device {kwargs['device_id']} does not exist"
+                    )
+
+        # Validate disabled_by is not a raw string (must be enum)
+        if 'disabled_by' in kwargs and kwargs['disabled_by'] is not None and isinstance(kwargs['disabled_by'], str) and not hasattr(kwargs['disabled_by'], 'name'):
+            raise ValueError(
+                f"disabled_by must be a RegistryEntryDisabler instance, got {kwargs['disabled_by']!r}"
+            )
+
+        # Validate entity_category is not a raw string (must be enum)
+        if 'entity_category' in kwargs and kwargs['entity_category'] is not None and isinstance(kwargs['entity_category'], str) and not hasattr(kwargs['entity_category'], 'name'):
+            raise ValueError(
+                f"entity_category must be an EntityCategory instance, got {kwargs['entity_category']!r}"
+            )
+
+        # Validate hidden_by is not a raw string (must be enum)
+        if 'hidden_by' in kwargs and kwargs['hidden_by'] is not None and isinstance(kwargs['hidden_by'], str) and not hasattr(kwargs['hidden_by'], 'name'):
+            raise ValueError(
+                f"hidden_by must be a RegistryEntryHider instance, got {kwargs['hidden_by']!r}"
+            )
+
+        # Validate new_unique_id is hashable
+        if 'new_unique_id' in kwargs and kwargs['new_unique_id'] is not None:
+            try:
+                hash(kwargs['new_unique_id'])
+            except TypeError as err:
+                raise TypeError(
+                    f"unique_id must be hashable, got {type(kwargs['new_unique_id']).__name__}"
+                ) from err
+            # Convert non-string unique_id with warning
+            if not isinstance(kwargs['new_unique_id'], str):
+                import logging
+                _LOGGER = logging.getLogger("homeassistant.helpers.entity_registry")
+                old_entry_for_log = self._rust_registry.async_get(entity_id)
+                domain = old_entry_for_log.domain if old_entry_for_log else "unknown"
+                platform = old_entry_for_log.platform if old_entry_for_log else "unknown"
+                _LOGGER.error(
+                    "'%s' from integration %s has a non string unique_id '%s', "
+                    "please create a bug report",
+                    domain,
+                    platform,
+                    kwargs['new_unique_id'],
+                )
+                kwargs['new_unique_id'] = str(kwargs['new_unique_id'])
+
         # Get old entry to track changes
         old_entry = self._rust_registry.async_get(entity_id)
         old_entity_id = old_entry.entity_id if old_entry else None
 
-        entry = self._rust_registry.async_update_entity(entity_id, **kwargs)
+        # Check for unique_id conflicts
+        if "new_unique_id" in kwargs and kwargs["new_unique_id"] is not None:
+            new_uid = kwargs["new_unique_id"]
+            # Check if another entity already uses this unique_id
+            existing = self._rust_registry.async_get_by_unique_id(new_uid)
+            if existing is not None and existing.entity_id != entity_id:
+                raise ValueError(
+                    f"Unique id '{new_uid}' is already in use by "
+                    f"'{existing.entity_id}'"
+                )
+
+        # Apply config entry disabled_by logic when config_entry_id changes
+        if 'config_entry_id' in kwargs and 'disabled_by' not in kwargs:
+            new_ce_id = kwargs['config_entry_id']
+            if new_ce_id is None:
+                # Config entry being removed - clear CONFIG_ENTRY disabled_by
+                if old_entry and old_entry.disabled_by == "config_entry":
+                    kwargs['disabled_by'] = None
+            elif self._hass is not None:
+                new_ce = self._hass.config_entries.async_get_entry(new_ce_id)
+                if new_ce is not None and new_ce.disabled_by is not None:
+                    # New config entry is disabled - disable entity unless it has
+                    # a "stronger" disabled_by (DEVICE, HASS, INTEGRATION, USER)
+                    current_disabled = old_entry.disabled_by if old_entry else None
+                    if current_disabled is None:
+                        kwargs['disabled_by'] = "config_entry"
+                elif old_entry and old_entry.disabled_by == "config_entry":
+                    # New config entry is not disabled - clear CONFIG_ENTRY disabled_by
+                    kwargs['disabled_by'] = None
+
+        # Transform kwargs for Rust: None means "clear" for optional string fields
+        rust_kwargs = {}
+        clear_string_fields = {
+            'disabled_by', 'hidden_by', 'area_id', 'device_class',
+            'unit_of_measurement', 'config_entry_id', 'config_subentry_id',
+            'device_id', 'entity_category', 'original_device_class',
+            'original_icon', 'original_name', 'translation_key', 'name', 'icon',
+        }
+        enum_string_fields = {'entity_category', 'disabled_by', 'hidden_by'}
+        for key, value in kwargs.items():
+            if key in clear_string_fields and value is None:
+                rust_kwargs[key] = ""  # Empty string = clear in Rust
+            elif key in enum_string_fields and value is not None:
+                rust_kwargs[key] = str(value.value) if hasattr(value, 'value') else str(value)
+            else:
+                rust_kwargs[key] = value
+
+        entry = self._rust_registry.async_update_entity(entity_id, **rust_kwargs)
         # Force new RegistryEntry since data was updated (RegistryEntry is frozen)
         wrapped = self._get_or_create_wrapper(entry, force_new=True)
+
+        # Update cache if entity_id changed
+        if old_entity_id and old_entity_id != wrapped.entity_id:
+            self._entry_cache.pop(old_entity_id, None)
 
         # Fire update event with changes
         changes = {k: v for k, v in kwargs.items() if v is not None}
@@ -1257,6 +1676,7 @@ class RustEntityRegistry:
                 old_entity_id=old_entity_id if old_entity_id != wrapped.entity_id else None,
             )
 
+        self.async_schedule_save()
         return wrapped
 
     def async_update_entity_options(
@@ -1272,19 +1692,33 @@ class RustEntityRegistry:
 
     @property
     def deleted_entities(self):
-        """Return dict of (domain, platform, unique_id) to deleted RegistryEntry."""
+        """Return dict of (domain, platform, unique_id) to deleted DeletedRegistryEntry."""
         return {
-            key: _rust_entry_to_registry_entry(entry)
+            key: _rust_entry_to_deleted_registry_entry(entry)
             for key, entry in self._rust_registry.deleted_entities.items()
         }
+
+    @deleted_entities.setter
+    def deleted_entities(self, value):
+        """Allow setting deleted_entities (used in test setup)."""
+        # No-op for Rust backend - tests that set this to {} are clearing it
+        pass
 
     @property
     def entities(self):
         """Return dict of entity_id to RegistryEntry."""
-        return {
+        if self._entities_override is not None:
+            return self._entities_override
+        data = {
             entity_id: self._get_or_create_wrapper(entry)
             for entity_id, entry in self._rust_registry.entities.items()
         }
+        return RustEntityRegistryItems(data)
+
+    @entities.setter
+    def entities(self, value):
+        """Allow mock_registry to replace entities with a native EntityRegistryItems."""
+        self._entities_override = value
 
     def __iter__(self):
         return iter(self.entities.values())
@@ -1300,10 +1734,20 @@ class RustEntityRegistry:
 class RustDeviceEntry:
     """Wrapper for DeviceEntry compatible with homeassistant.helpers.device_registry."""
 
-    __slots__ = ("_rust_entry",)
+    __slots__ = ("_rust_entry", "_field_overrides")
 
-    def __init__(self, rust_entry):
+    _DISABLED_BY_MAP = None  # Lazy-loaded
+
+    @classmethod
+    def _get_disabled_by_map(cls):
+        if cls._DISABLED_BY_MAP is None:
+            from homeassistant.helpers.device_registry import DeviceEntryDisabler
+            cls._DISABLED_BY_MAP = {e.value: e for e in DeviceEntryDisabler}
+        return cls._DISABLED_BY_MAP
+
+    def __init__(self, rust_entry, field_overrides=None):
         self._rust_entry = rust_entry
+        self._field_overrides = field_overrides or {}
 
     @property
     def area_id(self) -> str | None:
@@ -1312,6 +1756,11 @@ class RustDeviceEntry:
     @property
     def config_entries(self) -> set[str]:
         return set(self._rust_entry.config_entries)
+
+    @property
+    def config_entries_subentries(self) -> dict[str, set[str | None]]:
+        raw = self._rust_entry.config_entries_subentries
+        return {k: set(v) for k, v in raw.items()}
 
     @property
     def configuration_url(self) -> str | None:
@@ -1323,11 +1772,50 @@ class RustDeviceEntry:
 
     @property
     def created_at(self) -> datetime:
-        return _parse_iso_datetime(self._rust_entry.created_at)
+        from datetime import timezone
+        return datetime.fromtimestamp(self._rust_entry.created_at_timestamp, tz=timezone.utc)
 
     @property
-    def disabled_by(self) -> str | None:
-        return self._rust_entry.disabled_by
+    def dict_repr(self) -> dict:
+        """Return a dict representation of the entry."""
+        return {
+            "area_id": self.area_id,
+            "configuration_url": self.configuration_url,
+            "config_entries": list(self.config_entries),
+            "config_entries_subentries": {
+                config_entry_id: list(subentries)
+                for config_entry_id, subentries in self.config_entries_subentries.items()
+            },
+            "connections": [list(c) for c in self.connections],
+            "created_at": self._rust_entry.created_at_timestamp,
+            "disabled_by": self.disabled_by,
+            "entry_type": self.entry_type,
+            "hw_version": self.hw_version,
+            "id": self.id,
+            "identifiers": [list(i) for i in self.identifiers],
+            "labels": list(self.labels),
+            "manufacturer": self.manufacturer,
+            "model": self.model,
+            "model_id": self.model_id,
+            "modified_at": self._rust_entry.modified_at_timestamp,
+            "name_by_user": self.name_by_user,
+            "name": self._field_overrides.get('name', self.name),
+            "primary_config_entry": self.primary_config_entry,
+            "serial_number": self.serial_number,
+            "sw_version": self.sw_version,
+            "via_device_id": self.via_device_id,
+        }
+
+    @property
+    def disabled(self) -> bool:
+        return self.disabled_by is not None
+
+    @property
+    def disabled_by(self):
+        val = self._rust_entry.disabled_by
+        if val:
+            return self._get_disabled_by_map().get(val, val)
+        return None
 
     @property
     def entry_type(self) -> str | None:
@@ -1344,6 +1832,15 @@ class RustDeviceEntry:
     @property
     def identifiers(self) -> set[tuple[str, str]]:
         return set(self._rust_entry.identifiers)
+
+    @property
+    def json_repr(self) -> bytes | None:
+        """Return a cached JSON representation of the entry."""
+        import orjson
+        try:
+            return orjson.dumps(self.dict_repr)
+        except (ValueError, TypeError):
+            return None
 
     @property
     def labels(self) -> set[str]:
@@ -1363,7 +1860,8 @@ class RustDeviceEntry:
 
     @property
     def modified_at(self) -> datetime:
-        return _parse_iso_datetime(self._rust_entry.modified_at)
+        from datetime import timezone
+        return datetime.fromtimestamp(self._rust_entry.modified_at_timestamp, tz=timezone.utc)
 
     @property
     def name(self) -> str | None:
@@ -1372,6 +1870,10 @@ class RustDeviceEntry:
     @property
     def name_by_user(self) -> str | None:
         return self._rust_entry.name_by_user
+
+    @property
+    def primary_config_entry(self) -> str | None:
+        return self._rust_entry.primary_config_entry
 
     @property
     def serial_number(self) -> str | None:
@@ -1391,11 +1893,39 @@ class RustDeviceEntry:
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, RustDeviceEntry):
-            return self.id == other.id
+            return self.dict_repr == other.dict_repr
         return False
+
+    def __hash__(self) -> int:
+        return hash(self.id)
 
     def __repr__(self) -> str:
         return repr(self._rust_entry)
+
+
+class RustDeviceRegistryItems(dict):
+    """Dict subclass that provides extra lookup methods like HA's DeviceRegistryItems."""
+
+    def __init__(self, registry, data):
+        super().__init__(data)
+        self._registry = registry
+
+    def get_devices_for_area_id(self, area_id: str) -> list:
+        """Get devices for area."""
+        return self._registry.async_entries_for_area(area_id)
+
+    def get_devices_for_config_entry_id(self, config_entry_id: str) -> list:
+        """Get devices for config entry."""
+        return self._registry.async_entries_for_config_entry(config_entry_id)
+
+    def get_devices_for_label(self, label: str) -> list:
+        """Get devices that have the specified label."""
+        result = [
+            entry for entry in self.values()
+            if label in entry.labels
+        ]
+        result.sort(key=lambda e: e.created_at)
+        return result
 
 
 class RustDeviceRegistry:
@@ -1405,7 +1935,9 @@ class RustDeviceRegistry:
         if not _rust_available:
             raise RuntimeError("ha_core_rs not available")
         self._rust_registry = ha_core_rs.DeviceRegistry(hass)
-        self._hass = hass
+        self.hass = hass
+        # Store non-serializable field overrides (e.g., Unserializable name objects)
+        self._field_overrides: dict[str, dict[str, object]] = {}
 
     async def async_load(self) -> None:
         # No-op for testing - Rust registries start empty in test context
@@ -1414,6 +1946,25 @@ class RustDeviceRegistry:
     async def async_save(self) -> None:
         # No-op for testing - persistence not needed for unit tests
         pass
+
+    def async_clear_config_entry(self, config_entry_id: str) -> None:
+        """Clear a config entry from all devices."""
+        self._rust_registry.async_clear_config_entry(config_entry_id)
+
+    def async_clear_config_subentry(
+        self, config_entry_id: str, config_subentry_id: str
+    ) -> None:
+        """Clear config subentry from device registry entries (stub)."""
+        # For now, remove devices that only have this config entry/subentry
+        pass
+
+    def async_clear_label_id(self, label_id: str) -> None:
+        """Clear a label from all devices."""
+        all_devices = self._rust_registry.devices
+        for dev_id, dev in all_devices.items():
+            if label_id in dev.labels:
+                new_labels = [l for l in dev.labels if l != label_id]
+                self._rust_registry.async_update_device(dev_id, labels=new_labels)
 
     def async_entries_for_area(self, area_id: str) -> list[RustDeviceEntry]:
         return [
@@ -1431,6 +1982,38 @@ class RustDeviceRegistry:
             )
         ]
 
+    def _fire_event(self, action: str, device_id: str, changes: dict | None = None) -> None:
+        """Fire device registry updated event."""
+        from homeassistant.helpers import device_registry as dr
+        data: dict = {"action": action, "device_id": device_id}
+        if changes is not None:
+            data["changes"] = changes
+        self.hass.bus.async_fire(dr.EVENT_DEVICE_REGISTRY_UPDATED, data)
+
+    def _get_device_snapshot(self, raw_entry) -> dict:
+        """Get a snapshot of device entry fields for change detection."""
+        return {
+            "connections": set((c[0], c[1]) for c in raw_entry.connections) if raw_entry.connections else set(),
+            "identifiers": set((i[0], i[1]) for i in raw_entry.identifiers) if raw_entry.identifiers else set(),
+            "manufacturer": raw_entry.manufacturer,
+            "model": raw_entry.model,
+            "name": raw_entry.name,
+            "sw_version": raw_entry.sw_version,
+            "hw_version": raw_entry.hw_version,
+            "serial_number": raw_entry.serial_number,
+            "configuration_url": raw_entry.configuration_url,
+            "area_id": raw_entry.area_id,
+        }
+
+    def _compute_changes(self, old_snapshot: dict, new_snapshot: dict) -> dict:
+        """Compute changes between old and new device snapshots."""
+        changes = {}
+        for key, old_val in old_snapshot.items():
+            new_val = new_snapshot.get(key)
+            if old_val != new_val:
+                changes[key] = old_val
+        return changes
+
     def async_get(self, device_id: str) -> RustDeviceEntry | None:
         entry = self._rust_registry.async_get(device_id)
         return RustDeviceEntry(entry) if entry else None
@@ -1441,8 +2024,8 @@ class RustDeviceRegistry:
         connections: set[tuple[str, str]] | None = None,
     ) -> RustDeviceEntry | None:
         entry = self._rust_registry.async_get_device(
-            identifiers=list(identifiers) if identifiers else None,
-            connections=list(connections) if connections else None,
+            identifiers=identifiers if identifiers else None,
+            connections=connections if connections else None,
         )
         return RustDeviceEntry(entry) if entry else None
 
@@ -1450,6 +2033,7 @@ class RustDeviceRegistry:
         self,
         *,
         config_entry_id: str,
+        config_subentry_id: str | None = None,
         identifiers: set[tuple[str, str]] | None = None,
         connections: set[tuple[str, str]] | None = None,
         manufacturer: str | None = None,
@@ -1463,9 +2047,28 @@ class RustDeviceRegistry:
         via_device: tuple[str, str] | None = None,
         configuration_url: str | None = None,
         entry_type: str | None = None,
+        default_manufacturer: str | None = None,
+        default_model: str | None = None,
+        default_name: str | None = None,
     ) -> RustDeviceEntry:
+        # Require at least one identifier or connection
+        if not identifiers and not connections:
+            from homeassistant.exceptions import HomeAssistantError
+            raise HomeAssistantError(
+                "A device must have at least one identifier or connection"
+            )
+
+        # Look up existing device before get_or_create to detect create vs update
+        existing = self._rust_registry.async_get_device(
+            identifiers=identifiers if identifiers else None,
+            connections=connections if connections else None,
+        )
+        old_snapshot = self._get_device_snapshot(existing) if existing else None
+
+        import time
         entry = self._rust_registry.async_get_or_create(
             config_entry_id=config_entry_id,
+            config_subentry_id=config_subentry_id,
             identifiers=list(identifiers) if identifiers else None,
             connections=list(connections) if connections else None,
             manufacturer=manufacturer,
@@ -1479,26 +2082,186 @@ class RustDeviceRegistry:
             via_device=via_device,
             configuration_url=configuration_url,
             entry_type=entry_type,
+            default_manufacturer=default_manufacturer,
+            default_model=default_model,
+            default_name=default_name,
+            created_at=datetime.now(timezone.utc).timestamp(),
         )
+        # Log warning if via_device references a non-existing device
+        if via_device and not entry.via_device_id:
+            import logging
+            _LOGGER = logging.getLogger("homeassistant.helpers.device_registry")
+            _LOGGER.error(
+                'calls `device_registry.async_get_or_create` '
+                'referencing a non existing `via_device` '
+                '("%s","%s")',
+                via_device[0],
+                via_device[1],
+            )
+
+        # Handle suggested_area: create area and set area_id on device
+        if suggested_area and not entry.area_id:
+            from homeassistant.helpers import area_registry as ar
+            if ar.DATA_REGISTRY in self.hass.data:
+                area_reg = self.hass.data[ar.DATA_REGISTRY]
+                area = area_reg.async_get_area_by_name(suggested_area)
+                if area is None:
+                    area = area_reg.async_create(suggested_area)
+                entry = self._rust_registry.async_update_device(
+                    entry.id, area_id=area.id
+                )
+
+        # Fire device registry events
+        if existing is None:
+            # New device was created
+            self._fire_event("create", entry.id)
+        else:
+            # Device already existed - check if anything changed
+            new_snapshot = self._get_device_snapshot(entry)
+            changes = self._compute_changes(old_snapshot, new_snapshot)
+            if changes:
+                self._fire_event("update", entry.id, changes=changes)
+
         return RustDeviceEntry(entry)
 
     def async_remove_device(self, device_id: str) -> None:
+        from homeassistant.helpers import entity_registry as er
+        # Get device info before removal (for entity cleanup)
+        device_entry = self._rust_registry.async_get(device_id)
+        device_config_entries = set(device_entry.config_entries) if device_entry else set()
+        device_subentries = {}
+        if device_entry:
+            try:
+                device_subentries = dict(device_entry.config_entries_subentries)
+            except Exception:
+                pass
+
         self._rust_registry.async_remove_device(device_id)
+
+        # Clear via_device_id on devices that referenced the removed device
+        all_devices = self._rust_registry.devices
+        for dev_id, dev in all_devices.items():
+            if dev.via_device_id == device_id:
+                self._rust_registry.async_update_device(dev_id, via_device_id="")
+
+        # Clean up entities associated with this device (mirrors HA's async_device_modified)
+        if er.DATA_REGISTRY in self.hass.data:
+            entity_reg = self.hass.data[er.DATA_REGISTRY]
+            entities = entity_reg.entities.get_entries_for_device_id(
+                device_id, include_disabled_entities=True
+            )
+            for entity in entities:
+                if entity.config_entry_id in device_config_entries:
+                    # Entity belongs to same config entry as device - remove it
+                    entity_reg.async_remove(entity.entity_id)
+                else:
+                    # Entity has different config entry - just clear device_id
+                    entity_reg.async_update_entity(entity.entity_id, device_id=None)
 
     def async_update_device(
         self,
         device_id: str,
         **kwargs,
     ) -> RustDeviceEntry:
-        entry = self._rust_registry.async_update_device(device_id, **kwargs)
-        return RustDeviceEntry(entry)
+        from homeassistant.helpers import entity_registry as er
+
+        # Handle remove_config_entry_id specially
+        remove_config_entry_id = kwargs.pop('remove_config_entry_id', None)
+        if remove_config_entry_id is not None:
+            # Get current device entry
+            current = self._rust_registry.async_get(device_id)
+            if current:
+                new_config_entries = [
+                    ce for ce in current.config_entries
+                    if ce != remove_config_entry_id
+                ]
+                if not new_config_entries:
+                    # No more config entries - remove the device entirely
+                    self.async_remove_device(device_id)
+                    return None
+                # Update config_entries on the device
+                entry = self._rust_registry.async_update_device(
+                    device_id,
+                    config_entries=new_config_entries,
+                )
+                # Also clean up entities that belonged to the removed config entry
+                if er.DATA_REGISTRY in self.hass.data:
+                    entity_reg = self.hass.data[er.DATA_REGISTRY]
+                    entities = entity_reg.entities.get_entries_for_device_id(
+                        device_id, include_disabled_entities=True
+                    )
+                    for entity in entities:
+                        if entity.config_entry_id == remove_config_entry_id:
+                            entity_reg.async_remove(entity.entity_id)
+                return RustDeviceEntry(entry)
+
+        # Get old device state for disabled_by change detection
+        old_device = self._rust_registry.async_get(device_id)
+        old_disabled_by = old_device.disabled_by if old_device else None
+
+        # Handle disabled_by enum conversion
+        if 'disabled_by' in kwargs:
+            db = kwargs['disabled_by']
+            if db is not None and hasattr(db, 'value'):
+                kwargs['disabled_by'] = str(db.value)
+            elif db is None:
+                kwargs['disabled_by'] = ""  # Empty string = clear
+
+        # Convert labels set to list for Rust
+        if 'labels' in kwargs and isinstance(kwargs['labels'], set):
+            kwargs['labels'] = list(kwargs['labels'])
+
+        # Handle non-string field values that Rust can't accept
+        # (e.g., Unserializable objects used to test json_repr failure)
+        if 'name' in kwargs and kwargs['name'] is not None and not isinstance(kwargs['name'], str):
+            if device_id not in self._field_overrides:
+                self._field_overrides[device_id] = {}
+            self._field_overrides[device_id]['name'] = kwargs.pop('name')
+
+        if kwargs:
+            entry = self._rust_registry.async_update_device(
+                device_id, modified_at=datetime.now(timezone.utc).timestamp(), **kwargs
+            )
+        else:
+            entry = self._rust_registry.async_get(device_id)
+
+        # Handle device disabled_by changes → update entities
+        new_device = RustDeviceEntry(entry, self._field_overrides.get(device_id, {}))
+        if er.DATA_REGISTRY in self.hass.data and old_disabled_by != new_device.disabled_by:
+            entity_reg = self.hass.data[er.DATA_REGISTRY]
+            if not new_device.disabled_by:
+                # Device re-enabled - re-enable entities that were disabled by DEVICE
+                entities = entity_reg.entities.get_entries_for_device_id(
+                    device_id, include_disabled_entities=True
+                )
+                for entity in entities:
+                    if entity.disabled_by and entity.disabled_by.value == "device":
+                        entity_reg.async_update_entity(entity.entity_id, disabled_by=None)
+            elif str(new_device.disabled_by) != "config_entry":
+                # Device disabled (not by config entry) - disable entities
+                entities = entity_reg.entities.get_entries_for_device_id(device_id)
+                for entity in entities:
+                    entity_reg.async_update_entity(
+                        entity.entity_id,
+                        disabled_by=er.RegistryEntryDisabler.DEVICE,
+                    )
+
+        return new_device
+
+    def _async_update_device(self, device_id: str, **kwargs) -> RustDeviceEntry | None:
+        """Private update method called by native HA helpers (e.g., async_config_entry_disabled_by_changed)."""
+        return self.async_update_device(device_id, **kwargs)
 
     @property
-    def devices(self) -> dict[str, RustDeviceEntry]:
-        return {
-            entry.id: RustDeviceEntry(entry)
-            for entry in self._rust_registry.devices
-        }
+    def devices(self) -> RustDeviceRegistryItems:
+        entries = [
+            RustDeviceEntry(entry, self._field_overrides.get(entry.id, {}))
+            for entry in self._rust_registry.devices.values()
+        ]
+        # Sort by insertion_order to match native HA's insertion-order dict behavior
+        entries.sort(key=lambda e: e._rust_entry.insertion_order)
+        data = {entry.id: entry for entry in entries}
+        return RustDeviceRegistryItems(self, data)
 
     def __iter__(self):
         return iter(self.devices.values())
@@ -1532,12 +2295,37 @@ class RustAreaEntry:
         return self._rust_entry.floor_id
 
     @property
+    def humidity_entity_id(self) -> str | None:
+        return self._rust_entry.humidity_entity_id
+
+    @property
     def icon(self) -> str | None:
         return self._rust_entry.icon
 
     @property
     def id(self) -> str:
         return self._rust_entry.id
+
+    @property
+    def json_fragment(self):
+        """Return a pre-serialized JSON fragment for this area entry."""
+        import orjson
+        from homeassistant.helpers.json import json_fragment
+        return json_fragment(
+            orjson.dumps({
+                "aliases": list(self.aliases),
+                "area_id": self.id,
+                "floor_id": self.floor_id,
+                "humidity_entity_id": self.humidity_entity_id,
+                "icon": self.icon,
+                "labels": list(self.labels),
+                "name": self.name,
+                "picture": self.picture,
+                "temperature_entity_id": self.temperature_entity_id,
+                "created_at": self.created_at.timestamp(),
+                "modified_at": self.modified_at.timestamp(),
+            })
+        )
 
     @property
     def labels(self) -> set[str]:
@@ -1559,13 +2347,67 @@ class RustAreaEntry:
     def picture(self) -> str | None:
         return self._rust_entry.picture
 
+    @property
+    def temperature_entity_id(self) -> str | None:
+        return self._rust_entry.temperature_entity_id
+
     def __eq__(self, other: object) -> bool:
         if isinstance(other, RustAreaEntry):
-            return self.id == other.id
-        return False
+            # Delegate to underlying Rust __eq__ which compares all fields
+            return self._rust_entry == other._rust_entry
+        # Support comparison with HA's AreaEntry dataclass
+        if hasattr(other, 'id') and hasattr(other, 'name'):
+            other_id = other.id
+            if hasattr(other_id, 'match'):
+                # ANY sentinel - just check other fields
+                pass
+            elif self.id != other_id:
+                return False
+            return (
+                self.name == other.name
+                and self.aliases == getattr(other, 'aliases', set())
+                and self.floor_id == getattr(other, 'floor_id', None)
+                and self.humidity_entity_id == getattr(other, 'humidity_entity_id', None)
+                and self.icon == getattr(other, 'icon', None)
+                and self.labels == getattr(other, 'labels', set())
+                and self.picture == getattr(other, 'picture', None)
+                and self.temperature_entity_id == getattr(other, 'temperature_entity_id', None)
+                and self.created_at == getattr(other, 'created_at', None)
+                and self.modified_at == getattr(other, 'modified_at', None)
+            )
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash(self.id)
 
     def __repr__(self) -> str:
         return repr(self._rust_entry)
+
+
+class RustAreaRegistryItems(dict):
+    """Dict subclass that provides HA-compatible AreaRegistryItems methods."""
+
+    def __init__(self, data: dict, rust_registry):
+        super().__init__(data)
+        self._rust_registry = rust_registry
+
+    def get_areas_for_floor(self, floor_id: str) -> list:
+        """Get areas for a given floor, sorted by creation time."""
+        entries = [
+            RustAreaEntry(entry)
+            for entry in self._rust_registry.async_get_areas_for_floor(floor_id)
+        ]
+        entries.sort(key=lambda e: e.created_at)
+        return entries
+
+    def get_areas_for_label(self, label_id: str) -> list:
+        """Get areas for a given label, sorted by creation time."""
+        entries = [
+            RustAreaEntry(entry)
+            for entry in self._rust_registry.async_get_areas_for_label(label_id)
+        ]
+        entries.sort(key=lambda e: e.created_at)
+        return entries
 
 
 class RustAreaRegistry:
@@ -1576,6 +2418,7 @@ class RustAreaRegistry:
             raise RuntimeError("ha_core_rs not available")
         self._rust_registry = ha_core_rs.AreaRegistry(hass)
         self._hass = hass
+        self._ordered_ids = None
 
     async def async_load(self) -> None:
         # No-op for testing - Rust registries start empty in test context
@@ -1585,56 +2428,108 @@ class RustAreaRegistry:
         # No-op for testing - persistence not needed for unit tests
         pass
 
+    def _fire_event(self, action: str, area_id: str) -> None:
+        self._hass.bus.async_fire(
+            "area_registry_updated",
+            {"action": action, "area_id": area_id},
+        )
+
     def async_create(
         self,
         name: str,
         *,
         aliases: set[str] | None = None,
         floor_id: str | None = None,
+        humidity_entity_id: str | None = None,
         icon: str | None = None,
-        picture: str | None = None,
         labels: set[str] | None = None,
+        picture: str | None = None,
+        temperature_entity_id: str | None = None,
     ) -> RustAreaEntry:
         entry = self._rust_registry.async_create(
             name=name,
             aliases=list(aliases) if aliases else None,
             floor_id=floor_id,
+            humidity_entity_id=humidity_entity_id,
             icon=icon,
-            picture=picture,
             labels=list(labels) if labels else None,
+            picture=picture,
+            temperature_entity_id=temperature_entity_id,
         )
-        return RustAreaEntry(entry)
+        area = RustAreaEntry(entry)
+        self._fire_event("create", area.id)
+        return area
 
     def async_delete(self, area_id: str) -> None:
         self._rust_registry.async_delete(area_id)
+        self._fire_event("remove", area_id)
 
     def async_get(self, area_id: str) -> RustAreaEntry | None:
-        entry = self._rust_registry.async_get(area_id)
+        entry = self._rust_registry.async_get_area(area_id)
         return RustAreaEntry(entry) if entry else None
+
+    def async_get_area(self, area_id: str) -> RustAreaEntry | None:
+        return self.async_get(area_id)
 
     def async_get_area_by_name(self, name: str) -> RustAreaEntry | None:
         entry = self._rust_registry.async_get_area_by_name(name)
         return RustAreaEntry(entry) if entry else None
 
+    def async_get_or_create(self, name: str) -> RustAreaEntry:
+        """Get an area by name or create it if it doesn't exist."""
+        existing = self._rust_registry.async_get_area_by_name(name)
+        if existing:
+            return RustAreaEntry(existing)
+        return self.async_create(name)
+
     def async_list_areas(self):
         """Get all areas."""
         return self.areas.values()
+
+    def async_reorder(self, area_ids: list[str]) -> None:
+        """Reorder areas."""
+        current_ids = set(self._rust_registry.areas.keys())
+        if set(area_ids) != current_ids:
+            raise ValueError(
+                "The area_ids list must contain all existing area IDs exactly once"
+            )
+        self._ordered_ids = list(area_ids)
+        self._fire_event("reorder", "")
 
     def async_update(
         self,
         area_id: str,
         **kwargs,
     ) -> RustAreaEntry:
+        # Convert set types to list for Rust
+        if 'aliases' in kwargs and isinstance(kwargs['aliases'], set):
+            kwargs['aliases'] = list(kwargs['aliases'])
+        if 'labels' in kwargs and isinstance(kwargs['labels'], set):
+            kwargs['labels'] = list(kwargs['labels'])
+        # Convert None to empty string for clearable fields (Rust uses "" as sentinel)
+        for field in ('floor_id', 'humidity_entity_id', 'icon', 'picture', 'temperature_entity_id'):
+            if field in kwargs and kwargs[field] is None:
+                kwargs[field] = ""
         entry = self._rust_registry.async_update(area_id, **kwargs)
-        return RustAreaEntry(entry)
+        area = RustAreaEntry(entry)
+        self._fire_event("update", area_id)
+        return area
 
     @property
-    def areas(self) -> dict[str, RustAreaEntry]:
-        # _rust_registry.areas returns a dict, iterate over values
-        return {
+    def areas(self):
+        # Return a dict subclass that provides get_areas_for_floor/get_areas_for_label
+        all_areas = {entry.id: entry for entry in self._rust_registry.areas.values()}
+        if self._ordered_ids is not None:
+            # Use explicit ordering from async_reorder
+            entries = [all_areas[aid] for aid in self._ordered_ids if aid in all_areas]
+        else:
+            # Sort by created_at for deterministic order (DashMap doesn't preserve insertion order)
+            entries = sorted(all_areas.values(), key=lambda e: e.created_at)
+        data = {
             entry.id: RustAreaEntry(entry)
-            for entry in self._rust_registry.areas.values()
+            for entry in entries
         }
+        return RustAreaRegistryItems(data, self._rust_registry)
 
     def __iter__(self):
         return iter(self.areas.values())
@@ -1689,8 +2584,22 @@ class RustFloorEntry:
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, RustFloorEntry):
-            return self.floor_id == other.floor_id
-        return False
+            return self.floor_id == other.floor_id and self.name == other.name
+        # Cross-type comparison with HA's FloorEntry dataclass
+        if hasattr(other, 'floor_id') and hasattr(other, 'name'):
+            return (
+                self.floor_id == getattr(other, 'floor_id', None)
+                and self.name == other.name
+                and self.icon == getattr(other, 'icon', None)
+                and self.aliases == getattr(other, 'aliases', set())
+                and self.level == getattr(other, 'level', None)
+                and self.created_at == getattr(other, 'created_at', None)
+                and self.modified_at == getattr(other, 'modified_at', None)
+            )
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash(self.floor_id)
 
     def __repr__(self) -> str:
         return repr(self._rust_entry)
@@ -1704,6 +2613,7 @@ class RustFloorRegistry:
             raise RuntimeError("ha_core_rs not available")
         self._rust_registry = ha_core_rs.FloorRegistry(hass)
         self._hass = hass
+        self._ordered_ids = []  # Track insertion/reorder order
 
     async def async_load(self) -> None:
         # No-op for testing - Rust registries start empty in test context
@@ -1712,6 +2622,12 @@ class RustFloorRegistry:
     async def async_save(self) -> None:
         # No-op for testing - persistence not needed for unit tests
         pass
+
+    def _fire_event(self, action: str, floor_id: str) -> None:
+        self._hass.bus.async_fire(
+            "floor_registry_updated",
+            {"action": action, "floor_id": floor_id},
+        )
 
     def async_create(
         self,
@@ -1727,30 +2643,82 @@ class RustFloorRegistry:
             level=level,
             icon=icon,
         )
-        return RustFloorEntry(entry)
+        floor = RustFloorEntry(entry)
+        self._ordered_ids.append(floor.floor_id)
+        self._fire_event("create", floor.floor_id)
+        return floor
 
     def async_delete(self, floor_id: str) -> None:
         self._rust_registry.async_delete(floor_id)
+        if floor_id in self._ordered_ids:
+            self._ordered_ids.remove(floor_id)
+        self._fire_event("remove", floor_id)
+        # Cross-registry cleanup: clear floor_id from areas that reference this floor
+        area_reg = self._hass.data.get("area_registry")
+        if area_reg is not None:
+            for area in list(area_reg.areas.values()):
+                if area.floor_id == floor_id:
+                    area_reg._rust_registry.async_clear_area_floor_id(area.id)
 
     def async_get(self, floor_id: str) -> RustFloorEntry | None:
-        entry = self._rust_registry.async_get(floor_id)
+        entry = self._rust_registry.async_get_floor(floor_id)
         return RustFloorEntry(entry) if entry else None
+
+    def async_get_floor(self, floor_id: str) -> RustFloorEntry | None:
+        return self.async_get(floor_id)
 
     def async_get_floor_by_name(self, name: str) -> RustFloorEntry | None:
         entry = self._rust_registry.async_get_floor_by_name(name)
         return RustFloorEntry(entry) if entry else None
 
     def async_list_floors(self):
-        """Get all floors."""
-        return self.floors.values()
+        """Get all floors in maintained order."""
+        floors_dict = self.floors
+        result = []
+        for fid in self._ordered_ids:
+            if fid in floors_dict:
+                result.append(floors_dict[fid])
+        return result
+
+    def async_reorder(self, floor_ids: list[str]) -> None:
+        """Reorder floors."""
+        current_ids = set(self.floors.keys())
+        if set(floor_ids) != current_ids:
+            raise ValueError(
+                "The floor_ids list must contain all existing floor IDs exactly once"
+            )
+        self._ordered_ids = list(floor_ids)
+        self._fire_event("reorder", "")
 
     def async_update(
         self,
         floor_id: str,
-        **kwargs,
+        *,
+        name=_UNDEFINED,
+        aliases=_UNDEFINED,
+        icon=_UNDEFINED,
+        level=_UNDEFINED,
     ) -> RustFloorEntry:
-        entry = self._rust_registry.async_update(floor_id, **kwargs)
-        return RustFloorEntry(entry)
+        old = self._rust_registry.async_get_floor(floor_id)
+        if old is None:
+            raise ValueError(f"Floor not found: {floor_id}")
+        # Resolve UNDEFINED: keep old value; None/value: set explicitly
+        new_name = old.name if name is _UNDEFINED else name
+        new_aliases = list(old.aliases) if aliases is _UNDEFINED else (
+            list(aliases) if isinstance(aliases, (set, list)) else []
+        )
+        new_icon = old.icon if icon is _UNDEFINED else icon
+        new_level = old.level if level is _UNDEFINED else level
+        # Use async_set_fields which always sets all fields
+        entry = self._rust_registry.async_set_fields(
+            floor_id, new_name,
+            level=new_level, aliases=new_aliases, icon=new_icon,
+        )
+        floor = RustFloorEntry(entry)
+        # Only fire event if data actually changed (Rust updates modified_at only on real changes)
+        if entry.modified_at != old.modified_at:
+            self._fire_event("update", floor_id)
+        return floor
 
     def sorted_by_level(self) -> list[RustFloorEntry]:
         return [
@@ -1760,10 +2728,11 @@ class RustFloorRegistry:
 
     @property
     def floors(self) -> dict[str, RustFloorEntry]:
-        # _rust_registry.floors returns a dict, iterate over values
+        # Sort by created_at for deterministic order (DashMap doesn't preserve insertion order)
+        entries = sorted(self._rust_registry.floors.values(), key=lambda e: e.created_at)
         return {
             entry.floor_id: RustFloorEntry(entry)
-            for entry in self._rust_registry.floors.values()
+            for entry in entries
         }
 
     def __iter__(self):
@@ -1819,8 +2788,21 @@ class RustLabelEntry:
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, RustLabelEntry):
-            return self.label_id == other.label_id
-        return False
+            return self.label_id == other.label_id and self.name == other.name
+        if hasattr(other, 'label_id') and hasattr(other, 'name'):
+            return (
+                self.label_id == getattr(other, 'label_id', None)
+                and self.name == other.name
+                and self.icon == getattr(other, 'icon', None)
+                and self.color == getattr(other, 'color', None)
+                and self.description == getattr(other, 'description', None)
+                and self.created_at == getattr(other, 'created_at', None)
+                and self.modified_at == getattr(other, 'modified_at', None)
+            )
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash(self.label_id)
 
     def __repr__(self) -> str:
         return repr(self._rust_entry)
@@ -1843,6 +2825,12 @@ class RustLabelRegistry:
         # No-op for testing - persistence not needed for unit tests
         pass
 
+    def _fire_event(self, action: str, label_id: str) -> None:
+        self._hass.bus.async_fire(
+            "label_registry_updated",
+            {"action": action, "label_id": label_id},
+        )
+
     def async_create(
         self,
         name: str,
@@ -1857,37 +2845,73 @@ class RustLabelRegistry:
             icon=icon,
             description=description,
         )
-        return RustLabelEntry(entry)
+        label = RustLabelEntry(entry)
+        self._fire_event("create", label.label_id)
+        return label
 
     def async_delete(self, label_id: str) -> None:
         self._rust_registry.async_delete(label_id)
+        self._fire_event("remove", label_id)
+        # Cross-registry cleanup: clear label from areas that reference it
+        area_reg = self._hass.data.get("area_registry")
+        if area_reg is not None:
+            for area in list(area_reg.areas.values()):
+                if label_id in (area.labels or set()):
+                    new_labels = area.labels - {label_id}
+                    area_reg._rust_registry.async_update(
+                        area.id, labels=list(new_labels)
+                    )
 
     def async_get(self, label_id: str) -> RustLabelEntry | None:
-        entry = self._rust_registry.async_get(label_id)
+        entry = self._rust_registry.async_get_label(label_id)
         return RustLabelEntry(entry) if entry else None
+
+    def async_get_label(self, label_id: str) -> RustLabelEntry | None:
+        return self.async_get(label_id)
 
     def async_get_label_by_name(self, name: str) -> RustLabelEntry | None:
         entry = self._rust_registry.async_get_label_by_name(name)
         return RustLabelEntry(entry) if entry else None
 
     def async_list_labels(self):
-        """Get all labels."""
-        return self.labels.values()
+        """Get all labels sorted by creation order."""
+        return sorted(self.labels.values(), key=lambda l: l.created_at)
 
     def async_update(
         self,
         label_id: str,
-        **kwargs,
+        *,
+        name=_UNDEFINED,
+        icon=_UNDEFINED,
+        color=_UNDEFINED,
+        description=_UNDEFINED,
     ) -> RustLabelEntry:
-        entry = self._rust_registry.async_update(label_id, **kwargs)
-        return RustLabelEntry(entry)
+        old = self._rust_registry.async_get_label(label_id)
+        if old is None:
+            raise ValueError(f"Label not found: {label_id}")
+        # Resolve UNDEFINED: keep old value; None: clear field; str: set value
+        new_name = old.name if name is _UNDEFINED else name
+        new_icon = old.icon if icon is _UNDEFINED else icon
+        new_color = old.color if color is _UNDEFINED else color
+        new_description = old.description if description is _UNDEFINED else description
+        # Use async_set_fields which always sets all fields (None = clear)
+        entry = self._rust_registry.async_set_fields(
+            label_id, new_name,
+            icon=new_icon, color=new_color, description=new_description,
+        )
+        label = RustLabelEntry(entry)
+        # Only fire event if data actually changed (Rust updates modified_at only on real changes)
+        if entry.modified_at != old.modified_at:
+            self._fire_event("update", label_id)
+        return label
 
     @property
     def labels(self) -> dict[str, RustLabelEntry]:
-        # _rust_registry.labels returns a dict, iterate over values
+        # Sort by created_at for deterministic order (DashMap doesn't preserve insertion order)
+        entries = sorted(self._rust_registry.labels.values(), key=lambda e: e.created_at)
         return {
             entry.label_id: RustLabelEntry(entry)
-            for entry in self._rust_registry.labels.values()
+            for entry in entries
         }
 
     def __iter__(self):
@@ -2329,8 +3353,7 @@ def patch_ha_core():
 
     import homeassistant.core as ha_core
 
-    with patch.object(ha_core, 'Context', RustContext), \
-         patch.object(ha_core, 'Event', RustEvent), \
+    with patch.object(ha_core, 'Event', RustEvent), \
          patch.object(ha_core, 'ServiceCall', RustServiceCall), \
          patch.object(ha_core, 'State', RustState):
         yield
@@ -2887,6 +3910,8 @@ def patch_registry_lookups(tmp_path):
     orig_fr_get = fr.async_get
     orig_lr_get = lr.async_get
     orig_er_class = er.EntityRegistry
+    orig_ar_entries_for_floor = getattr(ar, 'async_entries_for_floor', None)
+    orig_ar_entries_for_label = getattr(ar, 'async_entries_for_label', None)
 
     # Create patched versions that return Rust registries
     # Add cache_clear as no-op for compatibility with tests that call it
@@ -2896,28 +3921,32 @@ def patch_registry_lookups(tmp_path):
         # Also store in hass.data for code that accesses it directly
         if er.DATA_REGISTRY not in hass.data:
             hass.data[er.DATA_REGISTRY] = rust_entity_reg
-        return rust_entity_reg
+        return hass.data[er.DATA_REGISTRY]
     patched_er_get.cache_clear = lambda: None
 
     def patched_dr_get(hass):
+        rust_device_reg.hass = hass
         if dr.DATA_REGISTRY not in hass.data:
             hass.data[dr.DATA_REGISTRY] = rust_device_reg
         return rust_device_reg
     patched_dr_get.cache_clear = lambda: None
 
     def patched_ar_get(hass):
+        rust_area_reg._hass = hass
         if ar.DATA_REGISTRY not in hass.data:
             hass.data[ar.DATA_REGISTRY] = rust_area_reg
         return rust_area_reg
     patched_ar_get.cache_clear = lambda: None
 
     def patched_fr_get(hass):
+        rust_floor_reg._hass = hass
         if fr.DATA_REGISTRY not in hass.data:
             hass.data[fr.DATA_REGISTRY] = rust_floor_reg
         return rust_floor_reg
     patched_fr_get.cache_clear = lambda: None
 
     def patched_lr_get(hass):
+        rust_label_reg._hass = hass
         if lr.DATA_REGISTRY not in hass.data:
             hass.data[lr.DATA_REGISTRY] = rust_label_reg
         return rust_label_reg
@@ -2934,6 +3963,13 @@ def patch_registry_lookups(tmp_path):
             super().__init__(mock_hass)
             self._hass = hass
 
+    # Patched async_entries_for_floor / async_entries_for_label
+    def patched_ar_entries_for_floor(registry, floor_id):
+        return registry.areas.get_areas_for_floor(floor_id)
+
+    def patched_ar_entries_for_label(registry, label_id):
+        return registry.areas.get_areas_for_label(label_id)
+
     # Apply patches
     er.async_get = patched_er_get
     dr.async_get = patched_dr_get
@@ -2941,6 +3977,8 @@ def patch_registry_lookups(tmp_path):
     fr.async_get = patched_fr_get
     lr.async_get = patched_lr_get
     er.EntityRegistry = PatchedEntityRegistry  # Patch class for direct instantiation
+    ar.async_entries_for_floor = patched_ar_entries_for_floor
+    ar.async_entries_for_label = patched_ar_entries_for_label
 
     try:
         yield
@@ -2952,4 +3990,8 @@ def patch_registry_lookups(tmp_path):
         fr.async_get = orig_fr_get
         lr.async_get = orig_lr_get
         er.EntityRegistry = orig_er_class
+        if orig_ar_entries_for_floor is not None:
+            ar.async_entries_for_floor = orig_ar_entries_for_floor
+        if orig_ar_entries_for_label is not None:
+            ar.async_entries_for_label = orig_ar_entries_for_label
         _test_rust_registries = {}

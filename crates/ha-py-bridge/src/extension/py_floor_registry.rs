@@ -1,10 +1,38 @@
 //! Python wrappers for FloorRegistry
 
+use chrono::{DateTime, Utc};
 use ha_registries::floor_registry::{FloorEntry, FloorRegistry};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::sync::Arc;
 use tokio::runtime::Handle;
+
+/// Get the current time from Python's datetime.now(UTC) (respects freezer in tests)
+fn py_utc_now(py: Python<'_>) -> DateTime<Utc> {
+    let datetime_mod = py
+        .import_bound("datetime")
+        .expect("Failed to import datetime module");
+    let timezone = datetime_mod
+        .getattr("timezone")
+        .expect("Failed to get timezone");
+    let utc = timezone.getattr("utc").expect("Failed to get UTC");
+    let now = datetime_mod
+        .getattr("datetime")
+        .expect("Failed to get datetime class")
+        .call_method1("now", (utc,))
+        .expect("Failed to call datetime.now(UTC)");
+    let year: i32 = now.getattr("year").unwrap().extract().unwrap();
+    let month: u32 = now.getattr("month").unwrap().extract().unwrap();
+    let day: u32 = now.getattr("day").unwrap().extract().unwrap();
+    let hour: u32 = now.getattr("hour").unwrap().extract().unwrap();
+    let minute: u32 = now.getattr("minute").unwrap().extract().unwrap();
+    let second: u32 = now.getattr("second").unwrap().extract().unwrap();
+    let microsecond: u32 = now.getattr("microsecond").unwrap().extract().unwrap();
+    chrono::NaiveDate::from_ymd_opt(year, month, day)
+        .and_then(|d| d.and_hms_micro_opt(hour, minute, second, microsecond))
+        .map(|dt| dt.and_utc())
+        .unwrap_or_else(Utc::now)
+}
 
 /// Python wrapper for FloorEntry
 #[pyclass(name = "FloorEntry")]
@@ -41,7 +69,7 @@ impl PyFloorEntry {
     }
 
     #[getter]
-    fn level(&self) -> i32 {
+    fn level(&self) -> Option<i32> {
         self.inner.level
     }
 
@@ -62,7 +90,7 @@ impl PyFloorEntry {
 
     fn __repr__(&self) -> String {
         format!(
-            "FloorEntry(id='{}', name='{}', level={})",
+            "FloorEntry(id='{}', name='{}', level={:?})",
             self.inner.id, self.inner.name, self.inner.level
         )
     }
@@ -171,65 +199,103 @@ impl PyFloorRegistry {
     }
 
     /// Create a new floor
-    #[pyo3(signature = (name, *, level=0, aliases=None, icon=None))]
+    #[pyo3(signature = (name, *, level=None, aliases=None, icon=None))]
     fn async_create(
         &self,
+        py: Python<'_>,
         name: &str,
-        level: i32,
+        level: Option<i32>,
         aliases: Option<Vec<String>>,
         icon: Option<String>,
-    ) -> PyFloorEntry {
-        let entry = self.inner.create(name, level);
+    ) -> PyResult<PyFloorEntry> {
+        let now = py_utc_now(py);
+        let entry = self
+            .inner
+            .create(name, level, Some(now))
+            .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?;
 
         // Update with optional fields if provided
         if aliases.is_some() || icon.is_some() {
-            if let Some(updated) = self.inner.update(&entry.id, |e| {
-                if let Some(ref a) = aliases {
-                    e.aliases = a.clone();
-                }
-                if icon.is_some() {
-                    e.icon = icon.clone();
-                }
-            }) {
-                return PyFloorEntry::from_inner(updated);
+            if let Ok(updated) = self.inner.update(
+                &entry.id,
+                |e| {
+                    if let Some(ref a) = aliases {
+                        e.aliases = a.clone();
+                    }
+                    if icon.is_some() {
+                        e.icon = icon.clone();
+                    }
+                },
+                Some(now),
+            ) {
+                return Ok(PyFloorEntry::from_inner(updated));
             }
         }
 
-        PyFloorEntry::from_inner(entry)
+        Ok(PyFloorEntry::from_inner(entry))
     }
 
     /// Update a floor
     #[pyo3(signature = (floor_id, *, name=None, level=None, aliases=None, icon=None))]
     fn async_update(
         &self,
+        py: Python<'_>,
         floor_id: &str,
         name: Option<String>,
         level: Option<i32>,
         aliases: Option<Vec<String>>,
         icon: Option<String>,
     ) -> PyResult<PyFloorEntry> {
+        let now = py_utc_now(py);
         self.inner
-            .update(floor_id, |entry| {
-                if let Some(ref n) = name {
-                    entry.name = n.clone();
-                }
-                if let Some(l) = level {
-                    entry.level = l;
-                }
-                if let Some(ref a) = aliases {
-                    entry.aliases = a.clone();
-                }
-                if icon.is_some() {
-                    entry.icon = icon.clone();
-                }
-            })
+            .update(
+                floor_id,
+                |entry| {
+                    if let Some(ref n) = name {
+                        entry.name = n.clone();
+                    }
+                    if let Some(l) = level {
+                        entry.level = Some(l);
+                    }
+                    if let Some(ref a) = aliases {
+                        entry.aliases = a.clone();
+                    }
+                    if icon.is_some() {
+                        entry.icon = icon.clone();
+                    }
+                },
+                Some(now),
+            )
             .map(PyFloorEntry::from_inner)
-            .ok_or_else(|| {
-                PyErr::new::<pyo3::exceptions::PyKeyError, _>(format!(
-                    "Floor not found: {}",
-                    floor_id
-                ))
-            })
+            .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)
+    }
+
+    /// Update a floor, always setting all fields (None means "clear the field")
+    /// This is different from async_update where None means "don't change"
+    #[pyo3(signature = (floor_id, name, *, level=None, aliases=None, icon=None))]
+    fn async_set_fields(
+        &self,
+        py: Python<'_>,
+        floor_id: &str,
+        name: String,
+        level: Option<i32>,
+        aliases: Option<Vec<String>>,
+        icon: Option<String>,
+    ) -> PyResult<PyFloorEntry> {
+        let now = py_utc_now(py);
+        self.inner
+            .update(
+                floor_id,
+                |entry| {
+                    entry.name = name.clone();
+                    entry.level = level;
+                    entry.aliases = aliases.clone().unwrap_or_default();
+                    entry.icon = icon.clone();
+                },
+                Some(now),
+            )
+            .map(PyFloorEntry::from_inner)
+            .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)
     }
 
     /// Delete a floor

@@ -19,7 +19,7 @@ pub const STORAGE_VERSION: u32 = 1;
 pub const STORAGE_MINOR_VERSION: u32 = 2;
 
 /// A registered floor entry
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FloorEntry {
     /// Internal UUID (stored as "floor_id" in HA storage)
     #[serde(alias = "floor_id")]
@@ -36,9 +36,9 @@ pub struct FloorEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
 
-    /// Floor level (0 = ground, positive = above, negative = below)
-    #[serde(default)]
-    pub level: i32,
+    /// Floor level (None = unset, 0 = ground, positive = above, negative = below)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<i32>,
 
     /// Alternative names
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -54,12 +54,17 @@ pub struct FloorEntry {
 }
 
 impl FloorEntry {
-    /// Create a new floor entry
-    pub fn new(name: impl Into<String>, level: i32) -> Self {
+    /// Create a new floor entry with an explicit ID and timestamp
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        level: Option<i32>,
+        now: Option<DateTime<Utc>>,
+    ) -> Self {
         let name = name.into();
-        let now = Utc::now();
+        let now = now.unwrap_or_else(Utc::now);
         Self {
-            id: ulid::Ulid::new().to_string().to_lowercase(),
+            id: id.into(),
             normalized_name: Some(normalize_name(&name)),
             name,
             icon: None,
@@ -71,11 +76,22 @@ impl FloorEntry {
     }
 }
 
-/// Normalize a name for searching
+/// Normalize a name by removing whitespace and case folding (matches HA behavior)
 fn normalize_name(name: &str) -> String {
-    name.to_lowercase()
-        .trim()
-        .replace(|c: char| !c.is_alphanumeric() && c != ' ', "")
+    name.to_lowercase().replace(' ', "")
+}
+
+/// Slugify a name for use as an ID (matches HA's slugify behavior)
+fn slugify(name: &str) -> String {
+    let mut result = String::new();
+    for c in name.chars() {
+        if c.is_alphanumeric() {
+            result.extend(c.to_lowercase());
+        } else if !result.is_empty() && !result.ends_with('_') {
+            result.push('_');
+        }
+    }
+    result.trim_end_matches('_').to_string()
 }
 
 /// Floor registry data for storage
@@ -158,7 +174,9 @@ impl FloorRegistry {
             self.by_name.insert(normalized.clone(), floor_id.clone());
         }
 
-        self.by_level.insert(entry.level, floor_id.clone());
+        if let Some(level) = entry.level {
+            self.by_level.insert(level, floor_id.clone());
+        }
         self.by_id.insert(floor_id, entry);
     }
 
@@ -167,7 +185,9 @@ impl FloorRegistry {
         if let Some(ref normalized) = entry.normalized_name {
             self.by_name.remove(normalized);
         }
-        self.by_level.remove(&entry.level);
+        if let Some(level) = entry.level {
+            self.by_level.remove(&level);
+        }
         self.by_id.remove(&entry.id);
     }
 
@@ -196,21 +216,61 @@ impl FloorRegistry {
     /// Create a new floor
     ///
     /// Returns an `Arc<FloorEntry>` - cheap to clone.
-    pub fn create(&self, name: &str, level: i32) -> Arc<FloorEntry> {
-        let entry = FloorEntry::new(name, level);
+    /// Returns an error if a floor with the same name already exists.
+    /// If `now` is None, uses the current system time.
+    pub fn create(
+        &self,
+        name: &str,
+        level: Option<i32>,
+        now: Option<DateTime<Utc>>,
+    ) -> Result<Arc<FloorEntry>, String> {
+        let normalized = normalize_name(name);
+        if self.by_name.contains_key(&normalized) {
+            return Err(format!(
+                "The name {} ({}) is already in use",
+                name, normalized
+            ));
+        }
+
+        let id = self.generate_id(name);
+        let entry = FloorEntry::new(id, name, level, now);
         let arc_entry = Arc::new(entry);
         info!(
-            "Created floor: {} (level {}, {})",
+            "Created floor: {} (level {:?}, {})",
             name, level, arc_entry.id
         );
         self.index_entry(Arc::clone(&arc_entry));
-        arc_entry
+        Ok(arc_entry)
+    }
+
+    /// Generate a unique ID from a name (slugified, with suffix for conflicts)
+    fn generate_id(&self, name: &str) -> String {
+        let base = slugify(name);
+        if !self.by_id.contains_key(&base) {
+            return base;
+        }
+        let mut tries = 2;
+        loop {
+            let candidate = format!("{}_{}", base, tries);
+            if !self.by_id.contains_key(&candidate) {
+                return candidate;
+            }
+            tries += 1;
+        }
     }
 
     /// Update a floor
     ///
     /// Returns the updated entry as `Arc<FloorEntry>`.
-    pub fn update<F>(&self, floor_id: &str, f: F) -> Option<Arc<FloorEntry>>
+    /// Returns `Err` if the new name conflicts with another floor.
+    /// Only updates `modified_at` if the entry actually changed.
+    /// If `now` is None, uses the current system time for modified_at.
+    pub fn update<F>(
+        &self,
+        floor_id: &str,
+        f: F,
+        now: Option<DateTime<Utc>>,
+    ) -> Result<Arc<FloorEntry>, String>
     where
         F: FnOnce(&mut FloorEntry),
     {
@@ -218,25 +278,49 @@ impl FloorRegistry {
         if let Some((_, arc_entry)) = self.by_id.remove(floor_id) {
             // Clone the inner entry for modification
             let mut entry = (*arc_entry).clone();
+            let old_entry = entry.clone();
 
             // Unindex from secondary indexes
             if let Some(ref normalized) = entry.normalized_name {
                 self.by_name.remove(normalized);
             }
-            self.by_level.remove(&entry.level);
+            if let Some(level) = entry.level {
+                self.by_level.remove(&level);
+            }
 
             // Apply update
             f(&mut entry);
             entry.normalized_name = Some(normalize_name(&entry.name));
-            entry.modified_at = Utc::now();
+
+            // Check for name conflict with another floor
+            if entry.name != old_entry.name {
+                let new_normalized = normalize_name(&entry.name);
+                if self.by_name.contains_key(&new_normalized) {
+                    // Name conflict - re-index the old entry and return error
+                    self.index_entry(arc_entry);
+                    return Err(format!(
+                        "The name {} ({}) is already in use",
+                        entry.name, new_normalized
+                    ));
+                }
+            }
+
+            // Only update modified_at if something actually changed
+            let changed = entry.name != old_entry.name
+                || entry.aliases != old_entry.aliases
+                || entry.icon != old_entry.icon
+                || entry.level != old_entry.level;
+            if changed {
+                entry.modified_at = now.unwrap_or_else(Utc::now);
+            }
 
             // Re-index with new Arc
             let new_arc = Arc::new(entry);
             self.index_entry(Arc::clone(&new_arc));
 
-            Some(new_arc)
+            Ok(new_arc)
         } else {
-            None
+            Err(format!("Floor not found: {}", floor_id))
         }
     }
 

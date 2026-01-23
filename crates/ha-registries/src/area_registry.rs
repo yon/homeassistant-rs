@@ -20,7 +20,7 @@ pub const STORAGE_VERSION: u32 = 1;
 pub const STORAGE_MINOR_VERSION: u32 = 6;
 
 /// A registered area entry
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AreaEntry {
     /// Internal UUID
     pub id: String,
@@ -48,6 +48,14 @@ pub struct AreaEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub floor_id: Option<String>,
 
+    /// Entity ID for humidity sensor in this area
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub humidity_entity_id: Option<String>,
+
+    /// Entity ID for temperature sensor in this area
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature_entity_id: Option<String>,
+
     /// Label IDs
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<String>,
@@ -62,18 +70,20 @@ pub struct AreaEntry {
 }
 
 impl AreaEntry {
-    /// Create a new area entry
-    pub fn new(name: impl Into<String>) -> Self {
+    /// Create a new area entry with an explicit ID and timestamp
+    pub fn new(id: impl Into<String>, name: impl Into<String>, now: Option<DateTime<Utc>>) -> Self {
         let name = name.into();
-        let now = Utc::now();
+        let now = now.unwrap_or_else(Utc::now);
         Self {
-            id: ulid::Ulid::new().to_string().to_lowercase(),
+            id: id.into(),
             normalized_name: Some(normalize_name(&name)),
             name,
             picture: None,
             icon: None,
             aliases: Vec::new(),
             floor_id: None,
+            humidity_entity_id: None,
+            temperature_entity_id: None,
             labels: Vec::new(),
             created_at: now,
             modified_at: now,
@@ -81,11 +91,22 @@ impl AreaEntry {
     }
 }
 
-/// Normalize a name for searching
+/// Normalize a name by removing whitespace and case folding (matches HA behavior)
 fn normalize_name(name: &str) -> String {
-    name.to_lowercase()
-        .trim()
-        .replace(|c: char| !c.is_alphanumeric() && c != ' ', "")
+    name.to_lowercase().replace(' ', "")
+}
+
+/// Slugify a name for use as an ID (matches HA's slugify behavior)
+fn slugify(name: &str) -> String {
+    let mut result = String::new();
+    for c in name.chars() {
+        if c.is_alphanumeric() {
+            result.extend(c.to_lowercase());
+        } else if !result.is_empty() && !result.ends_with('_') {
+            result.push('_');
+        }
+    }
+    result.trim_end_matches('_').to_string()
 }
 
 /// Area registry data for storage
@@ -116,6 +137,9 @@ pub struct AreaRegistry {
 
     /// Index: floor_id -> set of area_ids
     by_floor_id: DashMap<String, HashSet<String>>,
+
+    /// Index: label_id -> set of area_ids
+    by_label_id: DashMap<String, HashSet<String>>,
 }
 
 impl AreaRegistry {
@@ -126,6 +150,7 @@ impl AreaRegistry {
             by_id: DashMap::new(),
             by_name: DashMap::new(),
             by_floor_id: DashMap::new(),
+            by_label_id: DashMap::new(),
         }
     }
 
@@ -175,6 +200,13 @@ impl AreaRegistry {
                 .insert(area_id.clone());
         }
 
+        for label_id in &entry.labels {
+            self.by_label_id
+                .entry(label_id.clone())
+                .or_default()
+                .insert(area_id.clone());
+        }
+
         self.by_id.insert(area_id, entry);
     }
 
@@ -186,6 +218,12 @@ impl AreaRegistry {
 
         if let Some(ref floor_id) = entry.floor_id {
             if let Some(mut ids) = self.by_floor_id.get_mut(floor_id) {
+                ids.remove(&entry.id);
+            }
+        }
+
+        for label_id in &entry.labels {
+            if let Some(mut ids) = self.by_label_id.get_mut(label_id) {
                 ids.remove(&entry.id);
             }
         }
@@ -216,21 +254,64 @@ impl AreaRegistry {
             .unwrap_or_default()
     }
 
+    /// Get all areas with a given label
+    pub fn get_by_label_id(&self, label_id: &str) -> Vec<Arc<AreaEntry>> {
+        self.by_label_id
+            .get(label_id)
+            .map(|ids| ids.iter().filter_map(|id| self.get(id)).collect())
+            .unwrap_or_default()
+    }
+
     /// Create a new area
     ///
     /// Returns an `Arc<AreaEntry>` - cheap to clone.
-    pub fn create(&self, name: &str) -> Arc<AreaEntry> {
-        let entry = AreaEntry::new(name);
+    /// Returns an error if an area with the same name already exists.
+    /// If `now` is None, uses the current system time.
+    pub fn create(&self, name: &str, now: Option<DateTime<Utc>>) -> Result<Arc<AreaEntry>, String> {
+        let normalized = normalize_name(name);
+        if self.by_name.contains_key(&normalized) {
+            return Err(format!(
+                "The name {} ({}) is already in use",
+                name, normalized
+            ));
+        }
+
+        let id = self.generate_id(name);
+        let entry = AreaEntry::new(id, name, now);
         let arc_entry = Arc::new(entry);
         info!("Created area: {} ({})", name, arc_entry.id);
         self.index_entry(Arc::clone(&arc_entry));
-        arc_entry
+        Ok(arc_entry)
+    }
+
+    /// Generate a unique ID from a name (slugified, with suffix for conflicts)
+    fn generate_id(&self, name: &str) -> String {
+        let base = slugify(name);
+        if !self.by_id.contains_key(&base) {
+            return base;
+        }
+        let mut tries = 2;
+        loop {
+            let candidate = format!("{}_{}", base, tries);
+            if !self.by_id.contains_key(&candidate) {
+                return candidate;
+            }
+            tries += 1;
+        }
     }
 
     /// Update an area
     ///
     /// Returns the updated entry as `Arc<AreaEntry>`.
-    pub fn update<F>(&self, area_id: &str, f: F) -> Option<Arc<AreaEntry>>
+    /// Only updates `modified_at` if the entry actually changed.
+    /// Returns Err if the new name conflicts with another entry.
+    /// If `now` is None, uses the current system time for modified_at.
+    pub fn update<F>(
+        &self,
+        area_id: &str,
+        f: F,
+        now: Option<DateTime<Utc>>,
+    ) -> Result<Arc<AreaEntry>, String>
     where
         F: FnOnce(&mut AreaEntry),
     {
@@ -238,6 +319,7 @@ impl AreaRegistry {
         if let Some((_, arc_entry)) = self.by_id.remove(area_id) {
             // Clone the inner entry for modification
             let mut entry = (*arc_entry).clone();
+            let old_entry = entry.clone();
 
             // Unindex from secondary indexes
             if let Some(ref normalized) = entry.normalized_name {
@@ -248,19 +330,49 @@ impl AreaRegistry {
                     ids.remove(&entry.id);
                 }
             }
+            for label_id in &entry.labels {
+                if let Some(mut ids) = self.by_label_id.get_mut(label_id) {
+                    ids.remove(&entry.id);
+                }
+            }
 
             // Apply update
             f(&mut entry);
             entry.normalized_name = Some(normalize_name(&entry.name));
-            entry.modified_at = Utc::now();
+
+            // Check name uniqueness if name changed
+            if entry.name != old_entry.name {
+                let normalized = normalize_name(&entry.name);
+                if self.by_name.contains_key(&normalized) {
+                    // Name conflict - re-index old entry and return error
+                    self.index_entry(arc_entry);
+                    return Err(format!(
+                        "The name {} ({}) is already in use",
+                        entry.name, normalized
+                    ));
+                }
+            }
+
+            // Only update modified_at if something actually changed
+            let changed = entry.name != old_entry.name
+                || entry.aliases != old_entry.aliases
+                || entry.floor_id != old_entry.floor_id
+                || entry.humidity_entity_id != old_entry.humidity_entity_id
+                || entry.icon != old_entry.icon
+                || entry.labels != old_entry.labels
+                || entry.picture != old_entry.picture
+                || entry.temperature_entity_id != old_entry.temperature_entity_id;
+            if changed {
+                entry.modified_at = now.unwrap_or_else(Utc::now);
+            }
 
             // Re-index with new Arc
             let new_arc = Arc::new(entry);
             self.index_entry(Arc::clone(&new_arc));
 
-            Some(new_arc)
+            Ok(new_arc)
         } else {
-            None
+            Err(format!("Area not found: {}", area_id))
         }
     }
 
