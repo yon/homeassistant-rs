@@ -488,23 +488,32 @@ TEST_CATEGORIES = {
         # "helpers/test_device_registry.py::test_cleanup_device_registry_removes_expired_orphaned_devices",
         # "helpers/test_device_registry.py::test_cleanup_startup",
         # "helpers/test_device_registry.py::test_cleanup_entity_registry_change",
-        # Removed: Require async_update_device event firing with changes tracking
-        # "helpers/test_device_registry.py::test_removing_config_entries",
+        # Area clearing
+        "helpers/test_device_registry.py::test_removing_area_id",
+        # Update operations
+        "helpers/test_device_registry.py::test_update",
+        "helpers/test_device_registry.py::test_update_connection",
+        "helpers/test_device_registry.py::test_update_suggested_area",
+        # Config entry add/remove operations
+        "helpers/test_device_registry.py::test_update_remove_config_entries",
+        "helpers/test_device_registry.py::test_removing_config_entries",
+        # Validation
+        "helpers/test_device_registry.py::test_update_device_no_connections_or_identifiers",
+        # Removed: Require config subentry handling
         # "helpers/test_device_registry.py::test_removing_config_subentries",
-        # "helpers/test_device_registry.py::test_removing_area_id",
-        # "helpers/test_device_registry.py::test_update",
-        # "helpers/test_device_registry.py::test_update_connection",
-        # "helpers/test_device_registry.py::test_update_remove_config_entries",
         # "helpers/test_device_registry.py::test_update_remove_config_subentries",
         # "helpers/test_device_registry.py::test_update_suggested_area",
         # "helpers/test_device_registry.py::test_update_add_config_entry_disabled_by",
         # "helpers/test_device_registry.py::test_update_remove_config_entry_disabled_by",
         # "helpers/test_device_registry.py::test_disable_config_entry_disables_devices",
         # "helpers/test_device_registry.py::test_only_disable_device_if_all_config_entries_are_disabled",
-        # "helpers/test_device_registry.py::test_primary_config_entry",
+        "helpers/test_device_registry.py::test_primary_config_entry",
         # "helpers/test_device_registry.py::test_update_device_no_connections_or_identifiers",
-        # "helpers/test_device_registry.py::test_device_registry_connections_collision",
-        # "helpers/test_device_registry.py::test_device_registry_identifiers_collision",
+        "helpers/test_device_registry.py::test_device_registry_connections_collision",
+        "helpers/test_device_registry.py::test_device_registry_identifiers_collision",
+        "helpers/test_device_registry.py::test_update_remove_config_subentries",
+        "helpers/test_device_registry.py::test_update_add_config_entry_disabled_by",
+        "helpers/test_device_registry.py::test_update_remove_config_entry_disabled_by",
     ],
 
     # ==========================================================================

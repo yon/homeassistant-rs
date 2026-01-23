@@ -1,6 +1,6 @@
 //! Python wrappers for core types
 
-use ha_core::{Context, EntityId, Event, State};
+use ha_core::{Context, EntityId, State};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::collections::HashMap;
@@ -292,81 +292,6 @@ impl PyState {
 impl PyState {
     pub fn from_inner(inner: State) -> Self {
         Self { inner }
-    }
-}
-
-/// Python wrapper for Event
-///
-/// Events are stored as Arc<Event> to avoid cloning event data.
-/// This matches the EventBus optimization where events are broadcast as Arc.
-#[pyclass(name = "Event")]
-#[derive(Clone)]
-pub struct PyEvent {
-    inner: std::sync::Arc<Event<serde_json::Value>>,
-}
-
-#[pymethods]
-impl PyEvent {
-    #[getter]
-    fn event_type(&self) -> &str {
-        self.inner.event_type.as_str()
-    }
-
-    #[getter]
-    fn data(&self, py: Python<'_>) -> PyResult<PyObject> {
-        json_to_py(py, &self.inner.data)
-    }
-
-    #[getter]
-    fn time_fired(&self) -> String {
-        self.inner.time_fired.to_rfc3339()
-    }
-
-    #[getter]
-    fn context(&self) -> PyContext {
-        PyContext::from_inner(self.inner.context.clone())
-    }
-
-    /// Return dictionary representation of event
-    fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let dict = PyDict::new_bound(py);
-        dict.set_item("event_type", self.inner.event_type.as_str())?;
-        dict.set_item("data", json_to_py(py, &self.inner.data)?)?;
-        dict.set_item("origin", "LOCAL")?; // Default origin
-        dict.set_item("time_fired", self.inner.time_fired.to_rfc3339())?;
-
-        // Add context as dict
-        let ctx_dict = PyDict::new_bound(py);
-        ctx_dict.set_item("id", &self.inner.context.id)?;
-        ctx_dict.set_item("parent_id", self.inner.context.parent_id.as_deref())?;
-        ctx_dict.set_item("user_id", self.inner.context.user_id.as_deref())?;
-        dict.set_item("context", ctx_dict)?;
-
-        Ok(dict.into_any().unbind())
-    }
-
-    fn __repr__(&self) -> String {
-        format!("<Event {}>", self.inner.event_type)
-    }
-
-    fn __eq__(&self, other: &Self) -> bool {
-        self.inner.event_type == other.inner.event_type
-            && self.inner.data == other.inner.data
-            && self.inner.context.id == other.inner.context.id
-    }
-}
-
-impl PyEvent {
-    /// Create a PyEvent from an Arc<Event> (cheap, no clone)
-    pub fn from_arc(inner: std::sync::Arc<Event<serde_json::Value>>) -> Self {
-        Self { inner }
-    }
-
-    /// Create a PyEvent from an owned Event (wraps in Arc)
-    pub fn from_inner(inner: Event<serde_json::Value>) -> Self {
-        Self {
-            inner: std::sync::Arc::new(inner),
-        }
     }
 }
 

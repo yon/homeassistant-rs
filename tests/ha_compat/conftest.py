@@ -462,19 +462,17 @@ class RustStateMachine:
 
     def async_remove(self, entity_id: str, context: RustContext | None = None) -> bool:
         entity_id = entity_id.lower()
-        old_rust_state = self._rust_states.get(entity_id)
-        if old_rust_state is None:
+        if self._rust_states.get(entity_id) is None:
             return False
 
-        old_state = RustState.from_rust(old_rust_state, self._contexts.get(entity_id))
-        self._rust_states.remove(entity_id)
+        rust_ctx = None
+        if context is not None:
+            rust_ctx = ha_core_rs.Context(
+                user_id=context.user_id, parent_id=context.parent_id,
+            )
+        # Rust StateStore.remove() fires STATE_CHANGED event internally
+        self._rust_states.remove(entity_id, rust_ctx)
         self._contexts.pop(entity_id, None)
-
-        self._bus.async_fire(
-            "state_changed",
-            {"entity_id": entity_id, "old_state": old_state, "new_state": None},
-            context=context,
-        )
         return True
 
     def async_reserve(self, entity_id: str) -> None:
@@ -505,79 +503,29 @@ class RustStateMachine:
         timestamp: datetime | None = None,
     ) -> None:
         entity_id = entity_id.lower()
+        context = context or RustContext()
 
-        if len(new_state) > 255:
-            from homeassistant.exceptions import InvalidStateError
-            raise InvalidStateError(
-                f"Invalid state with length {len(new_state)}. "
-                "State max length is 255 characters."
+        rust_ctx = ha_core_rs.Context(
+            user_id=context.user_id,
+            parent_id=context.parent_id,
+        )
+        try:
+            # Rust handles: validation, change detection, storage, and event firing
+            self._rust_states.async_set(
+                entity_id, new_state, attributes or {}, rust_ctx, force_update
             )
-
-        if not ha_core_rs.valid_entity_id(entity_id):
+        except ValueError as e:
+            msg = str(e)
+            if "State max length" in msg:
+                from homeassistant.exceptions import InvalidStateError
+                raise InvalidStateError(msg)
             raise InvalidEntityFormatError(
                 f"Invalid entity id encountered: {entity_id}. "
                 "Format should be <domain>.<object_id>"
             )
 
-        context = context or RustContext()
-        now = timestamp or datetime.now(timezone.utc)
-
-        # Get old state from Rust
-        old_rust_state = self._rust_states.get(entity_id)
-        old_state = None
-        if old_rust_state is not None:
-            old_state = RustState.from_rust(old_rust_state, self._contexts.get(entity_id))
-
-        # Determine if state actually changed
-        same_attrs = False
-        if old_state is not None:
-            same_state = old_state.state == new_state
-            same_attrs = old_state.attributes == (attributes or {})
-
-            if same_state and same_attrs and not force_update:
-                return
-
-            if same_state and not force_update:
-                last_changed = old_state.last_changed
-            else:
-                last_changed = now
-        else:
-            last_changed = now
-
-        # Reuse old attributes dict if unchanged
-        if same_attrs and old_state is not None:
-            final_attrs = dict(old_state.attributes)
-        else:
-            final_attrs = attributes or {}
-
-        # Store in Rust - this is the actual state storage
-        rust_ctx = ha_core_rs.Context(
-            user_id=context.user_id,
-            parent_id=context.parent_id
-        )
-        self._rust_states.set(entity_id, new_state, final_attrs, rust_ctx)
-
-        # Track context separately for full HA compatibility
         self._contexts[entity_id] = context
         self._reservations.discard(entity_id)
-
-        # Create new state wrapper for the event
-        new_rust_state = self._rust_states.get(entity_id)
-        new_state_obj = RustState.from_rust(new_rust_state, context)
-        # Override timestamps with our calculated values for HA compatibility
-        new_state_obj.last_changed = last_changed
-        new_state_obj.last_updated = now
-        new_state_obj.last_reported = now
-        new_state_obj.last_updated_timestamp = now.timestamp()
-        if last_changed == now:
-            new_state_obj._cache["last_changed_timestamp"] = now.timestamp()
-
-        # Fire state_changed event
-        self._bus.async_fire(
-            "state_changed",
-            {"entity_id": entity_id, "old_state": old_state, "new_state": new_state_obj},
-            context=context,
-        )
 
     def entity_ids(self, domain_filter: str | None = None) -> list[str]:
         if domain_filter:
@@ -618,21 +566,29 @@ class RustStateMachine:
 # =============================================================================
 
 class RustEventBus:
-    """Wrapper that provides HA-compatible EventBus API backed by Rust."""
+    """Thin wrapper around Rust PyEventBus providing HA-compatible API.
 
-    __slots__ = ("_hass", "_rust_bus", "_listeners", "_loop", "_filters")
+    All event dispatch happens in Rust. Python listeners are registered as
+    sync callbacks on the Rust EventBus and fire inline during fire().
+    """
+
+    __slots__ = ("_hass", "_rust_bus")
 
     def __init__(self, hass: Any) -> None:
         self._hass = hass
-        rust_hass = _get_rust_hass()
-        self._rust_bus = rust_hass.bus  # PyEventBus from Rust
-        # Keep Python listeners for HA compatibility (filters, run_immediately, etc.)
-        self._listeners: dict[str, list[tuple[Callable, Callable | None]]] = {}
-        self._loop = asyncio.get_event_loop()
+        self._rust_bus = _get_rust_hass().bus  # PyEventBus from Rust
 
     @property
     def _debug(self) -> bool:
         return False
+
+    def _to_rust_context(self, context: RustContext | None) -> Any:
+        if context is None:
+            return None
+        return ha_core_rs.Context(
+            user_id=context.user_id,
+            parent_id=context.parent_id,
+        )
 
     def async_fire(
         self,
@@ -642,7 +598,9 @@ class RustEventBus:
         context: RustContext | None = None,
         time_fired: float | None = None,
     ) -> None:
-        self.async_fire_internal(event_type, event_data, origin, context, time_fired)
+        self._rust_bus.async_fire(
+            event_type, event_data, context=self._to_rust_context(context),
+        )
 
     def async_fire_internal(
         self,
@@ -652,48 +610,7 @@ class RustEventBus:
         context: RustContext | None = None,
         time_fired: float | None = None,
     ) -> None:
-        import homeassistant.core as ha_core
-
-        # Gather listeners
-        listeners_with_filters = list(self._listeners.get(event_type, []))
-        listeners_with_filters.extend(self._listeners.get("*", []))
-
-        if not listeners_with_filters:
-            return
-
-        event_data_dict = event_data or {}
-        listeners_to_call = []
-
-        for callback, event_filter in listeners_with_filters:
-            if event_filter is not None:
-                try:
-                    if not event_filter(event_data_dict):
-                        continue
-                except Exception:
-                    continue
-            listeners_to_call.append(callback)
-
-        if not listeners_to_call:
-            return
-
-        time_fired_timestamp = time_fired if time_fired is not None else time.time()
-
-        event = ha_core.Event(
-            event_type,
-            event_data_dict,
-            origin or EventOrigin.local,
-            time_fired_timestamp,
-            context,
-        )
-
-        for callback in listeners_to_call:
-            try:
-                if asyncio.iscoroutinefunction(callback):
-                    asyncio.create_task(callback(event))
-                else:
-                    callback(event)
-            except Exception as e:
-                print(f"Error in event listener: {e}")
+        self.async_fire(event_type, event_data, origin, context, time_fired)
 
     def async_listen(
         self,
@@ -702,19 +619,7 @@ class RustEventBus:
         run_immediately: bool = False,
         event_filter: Callable | None = None,
     ) -> Callable[[], None]:
-        if event_type not in self._listeners:
-            self._listeners[event_type] = []
-
-        entry = (listener, event_filter)
-        self._listeners[event_type].append(entry)
-
-        def remove_listener() -> None:
-            try:
-                self._listeners[event_type].remove(entry)
-            except ValueError:
-                pass
-
-        return remove_listener
+        return self._rust_bus.async_listen(event_type, listener, run_immediately, event_filter)
 
     def async_listen_once(
         self,
@@ -722,25 +627,10 @@ class RustEventBus:
         listener: Callable,
         run_immediately: bool = False,
     ) -> Callable[[], None]:
-        remove_listener: Callable[[], None] | None = None
-
-        def one_time_listener(event: "RustEvent") -> None:
-            nonlocal remove_listener
-            if remove_listener:
-                remove_listener()
-            if asyncio.iscoroutinefunction(listener):
-                asyncio.create_task(listener(event))
-            else:
-                listener(event)
-
-        remove_listener = self.async_listen(event_type, one_time_listener, run_immediately)
-        return remove_listener
+        return self._rust_bus.async_listen_once(event_type, listener, run_immediately)
 
     def async_listeners(self) -> dict[str, int]:
-        result = defaultdict(int)
-        for event_type, listeners in self._listeners.items():
-            result[event_type] = len(listeners)
-        return result
+        return self._rust_bus.async_listeners()
 
     def fire(
         self,
@@ -1611,35 +1501,14 @@ class RustEntityRegistry:
         old_entry = self._rust_registry.async_get(entity_id)
         old_entity_id = old_entry.entity_id if old_entry else None
 
-        # Check for unique_id conflicts
-        if "new_unique_id" in kwargs and kwargs["new_unique_id"] is not None:
-            new_uid = kwargs["new_unique_id"]
-            # Check if another entity already uses this unique_id
-            existing = self._rust_registry.async_get_by_unique_id(new_uid)
-            if existing is not None and existing.entity_id != entity_id:
-                raise ValueError(
-                    f"Unique id '{new_uid}' is already in use by "
-                    f"'{existing.entity_id}'"
-                )
-
-        # Apply config entry disabled_by logic when config_entry_id changes
+        # Compute config_entry_is_disabled for Rust disabled_by propagation
+        config_entry_is_disabled = None
         if 'config_entry_id' in kwargs and 'disabled_by' not in kwargs:
             new_ce_id = kwargs['config_entry_id']
-            if new_ce_id is None:
-                # Config entry being removed - clear CONFIG_ENTRY disabled_by
-                if old_entry and old_entry.disabled_by == "config_entry":
-                    kwargs['disabled_by'] = None
-            elif self._hass is not None:
+            if new_ce_id is not None and self._hass is not None:
                 new_ce = self._hass.config_entries.async_get_entry(new_ce_id)
-                if new_ce is not None and new_ce.disabled_by is not None:
-                    # New config entry is disabled - disable entity unless it has
-                    # a "stronger" disabled_by (DEVICE, HASS, INTEGRATION, USER)
-                    current_disabled = old_entry.disabled_by if old_entry else None
-                    if current_disabled is None:
-                        kwargs['disabled_by'] = "config_entry"
-                elif old_entry and old_entry.disabled_by == "config_entry":
-                    # New config entry is not disabled - clear CONFIG_ENTRY disabled_by
-                    kwargs['disabled_by'] = None
+                if new_ce is not None:
+                    config_entry_is_disabled = bool(new_ce.disabled_by)
 
         # Transform kwargs for Rust: None means "clear" for optional string fields
         rust_kwargs = {}
@@ -1658,6 +1527,8 @@ class RustEntityRegistry:
             else:
                 rust_kwargs[key] = value
 
+        if config_entry_is_disabled is not None:
+            rust_kwargs['config_entry_is_disabled'] = config_entry_is_disabled
         entry = self._rust_registry.async_update_entity(entity_id, **rust_kwargs)
         # Force new RegistryEntry since data was updated (RegistryEntry is frozen)
         wrapped = self._get_or_create_wrapper(entry, force_new=True)
@@ -1818,8 +1689,12 @@ class RustDeviceEntry:
         return None
 
     @property
-    def entry_type(self) -> str | None:
-        return self._rust_entry.entry_type
+    def entry_type(self):
+        val = self._rust_entry.entry_type
+        if val:
+            from homeassistant.helpers.device_registry import DeviceEntryType
+            return DeviceEntryType(val)
+        return None
 
     @property
     def hw_version(self) -> str | None:
@@ -1893,7 +1768,46 @@ class RustDeviceEntry:
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, RustDeviceEntry):
-            return self.dict_repr == other.dict_repr
+            return (
+                self.dict_repr == other.dict_repr
+                and self.suggested_area == other.suggested_area
+            )
+        from homeassistant.helpers import device_registry as dr
+        if isinstance(other, dr.DeviceEntry):
+            # Compare timestamps with second precision to avoid float issues
+            created_match = (
+                abs(self.created_at.timestamp() - other.created_at.timestamp()) < 1.0
+                if self.created_at and other.created_at else self.created_at == other.created_at
+            )
+            modified_match = (
+                abs(self.modified_at.timestamp() - other.modified_at.timestamp()) < 1.0
+                if self.modified_at and other.modified_at else self.modified_at == other.modified_at
+            )
+            return (
+                self.id == other.id
+                and self.area_id == other.area_id
+                and self.config_entries == other.config_entries
+                and self.config_entries_subentries == other.config_entries_subentries
+                and self.configuration_url == other.configuration_url
+                and self.connections == other.connections
+                and created_match
+                and self.disabled_by == other.disabled_by
+                and self.entry_type == other.entry_type
+                and self.hw_version == other.hw_version
+                and self.identifiers == other.identifiers
+                and self.labels == other.labels
+                and self.manufacturer == other.manufacturer
+                and self.model == other.model
+                and self.model_id == other.model_id
+                and modified_match
+                and self.name == other.name
+                and self.name_by_user == other.name_by_user
+                and self.primary_config_entry == other.primary_config_entry
+                and self.serial_number == other.serial_number
+                and self.suggested_area == other.suggested_area
+                and self.sw_version == other.sw_version
+                and self.via_device_id == other.via_device_id
+            )
         return False
 
     def __hash__(self) -> int:
@@ -1938,6 +1852,8 @@ class RustDeviceRegistry:
         self.hass = hass
         # Store non-serializable field overrides (e.g., Unserializable name objects)
         self._field_overrides: dict[str, dict[str, object]] = {}
+        # Cache for returning same entry object on no-op updates
+        self._device_entries: dict[str, "RustDeviceEntry"] = {}
 
     async def async_load(self) -> None:
         # No-op for testing - Rust registries start empty in test context
@@ -1947,9 +1863,46 @@ class RustDeviceRegistry:
         # No-op for testing - persistence not needed for unit tests
         pass
 
+    def async_clear_area_id(self, area_id: str) -> None:
+        """Clear an area id from all devices."""
+        all_devices = self._rust_registry.devices
+        for dev_id, dev in all_devices.items():
+            if dev.area_id == area_id:
+                self._rust_registry.async_update_device(dev_id, area_id="")
+
     def async_clear_config_entry(self, config_entry_id: str) -> None:
         """Clear a config entry from all devices."""
+        # Get affected devices before clearing
+        affected_devices = []
+        all_devices = self._rust_registry.devices
+        for dev_id, dev in all_devices.items():
+            if config_entry_id in dev.config_entries:
+                snapshot = self._get_device_snapshot(dev)
+                dict_repr = RustDeviceEntry(dev, self._field_overrides.get(dev_id, {})).dict_repr
+                affected_devices.append((dev_id, snapshot, dict_repr))
+
+        # Clear the config entry from Rust
         self._rust_registry.async_clear_config_entry(config_entry_id)
+
+        # Fire events: updates first, then removes (matches HA ordering)
+        update_events = []
+        remove_events = []
+        for dev_id, old_snapshot, old_dict_repr in affected_devices:
+            updated_dev = self._rust_registry.async_get(dev_id)
+            if updated_dev is None:
+                # Device was removed (had only this config entry)
+                remove_events.append((dev_id, old_dict_repr))
+            else:
+                # Device still exists - compute changes
+                new_snapshot = self._get_device_snapshot(updated_dev)
+                changes = self._compute_changes(old_snapshot, new_snapshot)
+                if changes:
+                    update_events.append((dev_id, changes))
+
+        for dev_id, changes in update_events:
+            self._fire_event("update", dev_id, changes=changes)
+        for dev_id, old_dict_repr in remove_events:
+            self._fire_event("remove", dev_id, device=old_dict_repr)
 
     def async_clear_config_subentry(
         self, config_entry_id: str, config_subentry_id: str
@@ -1982,27 +1935,59 @@ class RustDeviceRegistry:
             )
         ]
 
-    def _fire_event(self, action: str, device_id: str, changes: dict | None = None) -> None:
+    def _fire_event(self, action: str, device_id: str, changes: dict | None = None, device: dict | None = None) -> None:
         """Fire device registry updated event."""
         from homeassistant.helpers import device_registry as dr
         data: dict = {"action": action, "device_id": device_id}
         if changes is not None:
             data["changes"] = changes
+        if device is not None:
+            data["device"] = device
         self.hass.bus.async_fire(dr.EVENT_DEVICE_REGISTRY_UPDATED, data)
+
+    # Runtime-only attributes - don't trigger events/persistence when changed alone
+    RUNTIME_ONLY_ATTRS = {"suggested_area"}
 
     def _get_device_snapshot(self, raw_entry) -> dict:
         """Get a snapshot of device entry fields for change detection."""
+        from homeassistant.helpers import device_registry as dr
+        disabled_by = None
+        if raw_entry.disabled_by:
+            disabled_by = dr.DeviceEntryDisabler(raw_entry.disabled_by)
+        entry_type = None
+        if raw_entry.entry_type:
+            entry_type = dr.DeviceEntryType(raw_entry.entry_type)
+        # Get config_entries_subentries as dict of sets
+        config_entries_subentries = {}
+        try:
+            raw_subentries = raw_entry.config_entries_subentries
+            if isinstance(raw_subentries, dict):
+                config_entries_subentries = {
+                    k: set(v) for k, v in raw_subentries.items()
+                }
+        except Exception:
+            pass
         return {
+            "area_id": raw_entry.area_id,
+            "config_entries": set(raw_entry.config_entries) if raw_entry.config_entries else set(),
+            "config_entries_subentries": config_entries_subentries,
+            "configuration_url": raw_entry.configuration_url,
             "connections": set((c[0], c[1]) for c in raw_entry.connections) if raw_entry.connections else set(),
+            "disabled_by": disabled_by,
+            "entry_type": entry_type,
+            "hw_version": raw_entry.hw_version,
             "identifiers": set((i[0], i[1]) for i in raw_entry.identifiers) if raw_entry.identifiers else set(),
+            "labels": set(raw_entry.labels) if raw_entry.labels else set(),
             "manufacturer": raw_entry.manufacturer,
             "model": raw_entry.model,
+            "model_id": raw_entry.model_id,
             "name": raw_entry.name,
-            "sw_version": raw_entry.sw_version,
-            "hw_version": raw_entry.hw_version,
+            "name_by_user": raw_entry.name_by_user,
+            "primary_config_entry": raw_entry.primary_config_entry,
             "serial_number": raw_entry.serial_number,
-            "configuration_url": raw_entry.configuration_url,
-            "area_id": raw_entry.area_id,
+            "suggested_area": raw_entry.suggested_area,
+            "sw_version": raw_entry.sw_version,
+            "via_device_id": raw_entry.via_device_id,
         }
 
     def _compute_changes(self, old_snapshot: dict, new_snapshot: dict) -> dict:
@@ -2047,6 +2032,7 @@ class RustDeviceRegistry:
         via_device: tuple[str, str] | None = None,
         configuration_url: str | None = None,
         entry_type: str | None = None,
+        disabled_by=None,
         default_manufacturer: str | None = None,
         default_model: str | None = None,
         default_name: str | None = None,
@@ -2065,7 +2051,19 @@ class RustDeviceRegistry:
         )
         old_snapshot = self._get_device_snapshot(existing) if existing else None
 
-        import time
+        # Look up the domain of the current primary config entry (for Rust promotion decision)
+        current_primary_domain = None
+        if existing and existing.primary_config_entry:
+            primary_entry = self.hass.config_entries.async_get_entry(existing.primary_config_entry)
+            if primary_entry is not None:
+                current_primary_domain = primary_entry.domain
+
+        # Compute initial_disabled_by (only for new devices)
+        initial_disabled_by = None
+        if disabled_by is not None and existing is None:
+            initial_disabled_by = str(disabled_by.value) if hasattr(disabled_by, 'value') else str(disabled_by)
+
+        now_ts = datetime.now(timezone.utc).timestamp()
         entry = self._rust_registry.async_get_or_create(
             config_entry_id=config_entry_id,
             config_subentry_id=config_subentry_id,
@@ -2085,8 +2083,11 @@ class RustDeviceRegistry:
             default_manufacturer=default_manufacturer,
             default_model=default_model,
             default_name=default_name,
-            created_at=datetime.now(timezone.utc).timestamp(),
+            created_at=now_ts,
+            current_primary_domain=current_primary_domain,
+            initial_disabled_by=initial_disabled_by,
         )
+
         # Log warning if via_device references a non-existing device
         if via_device and not entry.via_device_id:
             import logging
@@ -2100,6 +2101,7 @@ class RustDeviceRegistry:
             )
 
         # Handle suggested_area: create area and set area_id on device
+        # (cross-registry coordination stays in Python)
         if suggested_area and not entry.area_id:
             from homeassistant.helpers import area_registry as ar
             if ar.DATA_REGISTRY in self.hass.data:
@@ -2108,15 +2110,13 @@ class RustDeviceRegistry:
                 if area is None:
                     area = area_reg.async_create(suggested_area)
                 entry = self._rust_registry.async_update_device(
-                    entry.id, area_id=area.id
+                    entry.id, area_id=area.id, modified_at=now_ts
                 )
 
         # Fire device registry events
         if existing is None:
-            # New device was created
             self._fire_event("create", entry.id)
         else:
-            # Device already existed - check if anything changed
             new_snapshot = self._get_device_snapshot(entry)
             changes = self._compute_changes(old_snapshot, new_snapshot)
             if changes:
@@ -2126,25 +2126,25 @@ class RustDeviceRegistry:
 
     def async_remove_device(self, device_id: str) -> None:
         from homeassistant.helpers import entity_registry as er
-        # Get device info before removal (for entity cleanup)
+        # Clear cache
+        self._device_entries.pop(device_id, None)
+        # Get device info before removal (for entity cleanup and event)
         device_entry = self._rust_registry.async_get(device_id)
         device_config_entries = set(device_entry.config_entries) if device_entry else set()
-        device_subentries = {}
-        if device_entry:
-            try:
-                device_subentries = dict(device_entry.config_entries_subentries)
-            except Exception:
-                pass
 
+        # Build dict_repr before removal for the event
+        device_dict_repr = None
+        if device_entry:
+            device_dict_repr = RustDeviceEntry(device_entry, self._field_overrides.get(device_id, {})).dict_repr
+
+        # Rust handles removal AND via_device_id cleanup on other devices
         self._rust_registry.async_remove_device(device_id)
 
-        # Clear via_device_id on devices that referenced the removed device
-        all_devices = self._rust_registry.devices
-        for dev_id, dev in all_devices.items():
-            if dev.via_device_id == device_id:
-                self._rust_registry.async_update_device(dev_id, via_device_id="")
+        # Fire remove event
+        if device_dict_repr is not None:
+            self._fire_event("remove", device_id, device=device_dict_repr)
 
-        # Clean up entities associated with this device (mirrors HA's async_device_modified)
+        # Clean up entities associated with this device (cross-registry coordination)
         if er.DATA_REGISTRY in self.hass.data:
             entity_reg = self.hass.data[er.DATA_REGISTRY]
             entities = entity_reg.entities.get_entries_for_device_id(
@@ -2152,11 +2152,13 @@ class RustDeviceRegistry:
             )
             for entity in entities:
                 if entity.config_entry_id in device_config_entries:
-                    # Entity belongs to same config entry as device - remove it
                     entity_reg.async_remove(entity.entity_id)
                 else:
-                    # Entity has different config entry - just clear device_id
                     entity_reg.async_update_entity(entity.entity_id, device_id=None)
+
+    def async_schedule_save(self) -> None:
+        """Schedule a save - no-op for testing."""
+        pass
 
     def async_update_device(
         self,
@@ -2164,42 +2166,87 @@ class RustDeviceRegistry:
         **kwargs,
     ) -> RustDeviceEntry:
         from homeassistant.helpers import entity_registry as er
+        from homeassistant.exceptions import HomeAssistantError
 
-        # Handle remove_config_entry_id specially
+        # Extract config entry add/remove params
+        # Use _UNSET sentinel to distinguish "not passed" from "passed as None"
+        _UNSET = object()
+        add_config_entry_id = kwargs.pop('add_config_entry_id', None)
+        add_config_subentry_id = kwargs.pop('add_config_subentry_id', _UNSET)
         remove_config_entry_id = kwargs.pop('remove_config_entry_id', None)
-        if remove_config_entry_id is not None:
-            # Get current device entry
-            current = self._rust_registry.async_get(device_id)
-            if current:
-                new_config_entries = [
-                    ce for ce in current.config_entries
-                    if ce != remove_config_entry_id
-                ]
-                if not new_config_entries:
-                    # No more config entries - remove the device entirely
-                    self.async_remove_device(device_id)
-                    return None
-                # Update config_entries on the device
-                entry = self._rust_registry.async_update_device(
-                    device_id,
-                    config_entries=new_config_entries,
-                )
-                # Also clean up entities that belonged to the removed config entry
-                if er.DATA_REGISTRY in self.hass.data:
-                    entity_reg = self.hass.data[er.DATA_REGISTRY]
-                    entities = entity_reg.entities.get_entries_for_device_id(
-                        device_id, include_disabled_entities=True
-                    )
-                    for entity in entities:
-                        if entity.config_entry_id == remove_config_entry_id:
-                            entity_reg.async_remove(entity.entity_id)
-                return RustDeviceEntry(entry)
+        remove_config_subentry_id = kwargs.pop('remove_config_subentry_id', _UNSET)
 
-        # Get old device state for disabled_by change detection
+        # Validate: can't add/remove subentry without specifying config entry
+        if add_config_subentry_id is not _UNSET and add_config_entry_id is None:
+            raise HomeAssistantError(
+                "Can't add config subentry without specifying config entry"
+            )
+        if remove_config_subentry_id is not _UNSET and remove_config_entry_id is None:
+            raise HomeAssistantError(
+                "Can't remove config subentry without specifying config entry"
+            )
+
+        # Validate add_config_entry_id
+        if add_config_entry_id is not None:
+            if self.hass.config_entries.async_get_entry(add_config_entry_id) is None:
+                raise HomeAssistantError(
+                    f"Can't link device to unknown config entry {add_config_entry_id}"
+                )
+
+        # Validate add_config_subentry_id references a real subentry
+        if add_config_subentry_id is not _UNSET and add_config_subentry_id is not None:
+            config_entry = self.hass.config_entries.async_get_entry(add_config_entry_id)
+            if config_entry is not None:
+                valid_subentry_ids = set()
+                if hasattr(config_entry, 'subentries') and config_entry.subentries:
+                    for se_id in config_entry.subentries:
+                        valid_subentry_ids.add(se_id)
+                if add_config_subentry_id not in valid_subentry_ids:
+                    raise HomeAssistantError(
+                        f"Config entry {add_config_entry_id} has no subentry "
+                        f"{add_config_subentry_id}"
+                    )
+
+        # Extract merge/new connections/identifiers (passed directly to Rust)
+        new_connections = kwargs.pop('new_connections', None)
+        merge_connections = kwargs.pop('merge_connections', None)
+        new_identifiers = kwargs.pop('new_identifiers', None)
+        merge_identifiers = kwargs.pop('merge_identifiers', None)
+
+        # Get old device state for change detection
         old_device = self._rust_registry.async_get(device_id)
+        old_snapshot = self._get_device_snapshot(old_device) if old_device else None
         old_disabled_by = old_device.disabled_by if old_device else None
 
-        # Handle disabled_by enum conversion
+        # Build Rust params for config entry add/remove
+        rust_add_ce_id = None
+        rust_add_sub_id = None  # None means "add the None subentry"
+        rust_add_ce_disabled = None
+        rust_remove_ce_id = None
+        rust_remove_sub_only = None
+        rust_remove_sub_id = None
+        rust_ce_disabled_map = None
+
+        if add_config_entry_id is not None:
+            rust_add_ce_id = add_config_entry_id
+            rust_add_sub_id = add_config_subentry_id if add_config_subentry_id is not _UNSET else None
+            add_ce = self.hass.config_entries.async_get_entry(add_config_entry_id)
+            rust_add_ce_disabled = bool(add_ce.disabled_by) if add_ce else False
+
+        if remove_config_entry_id is not None:
+            rust_remove_ce_id = remove_config_entry_id
+            if remove_config_subentry_id is not _UNSET:
+                rust_remove_sub_only = True
+                rust_remove_sub_id = remove_config_subentry_id
+            else:
+                rust_remove_sub_only = False
+            if old_device:
+                rust_ce_disabled_map = {}
+                for ce_id in old_device.config_entries:
+                    ce = self.hass.config_entries.async_get_entry(ce_id)
+                    rust_ce_disabled_map[ce_id] = bool(ce.disabled_by) if ce else True
+
+        # Enum conversions for Rust
         if 'disabled_by' in kwargs:
             db = kwargs['disabled_by']
             if db is not None and hasattr(db, 'value'):
@@ -2207,26 +2254,117 @@ class RustDeviceRegistry:
             elif db is None:
                 kwargs['disabled_by'] = ""  # Empty string = clear
 
+        if 'entry_type' in kwargs:
+            et = kwargs['entry_type']
+            if et is not None and hasattr(et, 'value'):
+                kwargs['entry_type'] = str(et.value)
+            elif et is None:
+                kwargs['entry_type'] = ""  # Empty string = clear
+
         # Convert labels set to list for Rust
         if 'labels' in kwargs and isinstance(kwargs['labels'], set):
             kwargs['labels'] = list(kwargs['labels'])
 
         # Handle non-string field values that Rust can't accept
-        # (e.g., Unserializable objects used to test json_repr failure)
         if 'name' in kwargs and kwargs['name'] is not None and not isinstance(kwargs['name'], str):
             if device_id not in self._field_overrides:
                 self._field_overrides[device_id] = {}
             self._field_overrides[device_id]['name'] = kwargs.pop('name')
 
-        if kwargs:
-            entry = self._rust_registry.async_update_device(
-                device_id, modified_at=datetime.now(timezone.utc).timestamp(), **kwargs
-            )
+        # Build the Rust call kwargs
+        rust_kwargs = dict(kwargs)
+        rust_kwargs['modified_at'] = datetime.now(timezone.utc).timestamp()
+
+        # Pass merge/new connections/identifiers directly to Rust
+        if merge_connections is not None:
+            rust_kwargs['merge_connections'] = merge_connections
+        if new_connections is not None:
+            rust_kwargs['new_connections'] = new_connections
+        if merge_identifiers is not None:
+            rust_kwargs['merge_identifiers'] = merge_identifiers
+        if new_identifiers is not None:
+            rust_kwargs['new_identifiers'] = new_identifiers
+
+        if rust_add_ce_id is not None:
+            rust_kwargs['add_config_entry_id'] = rust_add_ce_id
+            if rust_add_sub_id is not None:
+                rust_kwargs['add_config_subentry_id'] = rust_add_sub_id
+            rust_kwargs['add_config_entry_disabled'] = rust_add_ce_disabled
+
+        if rust_remove_ce_id is not None:
+            rust_kwargs['remove_config_entry_id'] = rust_remove_ce_id
+            rust_kwargs['remove_config_subentry_only'] = rust_remove_sub_only
+            if rust_remove_sub_id is not None:
+                rust_kwargs['remove_config_subentry_id'] = rust_remove_sub_id
+            if rust_ce_disabled_map is not None:
+                rust_kwargs['config_entry_disabled_map'] = rust_ce_disabled_map
+
+        if rust_kwargs:
+            try:
+                entry = self._rust_registry.async_update_device(device_id, **rust_kwargs)
+            except ValueError as e:
+                # Rust raises ValueError for validation/collision errors;
+                # convert to HomeAssistantError for HA test compatibility
+                raise HomeAssistantError(str(e)) from e
         else:
             entry = self._rust_registry.async_get(device_id)
 
-        # Handle device disabled_by changes → update entities
+        # Handle device removal (Rust returns None when last config entry removed)
+        # Note: Rust already handles via_device_id cleanup on other devices
+        if entry is None:
+            self._device_entries.pop(device_id, None)
+            device_config_entries = set(old_device.config_entries) if old_device else set()
+
+            # Fire remove event
+            if old_device:
+                device_dict_repr = RustDeviceEntry(old_device, self._field_overrides.get(device_id, {})).dict_repr
+                self._fire_event("remove", device_id, device=device_dict_repr)
+            else:
+                self._fire_event("remove", device_id)
+
+            # Clean up entities associated with this device (cross-registry)
+            if er.DATA_REGISTRY in self.hass.data:
+                entity_reg = self.hass.data[er.DATA_REGISTRY]
+                entities = entity_reg.entities.get_entries_for_device_id(
+                    device_id, include_disabled_entities=True
+                )
+                for entity in entities:
+                    if entity.config_entry_id in device_config_entries:
+                        entity_reg.async_remove(entity.entity_id)
+                    else:
+                        entity_reg.async_update_entity(entity.entity_id, device_id=None)
+            return None
+
+        # Clean up entities when a config entry is removed from the device (device still exists)
+        if remove_config_entry_id and er.DATA_REGISTRY in self.hass.data:
+            # Check if the config entry was actually removed from the device
+            if remove_config_entry_id not in entry.config_entries:
+                entity_reg = self.hass.data[er.DATA_REGISTRY]
+                entities = entity_reg.entities.get_entries_for_device_id(
+                    device_id, include_disabled_entities=True
+                )
+                for entity in entities:
+                    if entity.config_entry_id == remove_config_entry_id:
+                        entity_reg.async_remove(entity.entity_id)
+
+        # Compute changes and fire event
         new_device = RustDeviceEntry(entry, self._field_overrides.get(device_id, {}))
+        if old_snapshot is not None:
+            new_snapshot = self._get_device_snapshot(entry)
+            changes = self._compute_changes(old_snapshot, new_snapshot)
+            if not changes:
+                # No-op: return cached entry for identity semantics
+                if device_id in self._device_entries:
+                    return self._device_entries[device_id]
+                self._device_entries[device_id] = new_device
+                return new_device
+            if changes:
+                # Only fire event and save if there are non-runtime-only changes
+                if changes.keys() - self.RUNTIME_ONLY_ATTRS:
+                    self._fire_event("update", device_id, changes=changes)
+                    self.async_schedule_save()
+
+        # Handle device disabled_by changes → update entities
         if er.DATA_REGISTRY in self.hass.data and old_disabled_by != new_device.disabled_by:
             entity_reg = self.hass.data[er.DATA_REGISTRY]
             if not new_device.disabled_by:
@@ -2246,6 +2384,7 @@ class RustDeviceRegistry:
                         disabled_by=er.RegistryEntryDisabler.DEVICE,
                     )
 
+        self._device_entries[device_id] = new_device
         return new_device
 
     def _async_update_device(self, device_id: str, **kwargs) -> RustDeviceEntry | None:

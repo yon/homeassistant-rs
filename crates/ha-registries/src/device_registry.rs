@@ -241,6 +241,10 @@ pub struct DeviceEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub serial_number: Option<String>,
 
+    /// Suggested area name (informational, used during creation)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_area: Option<String>,
+
     /// Parent device (for nested devices)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub via_device_id: Option<String>,
@@ -301,6 +305,7 @@ impl DeviceEntry {
             hw_version: None,
             sw_version: None,
             serial_number: None,
+            suggested_area: None,
             via_device_id: None,
             entry_type: None,
             disabled_by: None,
@@ -577,6 +582,27 @@ impl DeviceRegistry {
             .and_then(|device_id| self.get(&device_id))
     }
 
+    /// Get a device by any of its identifiers or connections
+    pub fn get_by_identifiers_or_connections(
+        &self,
+        identifiers: &[DeviceIdentifier],
+        connections: &[DeviceConnection],
+    ) -> Option<Arc<DeviceEntry>> {
+        // Check identifiers first
+        for ident in identifiers {
+            if let Some(entry) = self.get_by_identifier(ident.domain(), ident.id()) {
+                return Some(entry);
+            }
+        }
+        // Check connections
+        for conn in connections {
+            if let Some(entry) = self.get_by_connection(conn.connection_type(), conn.id()) {
+                return Some(entry);
+            }
+        }
+        None
+    }
+
     /// Get all devices for a config entry
     pub fn get_by_config_entry_id(&self, config_entry_id: &str) -> Vec<Arc<DeviceEntry>> {
         self.by_config_entry_id
@@ -718,7 +744,7 @@ impl DeviceRegistry {
 
         if let Some(config_id) = config_entry_id {
             entry.config_entries.push(config_id.to_string());
-            entry.primary_config_entry = Some(config_id.to_string());
+            // primary_config_entry is set by the Python layer based on device_info_type
             entry
                 .config_entries_subentries
                 .insert(config_id.to_string(), vec![subentry_val.clone()]);
@@ -862,6 +888,7 @@ impl DeviceRegistry {
                 || old.hw_version != entry.hw_version
                 || old.sw_version != entry.sw_version
                 || old.serial_number != entry.serial_number
+                || old.suggested_area != entry.suggested_area
                 || old.via_device_id != entry.via_device_id
                 || old.entry_type != entry.entry_type
                 || old.disabled_by != entry.disabled_by
@@ -941,6 +968,22 @@ impl DeviceRegistry {
                     }
                 });
             }
+        }
+    }
+
+    /// Clear via_device_id from all devices that reference the given device_id
+    pub fn clear_via_device_id(&self, removed_device_id: &str) {
+        let device_ids: Vec<String> = self
+            .by_id
+            .iter()
+            .filter(|r| r.value().via_device_id.as_deref() == Some(removed_device_id))
+            .map(|r| r.key().clone())
+            .collect();
+
+        for device_id in device_ids {
+            self.update(&device_id, |entry| {
+                entry.via_device_id = None;
+            });
         }
     }
 

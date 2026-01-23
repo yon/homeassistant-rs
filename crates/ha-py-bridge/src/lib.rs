@@ -51,7 +51,7 @@ fn ha_core_rs(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Core types - exported at top level for conftest.py compatibility
     m.add_class::<PyHomeAssistant>()?;
     m.add_class::<PyState>()?;
-    m.add_class::<PyEvent>()?;
+    m.add_class::<PyBusEvent>()?;
     m.add_class::<PyContext>()?;
     m.add_class::<PyEntityId>()?;
     m.add_class::<PyEventBus>()?;
@@ -132,7 +132,7 @@ fn register_core_module(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()
 
     // Core types
     m.add_class::<PyState>()?;
-    m.add_class::<PyEvent>()?;
+    m.add_class::<PyBusEvent>()?;
     m.add_class::<PyContext>()?;
     m.add_class::<PyEntityId>()?;
 

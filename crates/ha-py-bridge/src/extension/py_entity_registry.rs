@@ -646,6 +646,10 @@ impl PyEntityRegistry {
     }
 
     /// Update an entity
+    ///
+    /// Includes business logic:
+    /// - Unique ID conflict detection (raises ValueError if new_unique_id conflicts)
+    /// - Config entry disabled_by propagation (when config_entry_id changes)
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         entity_id,
@@ -672,7 +676,8 @@ impl PyEntityRegistry {
         original_icon=None,
         original_name=None,
         supported_features=None,
-        translation_key=None
+        translation_key=None,
+        config_entry_is_disabled=None
     ))]
     fn async_update_entity(
         &self,
@@ -700,7 +705,63 @@ impl PyEntityRegistry {
         original_name: Option<String>,
         supported_features: Option<u32>,
         translation_key: Option<String>,
+        // Whether the new config entry (if config_entry_id is changing) is disabled.
+        // Used for disabled_by propagation logic.
+        config_entry_is_disabled: Option<bool>,
     ) -> PyResult<PyEntityEntry> {
+        // Unique ID conflict detection
+        if let Some(ref new_uid) = new_unique_id {
+            if !new_uid.is_empty() {
+                // Check if another entity uses this unique_id on the same platform
+                let current_entry = self.inner.get(entity_id);
+                if let Some(ref current) = current_entry {
+                    let platform = &current.platform;
+                    // Look up by platform + unique_id
+                    if let Some(existing) = self.inner.get_by_platform_unique_id(platform, new_uid)
+                    {
+                        if existing.entity_id != entity_id {
+                            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                                "Unique id '{}' is already in use by '{}'",
+                                new_uid, existing.entity_id
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Config entry disabled_by propagation logic:
+        // When config_entry_id changes and disabled_by isn't explicitly set,
+        // propagate disabled state from the new config entry.
+        let mut effective_disabled_by = disabled_by.clone();
+        if config_entry_id.is_some() && disabled_by.is_none() {
+            let ce_id = config_entry_id.as_deref().unwrap_or("");
+            if ce_id.is_empty() {
+                // Config entry being removed - clear CONFIG_ENTRY disabled_by
+                if let Some(current) = self.inner.get(entity_id) {
+                    if current.disabled_by == Some(DisabledBy::ConfigEntry) {
+                        effective_disabled_by = Some(String::new()); // "" = clear
+                    }
+                }
+            } else if let Some(ce_disabled) = config_entry_is_disabled {
+                if ce_disabled {
+                    // New config entry is disabled - disable entity unless already disabled
+                    if let Some(current) = self.inner.get(entity_id) {
+                        if current.disabled_by.is_none() {
+                            effective_disabled_by = Some("config_entry".to_string());
+                        }
+                    }
+                } else {
+                    // New config entry is not disabled - clear CONFIG_ENTRY disabled_by
+                    if let Some(current) = self.inner.get(entity_id) {
+                        if current.disabled_by == Some(DisabledBy::ConfigEntry) {
+                            effective_disabled_by = Some(String::new()); // "" = clear
+                        }
+                    }
+                }
+            }
+        }
+
         // Convert categories/capabilities from Python to JSON
         let categories_json = categories.and_then(|c| py_to_json(c).ok());
         let capabilities_json = capabilities.and_then(|c| py_to_json(c).ok());
@@ -728,8 +789,8 @@ impl PyEntityRegistry {
                     entry.previous_unique_id = entry.unique_id.clone();
                     entry.unique_id = Some(new_uid.clone());
                 }
-                if disabled_by.is_some() {
-                    entry.disabled_by = parse_disabled_by(disabled_by.as_deref());
+                if effective_disabled_by.is_some() {
+                    entry.disabled_by = parse_disabled_by(effective_disabled_by.as_deref());
                 }
                 if hidden_by.is_some() {
                     entry.hidden_by = parse_hidden_by(hidden_by.as_deref());

@@ -30,12 +30,16 @@ pub struct ListenerId(u64);
 /// for each subscriber. Instead, subscribers receive a cheap Arc clone.
 pub type ArcEvent = Arc<Event<serde_json::Value>>;
 
+/// Type for synchronous event callbacks that fire inline during `fire()`.
+/// These are called on the same thread, before broadcast channel delivery.
+pub type SyncCallback = Arc<dyn Fn(&Event<serde_json::Value>) + Send + Sync>;
+
 /// The event bus for publishing and subscribing to events
 ///
 /// The EventBus is the central message broker in Home Assistant. It supports:
-/// - Subscribing to specific event types
+/// - Subscribing to specific event types (async broadcast channels)
 /// - Subscribing to all events (MATCH_ALL)
-/// - Firing events to all subscribers
+/// - Synchronous callbacks that fire inline during `fire()`
 /// - Typed event subscriptions for type-safe event handling
 ///
 /// Events are wrapped in `Arc` to avoid cloning for each subscriber.
@@ -44,6 +48,9 @@ pub struct EventBus {
     listeners: DashMap<EventType, broadcast::Sender<ArcEvent>>,
     /// Special sender for MATCH_ALL subscribers (Arc-wrapped events)
     match_all_sender: broadcast::Sender<ArcEvent>,
+    /// Synchronous callbacks per event type (called inline during fire).
+    /// Use EventType::match_all() as key for MATCH_ALL listeners.
+    sync_listeners: DashMap<EventType, Vec<(ListenerId, SyncCallback)>>,
     /// Counter for generating unique listener IDs
     next_listener_id: AtomicU64,
     /// Channel capacity
@@ -62,6 +69,7 @@ impl EventBus {
         Self {
             listeners: DashMap::new(),
             match_all_sender,
+            sync_listeners: DashMap::new(),
             next_listener_id: AtomicU64::new(1),
             capacity,
         }
@@ -109,29 +117,41 @@ impl EventBus {
     /// Fire an event to all subscribers
     ///
     /// The event will be delivered to:
-    /// 1. All subscribers of the specific event type
-    /// 2. All MATCH_ALL subscribers (unless event type is excluded)
+    /// 1. Synchronous callbacks for the specific event type (inline)
+    /// 2. Synchronous MATCH_ALL callbacks (inline, unless excluded)
+    /// 3. Async broadcast subscribers for the specific event type
+    /// 4. Async MATCH_ALL broadcast subscribers (unless excluded)
     ///
-    /// The event is wrapped in Arc internally, so subscribers receive
-    /// cheap Arc clones instead of full event clones.
-    ///
-    /// Certain high-frequency or internal events are excluded from MATCH_ALL
-    /// to prevent unnecessary load on general subscribers.
+    /// Synchronous callbacks fire first, inline on the calling thread.
+    /// The event is then wrapped in Arc for broadcast channel delivery.
     pub fn fire(&self, event: Event<serde_json::Value>) {
         debug!(event_type = %event.event_type, "Firing event");
 
-        // Wrap event in Arc once, then share among all subscribers
+        // Fire synchronous callbacks for this event type
+        if let Some(listeners) = self.sync_listeners.get(&event.event_type) {
+            for (_, callback) in listeners.iter() {
+                callback(&event);
+            }
+        }
+
+        // Fire synchronous MATCH_ALL callbacks (unless excluded)
+        if !Self::is_excluded_from_match_all(&event.event_type) {
+            if let Some(listeners) = self.sync_listeners.get(&EventType::match_all()) {
+                for (_, callback) in listeners.iter() {
+                    callback(&event);
+                }
+            }
+        }
+
+        // Wrap event in Arc for broadcast channel delivery
         let arc_event = Arc::new(event);
 
         // Send to specific event type subscribers
         if let Some(sender) = self.listeners.get(&arc_event.event_type) {
-            // Ignore send errors - they just mean no active receivers
-            // Arc::clone is cheap (atomic increment)
             let _ = sender.send(Arc::clone(&arc_event));
         }
 
         // Send to MATCH_ALL subscribers, unless this event type is excluded
-        // Matches Python HA's EVENTS_EXCLUDED_FROM_MATCH_ALL
         if !Self::is_excluded_from_match_all(&arc_event.event_type) {
             let _ = self.match_all_sender.send(arc_event);
         }
@@ -160,6 +180,37 @@ impl EventBus {
         self.fire(event);
     }
 
+    /// Register a synchronous callback for an event type.
+    ///
+    /// The callback fires inline during `fire()` on the calling thread.
+    /// Use `EventType::match_all()` to listen to all events.
+    /// Returns a ListenerId that can be used to remove the listener.
+    pub fn listen_sync(
+        &self,
+        event_type: impl Into<EventType>,
+        callback: SyncCallback,
+    ) -> ListenerId {
+        let event_type = event_type.into();
+        let id = self.next_listener_id();
+        self.sync_listeners
+            .entry(event_type)
+            .or_default()
+            .push((id, callback));
+        id
+    }
+
+    /// Remove a synchronous callback by its ListenerId.
+    pub fn remove_sync_listener(&self, listener_id: ListenerId) {
+        // Search all event types for this listener
+        for mut entry in self.sync_listeners.iter_mut() {
+            let listeners = entry.value_mut();
+            if let Some(pos) = listeners.iter().position(|(id, _)| *id == listener_id) {
+                listeners.swap_remove(pos);
+                return;
+            }
+        }
+    }
+
     /// Generate a new unique listener ID
     pub fn next_listener_id(&self) -> ListenerId {
         ListenerId(self.next_listener_id.fetch_add(1, Ordering::SeqCst))
@@ -168,6 +219,22 @@ impl EventBus {
     /// Get the number of active event type subscriptions
     pub fn listener_count(&self) -> usize {
         self.listeners.len()
+    }
+
+    /// Get the number of sync listeners across all event types
+    pub fn sync_listener_count(&self) -> usize {
+        self.sync_listeners
+            .iter()
+            .map(|entry| entry.value().len())
+            .sum()
+    }
+
+    /// Iterate over sync listeners, returning (EventType, count) pairs
+    pub fn sync_listeners_iter(&self) -> Vec<(EventType, usize)> {
+        self.sync_listeners
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().len()))
+            .collect()
     }
 }
 
