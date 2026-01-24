@@ -460,6 +460,16 @@ impl PyAreaRegistry {
             .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)
     }
 
+    /// Clear floor_id from all areas that reference this floor (cascade on floor delete)
+    fn async_clear_floor_id(&self, floor_id: &str) {
+        self.inner.clear_floor_id(floor_id);
+    }
+
+    /// Remove a label from all areas that reference it (cascade on label delete)
+    fn async_clear_label_id(&self, label_id: &str) {
+        self.inner.clear_label_id(label_id);
+    }
+
     /// Clear floor_id from an area (set to None)
     fn async_clear_area_floor_id(&self, py: Python<'_>, area_id: &str) -> PyResult<PyAreaEntry> {
         let now = py_utc_now(py);

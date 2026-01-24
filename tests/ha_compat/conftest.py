@@ -1868,7 +1868,7 @@ class RustDeviceRegistry:
         all_devices = self._rust_registry.devices
         for dev_id, dev in all_devices.items():
             if dev.area_id == area_id:
-                self._rust_registry.async_update_device(dev_id, area_id="")
+                _, _ = self._rust_registry.async_update_device(dev_id, area_id="")
 
     def async_clear_config_entry(self, config_entry_id: str) -> None:
         """Clear a config entry from all devices."""
@@ -1917,7 +1917,7 @@ class RustDeviceRegistry:
         for dev_id, dev in all_devices.items():
             if label_id in dev.labels:
                 new_labels = [l for l in dev.labels if l != label_id]
-                self._rust_registry.async_update_device(dev_id, labels=new_labels)
+                _, _ = self._rust_registry.async_update_device(dev_id, labels=new_labels)
 
     def async_entries_for_area(self, area_id: str) -> list[RustDeviceEntry]:
         return [
@@ -2064,7 +2064,7 @@ class RustDeviceRegistry:
             initial_disabled_by = str(disabled_by.value) if hasattr(disabled_by, 'value') else str(disabled_by)
 
         now_ts = datetime.now(timezone.utc).timestamp()
-        entry = self._rust_registry.async_get_or_create(
+        entry, changed_fields = self._rust_registry.async_get_or_create(
             config_entry_id=config_entry_id,
             config_subentry_id=config_subentry_id,
             identifiers=list(identifiers) if identifiers else None,
@@ -2109,16 +2109,16 @@ class RustDeviceRegistry:
                 area = area_reg.async_get_area_by_name(suggested_area)
                 if area is None:
                     area = area_reg.async_create(suggested_area)
-                entry = self._rust_registry.async_update_device(
+                entry, area_changes = self._rust_registry.async_update_device(
                     entry.id, area_id=area.id, modified_at=now_ts
                 )
+                changed_fields = list(set(changed_fields) | set(area_changes))
 
         # Fire device registry events
         if existing is None:
             self._fire_event("create", entry.id)
-        else:
-            new_snapshot = self._get_device_snapshot(entry)
-            changes = self._compute_changes(old_snapshot, new_snapshot)
+        elif changed_fields:
+            changes = {field: old_snapshot[field] for field in changed_fields if field in old_snapshot}
             if changes:
                 self._fire_event("update", entry.id, changes=changes)
 
@@ -2301,13 +2301,14 @@ class RustDeviceRegistry:
 
         if rust_kwargs:
             try:
-                entry = self._rust_registry.async_update_device(device_id, **rust_kwargs)
+                entry, changed_fields = self._rust_registry.async_update_device(device_id, **rust_kwargs)
             except ValueError as e:
                 # Rust raises ValueError for validation/collision errors;
                 # convert to HomeAssistantError for HA test compatibility
                 raise HomeAssistantError(str(e)) from e
         else:
             entry = self._rust_registry.async_get(device_id)
+            changed_fields = []
 
         # Handle device removal (Rust returns None when last config entry removed)
         # Note: Rust already handles via_device_id cleanup on other devices
@@ -2347,22 +2348,21 @@ class RustDeviceRegistry:
                     if entity.config_entry_id == remove_config_entry_id:
                         entity_reg.async_remove(entity.entity_id)
 
-        # Compute changes and fire event
+        # Fire event if there are changes
         new_device = RustDeviceEntry(entry, self._field_overrides.get(device_id, {}))
-        if old_snapshot is not None:
-            new_snapshot = self._get_device_snapshot(entry)
-            changes = self._compute_changes(old_snapshot, new_snapshot)
-            if not changes:
-                # No-op: return cached entry for identity semantics
-                if device_id in self._device_entries:
-                    return self._device_entries[device_id]
-                self._device_entries[device_id] = new_device
-                return new_device
-            if changes:
-                # Only fire event and save if there are non-runtime-only changes
-                if changes.keys() - self.RUNTIME_ONLY_ATTRS:
-                    self._fire_event("update", device_id, changes=changes)
-                    self.async_schedule_save()
+        if not changed_fields:
+            # No-op: return cached entry for identity semantics
+            if device_id in self._device_entries:
+                return self._device_entries[device_id]
+            self._device_entries[device_id] = new_device
+            return new_device
+        # Build changes dict from old_snapshot and changed field names
+        changes = {field: old_snapshot[field] for field in changed_fields if field in old_snapshot} if old_snapshot else {}
+        if changes:
+            # Only fire event and save if there are non-runtime-only changes
+            if changes.keys() - self.RUNTIME_ONLY_ATTRS:
+                self._fire_event("update", device_id, changes=changes)
+                self.async_schedule_save()
 
         # Handle device disabled_by changes → update entities
         if er.DATA_REGISTRY in self.hass.data and old_disabled_by != new_device.disabled_by:
@@ -2795,9 +2795,7 @@ class RustFloorRegistry:
         # Cross-registry cleanup: clear floor_id from areas that reference this floor
         area_reg = self._hass.data.get("area_registry")
         if area_reg is not None:
-            for area in list(area_reg.areas.values()):
-                if area.floor_id == floor_id:
-                    area_reg._rust_registry.async_clear_area_floor_id(area.id)
+            area_reg._rust_registry.async_clear_floor_id(floor_id)
 
     def async_get(self, floor_id: str) -> RustFloorEntry | None:
         entry = self._rust_registry.async_get_floor(floor_id)
@@ -2994,12 +2992,7 @@ class RustLabelRegistry:
         # Cross-registry cleanup: clear label from areas that reference it
         area_reg = self._hass.data.get("area_registry")
         if area_reg is not None:
-            for area in list(area_reg.areas.values()):
-                if label_id in (area.labels or set()):
-                    new_labels = area.labels - {label_id}
-                    area_reg._rust_registry.async_update(
-                        area.id, labels=list(new_labels)
-                    )
+            area_reg._rust_registry.async_clear_label_id(label_id)
 
     def async_get(self, label_id: str) -> RustLabelEntry | None:
         entry = self._rust_registry.async_get_label(label_id)

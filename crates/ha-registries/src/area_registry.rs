@@ -389,6 +389,54 @@ impl AreaRegistry {
         }
     }
 
+    /// Clear floor_id from all areas that reference this floor
+    ///
+    /// Used when a floor is deleted to cascade the cleanup.
+    pub fn clear_floor_id(&self, floor_id: &str) {
+        let area_ids: Vec<String> = self
+            .by_floor_id
+            .get(floor_id)
+            .map(|ids| ids.iter().cloned().collect())
+            .unwrap_or_default();
+
+        for area_id in &area_ids {
+            if let Some((_, arc_entry)) = self.by_id.remove(area_id) {
+                let mut entry = (*arc_entry).clone();
+                entry.floor_id = None;
+                entry.modified_at = Utc::now();
+                let new_arc = Arc::new(entry);
+                self.by_id.insert(area_id.clone(), new_arc);
+            }
+        }
+
+        // Remove the floor_id index entry
+        self.by_floor_id.remove(floor_id);
+    }
+
+    /// Remove a label from all areas that reference it
+    ///
+    /// Used when a label is deleted to cascade the cleanup.
+    pub fn clear_label_id(&self, label_id: &str) {
+        let area_ids: Vec<String> = self
+            .by_label_id
+            .get(label_id)
+            .map(|ids| ids.iter().cloned().collect())
+            .unwrap_or_default();
+
+        for area_id in &area_ids {
+            if let Some((_, arc_entry)) = self.by_id.remove(area_id) {
+                let mut entry = (*arc_entry).clone();
+                entry.labels.retain(|l| l != label_id);
+                entry.modified_at = Utc::now();
+                let new_arc = Arc::new(entry);
+                self.by_id.insert(area_id.clone(), new_arc);
+            }
+        }
+
+        // Remove the label_id index entry
+        self.by_label_id.remove(label_id);
+    }
+
     /// Get count of areas
     pub fn len(&self) -> usize {
         self.by_id.len()

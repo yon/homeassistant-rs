@@ -15,6 +15,124 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PySet, PyTuple};
 use tokio::runtime::Handle;
 
+/// Compare two DeviceEntry instances and return the list of field names that changed.
+/// Uses set-based comparison for collections (config_entries, connections, identifiers, labels).
+fn compute_changed_fields(old: &DeviceEntry, new: &DeviceEntry) -> Vec<String> {
+    use std::collections::HashSet;
+
+    let mut changed = Vec::new();
+
+    if old.area_id != new.area_id {
+        changed.push("area_id".to_string());
+    }
+
+    // config_entries: compare as sets
+    let old_ces: HashSet<&String> = old.config_entries.iter().collect();
+    let new_ces: HashSet<&String> = new.config_entries.iter().collect();
+    if old_ces != new_ces {
+        changed.push("config_entries".to_string());
+    }
+
+    if old.config_entries_subentries != new.config_entries_subentries {
+        changed.push("config_entries_subentries".to_string());
+    }
+
+    if old.configuration_url != new.configuration_url {
+        changed.push("configuration_url".to_string());
+    }
+
+    // connections: compare as sets of (type, id) tuples
+    let old_conns: HashSet<(&str, &str)> = old
+        .connections
+        .iter()
+        .map(|c| (c.connection_type(), c.id()))
+        .collect();
+    let new_conns: HashSet<(&str, &str)> = new
+        .connections
+        .iter()
+        .map(|c| (c.connection_type(), c.id()))
+        .collect();
+    if old_conns != new_conns {
+        changed.push("connections".to_string());
+    }
+
+    if old.disabled_by != new.disabled_by {
+        changed.push("disabled_by".to_string());
+    }
+
+    if old.entry_type != new.entry_type {
+        changed.push("entry_type".to_string());
+    }
+
+    if old.hw_version != new.hw_version {
+        changed.push("hw_version".to_string());
+    }
+
+    // identifiers: compare as sets of (domain, id) tuples
+    let old_idents: HashSet<(&str, &str)> = old
+        .identifiers
+        .iter()
+        .map(|i| (i.domain(), i.id()))
+        .collect();
+    let new_idents: HashSet<(&str, &str)> = new
+        .identifiers
+        .iter()
+        .map(|i| (i.domain(), i.id()))
+        .collect();
+    if old_idents != new_idents {
+        changed.push("identifiers".to_string());
+    }
+
+    // labels: compare as sets
+    let old_labels: HashSet<&String> = old.labels.iter().collect();
+    let new_labels: HashSet<&String> = new.labels.iter().collect();
+    if old_labels != new_labels {
+        changed.push("labels".to_string());
+    }
+
+    if old.manufacturer != new.manufacturer {
+        changed.push("manufacturer".to_string());
+    }
+
+    if old.model != new.model {
+        changed.push("model".to_string());
+    }
+
+    if old.model_id != new.model_id {
+        changed.push("model_id".to_string());
+    }
+
+    if old.name != new.name {
+        changed.push("name".to_string());
+    }
+
+    if old.name_by_user != new.name_by_user {
+        changed.push("name_by_user".to_string());
+    }
+
+    if old.primary_config_entry != new.primary_config_entry {
+        changed.push("primary_config_entry".to_string());
+    }
+
+    if old.serial_number != new.serial_number {
+        changed.push("serial_number".to_string());
+    }
+
+    if old.suggested_area != new.suggested_area {
+        changed.push("suggested_area".to_string());
+    }
+
+    if old.sw_version != new.sw_version {
+        changed.push("sw_version".to_string());
+    }
+
+    if old.via_device_id != new.via_device_id {
+        changed.push("via_device_id".to_string());
+    }
+
+    changed
+}
+
 /// Python wrapper for DeviceEntry
 #[pyclass(name = "DeviceEntry")]
 #[derive(Clone)]
@@ -487,7 +605,7 @@ impl PyDeviceRegistry {
         current_primary_domain: Option<String>,
         // Applied only on newly created devices
         initial_disabled_by: Option<String>,
-    ) -> PyResult<PyDeviceEntry> {
+    ) -> PyResult<(PyDeviceEntry, Vec<String>)> {
         // Parse timestamp (seconds since epoch from Python's time.time())
         let timestamp = created_at.and_then(|ts| {
             chrono::DateTime::from_timestamp(ts as i64, ((ts % 1.0) * 1_000_000_000.0) as u32)
@@ -593,6 +711,9 @@ impl PyDeviceRegistry {
         };
         let needs_disabled = is_new && initial_disabled_by.is_some();
 
+        // Capture old state for change detection (before applying field updates)
+        let old_for_changes = existing.clone();
+
         if needs_field_update || needs_primary || needs_disabled {
             let ce_id = config_entry_id.to_string();
             let initial_db = initial_disabled_by.clone();
@@ -665,12 +786,22 @@ impl PyDeviceRegistry {
                 timestamp,
             );
 
-            if let Some(updated_entry) = updated {
-                return Ok(PyDeviceEntry::from_inner(updated_entry));
+            if let Some(ref updated_entry) = updated {
+                let changed = match &old_for_changes {
+                    Some(old) => compute_changed_fields(old, updated_entry),
+                    None => Vec::new(),
+                };
+                return Ok((PyDeviceEntry::from_inner(updated_entry.clone()), changed));
             }
         }
 
-        Ok(PyDeviceEntry::from_inner(entry))
+        // No field update was needed - compare entry to existing for changes
+        // (get_or_create may have added config entry/subentry)
+        let changed = match &old_for_changes {
+            Some(old) => compute_changed_fields(old, &entry),
+            None => Vec::new(),
+        };
+        Ok((PyDeviceEntry::from_inner(entry), changed))
     }
 
     /// Update a device
@@ -755,7 +886,7 @@ impl PyDeviceRegistry {
         new_connections: Option<&Bound<'_, PySet>>,
         merge_identifiers: Option<&Bound<'_, PySet>>,
         new_identifiers: Option<&Bound<'_, PySet>>,
-    ) -> PyResult<Option<PyDeviceEntry>> {
+    ) -> PyResult<(Option<PyDeviceEntry>, Vec<String>)> {
         // Validate: can't specify both merge and new
         if merge_connections.is_some() && new_connections.is_some() {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -924,7 +1055,7 @@ impl PyDeviceRegistry {
                     if let Some(existing_subs) = current.config_entries_subentries.get(add_ce_id) {
                         if existing_subs.contains(&subentry_to_add) {
                             // No-op: config entry and subentry already present
-                            return Ok(Some(PyDeviceEntry::from_inner(current)));
+                            return Ok((Some(PyDeviceEntry::from_inner(current)), Vec::new()));
                         }
                     }
                 }
@@ -943,7 +1074,7 @@ impl PyDeviceRegistry {
                     {
                         if !existing_subs.contains(&sub_to_remove) {
                             // Subentry not present - no-op
-                            return Ok(Some(PyDeviceEntry::from_inner(current)));
+                            return Ok((Some(PyDeviceEntry::from_inner(current)), Vec::new()));
                         }
                         // Check if removing this subentry empties the CE
                         let remaining_subs: Vec<_> = existing_subs
@@ -958,13 +1089,13 @@ impl PyDeviceRegistry {
                         }
                     } else if !current.config_entries.contains(remove_ce_id) {
                         // CE not on device - no-op
-                        return Ok(Some(PyDeviceEntry::from_inner(current)));
+                        return Ok((Some(PyDeviceEntry::from_inner(current)), Vec::new()));
                     }
                 } else {
                     // Remove entire config entry
                     if !current.config_entries.contains(remove_ce_id) {
                         // CE not on device - no-op
-                        return Ok(Some(PyDeviceEntry::from_inner(current)));
+                        return Ok((Some(PyDeviceEntry::from_inner(current)), Vec::new()));
                     }
                     if current.config_entries.len() <= 1 {
                         should_remove_device = true;
@@ -978,8 +1109,11 @@ impl PyDeviceRegistry {
             self.inner.remove(device_id);
             // Clear via_device_id on devices that referenced the removed device
             self.inner.clear_via_device_id(device_id);
-            return Ok(None);
+            return Ok((None, Vec::new()));
         }
+
+        // Capture old state for change detection
+        let old_entry = self.inner.get(device_id);
 
         let entry = self.inner.update_at(
             device_id,
@@ -1168,7 +1302,13 @@ impl PyDeviceRegistry {
             timestamp,
         );
 
-        Ok(entry.map(PyDeviceEntry::from_inner))
+        // Compute changed fields by comparing old and new entries
+        let changed_fields = match (&old_entry, &entry) {
+            (Some(old), Some(new)) => compute_changed_fields(old, new),
+            _ => Vec::new(),
+        };
+
+        Ok((entry.map(PyDeviceEntry::from_inner), changed_fields))
     }
 
     /// Clear a config entry from all devices
