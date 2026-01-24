@@ -473,16 +473,17 @@ TEST_CATEGORIES = {
         # Removed: Require storage persistence (loading/saving from disk)
         # "helpers/test_device_registry.py::test_loading_from_storage",
         # "helpers/test_device_registry.py::test_loading_saving_data",
-        # Removed: Require deleted device tracking
-        # "helpers/test_device_registry.py::test_deleted_device_removing_config_entries",
-        # "helpers/test_device_registry.py::test_deleted_device_removing_config_subentries",
-        # "helpers/test_device_registry.py::test_removing_area_id_deleted_device",
-        # "helpers/test_device_registry.py::test_removing_labels_deleted_device",
-        # "helpers/test_device_registry.py::test_device_registry_deleted_device_collision",
-        # Removed: Require restore from deleted devices
-        # "helpers/test_device_registry.py::test_restore_device",
+        # Deleted device tracking
+        "helpers/test_device_registry.py::test_deleted_device_removing_config_entries",
+        "helpers/test_device_registry.py::test_deleted_device_removing_config_subentries",
+        "helpers/test_device_registry.py::test_removing_area_id_deleted_device",
+        "helpers/test_device_registry.py::test_removing_labels_deleted_device",
+        "helpers/test_device_registry.py::test_device_registry_deleted_device_collision",
+        # Restore from deleted devices
+        "helpers/test_device_registry.py::test_restore_device",
+        "helpers/test_device_registry.py::test_restore_shared_device",
+        # Removed: Require restore_disabled_by logic
         # "helpers/test_device_registry.py::test_restore_disabled_by",
-        # "helpers/test_device_registry.py::test_restore_shared_device",
         # Removed: Require cleanup lifecycle
         # "helpers/test_device_registry.py::test_cleanup_device_registry",
         # "helpers/test_device_registry.py::test_cleanup_device_registry_removes_expired_orphaned_devices",

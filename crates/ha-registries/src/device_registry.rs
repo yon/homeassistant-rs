@@ -277,6 +277,10 @@ pub struct DeviceEntry {
     #[serde(default = "Utc::now")]
     pub modified_at: DateTime<Utc>,
 
+    /// Timestamp when device became orphaned (all config entries removed from deleted device)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orphaned_timestamp: Option<f64>,
+
     /// Insertion order (for stable iteration when timestamps are equal)
     #[serde(skip)]
     pub insertion_order: u64,
@@ -314,6 +318,38 @@ impl DeviceEntry {
             labels: Vec::new(),
             created_at: now,
             modified_at: now,
+            orphaned_timestamp: None,
+            insertion_order: 0,
+        }
+    }
+
+    /// Create a new device entry with a specific ID and timestamps (for restore)
+    pub fn new_with_id(id: String, created_at: DateTime<Utc>, modified_at: DateTime<Utc>) -> Self {
+        Self {
+            id,
+            identifiers: Vec::new(),
+            connections: Vec::new(),
+            config_entries: Vec::new(),
+            config_entries_subentries: HashMap::new(),
+            primary_config_entry: None,
+            name: None,
+            name_by_user: None,
+            manufacturer: None,
+            model: None,
+            model_id: None,
+            hw_version: None,
+            sw_version: None,
+            serial_number: None,
+            suggested_area: None,
+            via_device_id: None,
+            entry_type: None,
+            disabled_by: None,
+            configuration_url: None,
+            area_id: None,
+            labels: Vec::new(),
+            created_at,
+            modified_at,
+            orphaned_timestamp: None,
             insertion_order: 0,
         }
     }
@@ -1079,6 +1115,304 @@ impl DeviceRegistry {
                 entry.via_device_id = None;
             });
         }
+    }
+
+    /// Get a deleted device by ID
+    pub fn get_deleted(&self, device_id: &str) -> Option<Arc<DeviceEntry>> {
+        self.deleted.get(device_id).map(|r| Arc::clone(r.value()))
+    }
+
+    /// Find a deleted device by identifiers or connections
+    pub fn get_deleted_by_identifiers_or_connections(
+        &self,
+        identifiers: &[DeviceIdentifier],
+        connections: &[DeviceConnection],
+    ) -> Option<Arc<DeviceEntry>> {
+        for entry in self.deleted.iter() {
+            // Check identifiers
+            for ident in identifiers {
+                if entry.identifiers.contains(ident) {
+                    return Some(Arc::clone(entry.value()));
+                }
+            }
+            // Check connections
+            for conn in connections {
+                if entry.connections.contains(conn) {
+                    return Some(Arc::clone(entry.value()));
+                }
+            }
+        }
+        None
+    }
+
+    /// Restore a device from deleted back to active registry.
+    ///
+    /// Returns the restored device entry if found in deleted.
+    pub fn restore_deleted(&self, device_id: &str) -> Option<Arc<DeviceEntry>> {
+        if let Some((_, arc_entry)) = self.deleted.remove(device_id) {
+            let mut entry = (*arc_entry).clone();
+            entry.insertion_order = self.insertion_counter.fetch_add(1, Ordering::Relaxed);
+            entry.orphaned_timestamp = None;
+            let new_arc = Arc::new(entry);
+            self.index_entry(Arc::clone(&new_arc));
+            info!("Restored deleted device: {}", device_id);
+            Some(new_arc)
+        } else {
+            None
+        }
+    }
+
+    /// Restore a deleted device as a fresh entry, preserving only user customizations.
+    ///
+    /// Creates a new DeviceEntry with the deleted device's id, area_id, disabled_by,
+    /// labels, name_by_user, and created_at. All integration-provided fields are cleared.
+    /// The new entry gets the provided identifiers, connections, config_entry, and timestamp.
+    pub fn restore_deleted_fresh(
+        &self,
+        device_id: &str,
+        identifiers: &[DeviceIdentifier],
+        connections: &[DeviceConnection],
+        config_entry_id: &str,
+        config_subentry_id: Option<&str>,
+        timestamp: DateTime<Utc>,
+    ) -> Option<Arc<DeviceEntry>> {
+        if let Some((_, arc_entry)) = self.deleted.remove(device_id) {
+            let deleted = &*arc_entry;
+
+            // Intersect identifiers/connections with what's provided
+            let restored_identifiers: Vec<DeviceIdentifier> = identifiers
+                .iter()
+                .filter(|i| {
+                    deleted
+                        .identifiers
+                        .iter()
+                        .any(|di| di.domain() == i.domain() && di.id() == i.id())
+                })
+                .cloned()
+                .collect();
+            let restored_connections: Vec<DeviceConnection> = connections
+                .iter()
+                .filter(|c| {
+                    deleted
+                        .connections
+                        .iter()
+                        .any(|dc| dc.connection_type() == c.connection_type() && dc.id() == c.id())
+                })
+                .cloned()
+                .collect();
+
+            // Create fresh entry preserving user customizations
+            let mut entry =
+                DeviceEntry::new_with_id(deleted.id.clone(), deleted.created_at, timestamp);
+            entry.insertion_order = self.insertion_counter.fetch_add(1, Ordering::Relaxed);
+            entry.area_id = deleted.area_id.clone();
+            entry.disabled_by = deleted.disabled_by;
+            entry.labels = deleted.labels.clone();
+            entry.name_by_user = deleted.name_by_user.clone();
+            entry.identifiers = restored_identifiers;
+            entry.connections = restored_connections;
+            entry.config_entries = vec![config_entry_id.to_string()];
+            let subentry_val = config_subentry_id.map(|s| s.to_string());
+            entry
+                .config_entries_subentries
+                .insert(config_entry_id.to_string(), vec![subentry_val]);
+
+            let new_arc = Arc::new(entry);
+            self.index_entry(Arc::clone(&new_arc));
+            info!("Restored deleted device as fresh: {}", device_id);
+            Some(new_arc)
+        } else {
+            None
+        }
+    }
+
+    /// Clear a config entry from all deleted devices.
+    ///
+    /// Sets orphaned_timestamp when a deleted device loses all config entries.
+    pub fn clear_config_entry_from_deleted(&self, config_entry_id: &str, now_time: f64) {
+        let matching: Vec<String> = self
+            .deleted
+            .iter()
+            .filter(|r| {
+                r.value()
+                    .config_entries
+                    .contains(&config_entry_id.to_string())
+            })
+            .map(|r| r.key().clone())
+            .collect();
+
+        for device_id in matching {
+            if let Some((_, arc_entry)) = self.deleted.remove(&device_id) {
+                let mut entry = (*arc_entry).clone();
+                entry.config_entries.retain(|id| id != config_entry_id);
+                entry.config_entries_subentries.remove(config_entry_id);
+                if entry.config_entries.is_empty() {
+                    entry.orphaned_timestamp = Some(now_time);
+                }
+                self.deleted.insert(device_id, Arc::new(entry));
+            }
+        }
+    }
+
+    /// Clear a config subentry from all deleted devices.
+    ///
+    /// Removes the specified subentry from `config_entries_subentries[config_entry_id]`.
+    /// If the subentry list becomes empty, removes the config entry entirely.
+    /// Sets orphaned_timestamp when a deleted device loses all config entries.
+    pub fn clear_config_subentry_from_deleted(
+        &self,
+        config_entry_id: &str,
+        config_subentry_id: Option<&str>,
+        now_time: f64,
+    ) {
+        let subentry_val = config_subentry_id.map(|s| s.to_string());
+
+        let matching: Vec<String> = self
+            .deleted
+            .iter()
+            .filter(|r| {
+                r.value()
+                    .config_entries_subentries
+                    .get(config_entry_id)
+                    .is_some_and(|subs| subs.contains(&subentry_val))
+            })
+            .map(|r| r.key().clone())
+            .collect();
+
+        for device_id in matching {
+            if let Some((_, arc_entry)) = self.deleted.remove(&device_id) {
+                let mut entry = (*arc_entry).clone();
+
+                // Remove the subentry from the set
+                if let Some(subs) = entry.config_entries_subentries.get_mut(config_entry_id) {
+                    subs.retain(|s| s != &subentry_val);
+                    if subs.is_empty() {
+                        // No more subentries for this config entry - remove it
+                        entry.config_entries_subentries.remove(config_entry_id);
+                        entry.config_entries.retain(|id| id != config_entry_id);
+                    }
+                }
+
+                if entry.config_entries.is_empty() {
+                    entry.orphaned_timestamp = Some(now_time);
+                }
+
+                self.deleted.insert(device_id, Arc::new(entry));
+            }
+        }
+    }
+
+    /// Clear area_id from all deleted devices that reference it.
+    pub fn clear_area_id_from_deleted(&self, area_id: &str) {
+        let matching: Vec<String> = self
+            .deleted
+            .iter()
+            .filter(|r| r.value().area_id.as_deref() == Some(area_id))
+            .map(|r| r.key().clone())
+            .collect();
+
+        for device_id in matching {
+            if let Some((_, arc_entry)) = self.deleted.remove(&device_id) {
+                let mut entry = (*arc_entry).clone();
+                entry.area_id = None;
+                self.deleted.insert(device_id, Arc::new(entry));
+            }
+        }
+    }
+
+    /// Clear a label from all deleted devices that have it.
+    pub fn clear_label_id_from_deleted(&self, label_id: &str) {
+        let matching: Vec<String> = self
+            .deleted
+            .iter()
+            .filter(|r| r.value().labels.contains(&label_id.to_string()))
+            .map(|r| r.key().clone())
+            .collect();
+
+        for device_id in matching {
+            if let Some((_, arc_entry)) = self.deleted.remove(&device_id) {
+                let mut entry = (*arc_entry).clone();
+                entry.labels.retain(|l| l != label_id);
+                self.deleted.insert(device_id, Arc::new(entry));
+            }
+        }
+    }
+
+    /// Purge deleted devices whose orphaned_timestamp has expired.
+    pub fn purge_expired_orphaned(&self, now_time: f64, keep_seconds: f64) {
+        let expired: Vec<String> = self
+            .deleted
+            .iter()
+            .filter(|r| {
+                if let Some(ts) = r.value().orphaned_timestamp {
+                    ts + keep_seconds < now_time
+                } else {
+                    false
+                }
+            })
+            .map(|r| r.key().clone())
+            .collect();
+
+        for device_id in expired {
+            self.deleted.remove(&device_id);
+            debug!("Purged expired orphaned device: {}", device_id);
+        }
+    }
+
+    /// Remove deleted devices that have matching identifiers or connections.
+    ///
+    /// This is called when an active device takes over identifiers/connections
+    /// that a deleted device was holding, preventing conflicts on restore.
+    pub fn remove_deleted_by_identifiers_or_connections(
+        &self,
+        identifiers: &[DeviceIdentifier],
+        connections: &[DeviceConnection],
+    ) {
+        let matching: Vec<String> = self
+            .deleted
+            .iter()
+            .filter(|r| {
+                let entry = r.value();
+                // Check if any identifier matches
+                for ident in identifiers {
+                    if entry
+                        .identifiers
+                        .iter()
+                        .any(|i| i.domain() == ident.domain() && i.id() == ident.id())
+                    {
+                        return true;
+                    }
+                }
+                // Check if any connection matches
+                for conn in connections {
+                    if entry.connections.iter().any(|c| {
+                        c.connection_type() == conn.connection_type() && c.id() == conn.id()
+                    }) {
+                        return true;
+                    }
+                }
+                false
+            })
+            .map(|r| r.key().clone())
+            .collect();
+
+        for device_id in matching {
+            self.deleted.remove(&device_id);
+            debug!(
+                "Removed deleted device due to identifier/connection collision: {}",
+                device_id
+            );
+        }
+    }
+
+    /// Get count of deleted devices
+    pub fn deleted_len(&self) -> usize {
+        self.deleted.len()
+    }
+
+    /// Iterate over all deleted devices
+    pub fn iter_deleted(&self) -> impl Iterator<Item = Arc<DeviceEntry>> + '_ {
+        self.deleted.iter().map(|r| Arc::clone(r.value()))
     }
 
     /// Get all device IDs

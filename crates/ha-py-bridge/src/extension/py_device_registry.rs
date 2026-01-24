@@ -293,6 +293,11 @@ impl PyDeviceEntry {
     }
 
     #[getter]
+    fn orphaned_timestamp(&self) -> Option<f64> {
+        self.inner.orphaned_timestamp
+    }
+
+    #[getter]
     fn insertion_order(&self) -> u64 {
         self.inner.insertion_order
     }
@@ -759,7 +764,11 @@ impl PyDeviceRegistry {
                         e.via_device_id = via_device_id.clone();
                     }
                     if let Some(v) = configuration_url {
-                        e.configuration_url = Some(v.to_string());
+                        e.configuration_url = if v.is_empty() {
+                            None
+                        } else {
+                            Some(v.to_string())
+                        };
                     }
                     if let Some(v) = entry_type {
                         e.entry_type = match v {
@@ -1195,8 +1204,12 @@ impl PyDeviceRegistry {
                 if let Some(ref n) = name {
                     entry.name = Some(n.clone());
                 }
-                if name_by_user.is_some() {
-                    entry.name_by_user = name_by_user.clone();
+                if let Some(ref nbu) = name_by_user {
+                    entry.name_by_user = if nbu.is_empty() {
+                        None
+                    } else {
+                        Some(nbu.clone())
+                    };
                 }
                 if manufacturer.is_some() {
                     entry.manufacturer = manufacturer.clone();
@@ -1308,6 +1321,19 @@ impl PyDeviceRegistry {
             _ => Vec::new(),
         };
 
+        // Remove deleted devices whose identifiers/connections were taken by this update
+        if let Some(ref updated) = entry {
+            if (changed_fields.contains(&"connections".to_string())
+                || changed_fields.contains(&"identifiers".to_string()))
+                && (!updated.identifiers.is_empty() || !updated.connections.is_empty())
+            {
+                self.inner.remove_deleted_by_identifiers_or_connections(
+                    &updated.identifiers,
+                    &updated.connections,
+                );
+            }
+        }
+
         Ok((entry.map(PyDeviceEntry::from_inner), changed_fields))
     }
 
@@ -1372,6 +1398,144 @@ impl PyDeviceRegistry {
             dict.set_item(&id, PyDeviceEntry::from_inner(entry).into_py(py))?;
         }
         Ok(dict.unbind())
+    }
+
+    /// Get all deleted devices as a dict (device_id -> DeviceEntry)
+    #[getter]
+    fn deleted_devices(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        let dict = PyDict::new_bound(py);
+        for entry in self.inner.iter_deleted() {
+            let id = entry.id.clone();
+            dict.set_item(&id, PyDeviceEntry::from_inner(entry).into_py(py))?;
+        }
+        Ok(dict.unbind())
+    }
+
+    /// Get the count of deleted devices
+    fn deleted_devices_len(&self) -> usize {
+        self.inner.deleted_len()
+    }
+
+    /// Find a deleted device by identifiers or connections
+    fn async_get_deleted_by_identifiers_or_connections(
+        &self,
+        identifiers: Vec<(String, String)>,
+        connections: Vec<(String, String)>,
+    ) -> Option<PyDeviceEntry> {
+        use ha_registries::device_registry::{DeviceConnection, DeviceIdentifier};
+        let idents: Vec<DeviceIdentifier> = identifiers
+            .into_iter()
+            .map(|(d, i)| DeviceIdentifier::new(d, i))
+            .collect();
+        let conns: Vec<DeviceConnection> = connections
+            .into_iter()
+            .map(|(t, i)| DeviceConnection::normalized(t, i))
+            .collect();
+        self.inner
+            .get_deleted_by_identifiers_or_connections(&idents, &conns)
+            .map(PyDeviceEntry::from_inner)
+    }
+
+    /// Restore a deleted device back to the active registry
+    fn async_restore_deleted(&self, device_id: &str) -> Option<PyDeviceEntry> {
+        self.inner
+            .restore_deleted(device_id)
+            .map(PyDeviceEntry::from_inner)
+    }
+
+    /// Restore a deleted device as a fresh entry, preserving only user customizations.
+    ///
+    /// Creates a new DeviceEntry with the deleted device's id, area_id, disabled_by,
+    /// labels, name_by_user, and created_at. All integration-provided fields are cleared.
+    #[pyo3(signature = (device_id, identifiers, connections, config_entry_id, config_subentry_id=None, timestamp=0.0))]
+    fn async_restore_deleted_fresh(
+        &self,
+        device_id: &str,
+        identifiers: Vec<(String, String)>,
+        connections: Vec<(String, String)>,
+        config_entry_id: &str,
+        config_subentry_id: Option<&str>,
+        timestamp: f64,
+    ) -> Option<PyDeviceEntry> {
+        use ha_registries::device_registry::{DeviceConnection, DeviceIdentifier};
+        let idents: Vec<DeviceIdentifier> = identifiers
+            .into_iter()
+            .map(|(d, i)| DeviceIdentifier::new(d, i))
+            .collect();
+        let conns: Vec<DeviceConnection> = connections
+            .into_iter()
+            .map(|(t, i)| DeviceConnection::normalized(t, i))
+            .collect();
+        let ts = chrono::DateTime::from_timestamp(
+            timestamp as i64,
+            ((timestamp % 1.0) * 1_000_000_000.0) as u32,
+        )
+        .unwrap_or_else(chrono::Utc::now);
+        self.inner
+            .restore_deleted_fresh(
+                device_id,
+                &idents,
+                &conns,
+                config_entry_id,
+                config_subentry_id,
+                ts,
+            )
+            .map(PyDeviceEntry::from_inner)
+    }
+
+    /// Clear config entry from all deleted devices
+    fn async_clear_config_entry_from_deleted(&self, config_entry_id: &str, now_time: f64) {
+        self.inner
+            .clear_config_entry_from_deleted(config_entry_id, now_time);
+    }
+
+    /// Clear a config subentry from all deleted devices
+    #[pyo3(signature = (config_entry_id, config_subentry_id, now_time))]
+    fn async_clear_config_subentry_from_deleted(
+        &self,
+        config_entry_id: &str,
+        config_subentry_id: Option<&str>,
+        now_time: f64,
+    ) {
+        self.inner.clear_config_subentry_from_deleted(
+            config_entry_id,
+            config_subentry_id,
+            now_time,
+        );
+    }
+
+    /// Clear area_id from all deleted devices
+    fn async_clear_area_id_from_deleted(&self, area_id: &str) {
+        self.inner.clear_area_id_from_deleted(area_id);
+    }
+
+    /// Clear label from all deleted devices
+    fn async_clear_label_id_from_deleted(&self, label_id: &str) {
+        self.inner.clear_label_id_from_deleted(label_id);
+    }
+
+    /// Purge expired orphaned deleted devices
+    fn async_purge_expired_orphaned_devices(&self, now_time: f64, keep_seconds: f64) {
+        self.inner.purge_expired_orphaned(now_time, keep_seconds);
+    }
+
+    /// Remove deleted devices that have matching identifiers or connections
+    fn remove_deleted_by_identifiers_or_connections(
+        &self,
+        identifiers: Vec<(String, String)>,
+        connections: Vec<(String, String)>,
+    ) {
+        use ha_registries::device_registry::{DeviceConnection, DeviceIdentifier};
+        let idents: Vec<DeviceIdentifier> = identifiers
+            .into_iter()
+            .map(|(d, i)| DeviceIdentifier::new(d, i))
+            .collect();
+        let conns: Vec<DeviceConnection> = connections
+            .into_iter()
+            .map(|(t, i)| DeviceConnection::normalized(t, i))
+            .collect();
+        self.inner
+            .remove_deleted_by_identifiers_or_connections(&idents, &conns);
     }
 
     fn __len__(&self) -> usize {

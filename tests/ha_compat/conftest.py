@@ -1609,6 +1609,9 @@ class RustEntityRegistry:
 # Rust-backed DeviceRegistry wrappers
 # =============================================================================
 
+# Sentinel to distinguish "not passed" from "passed as None"
+_GOC_UNSET = object()
+
 class RustDeviceEntry:
     """Wrapper for DeviceEntry compatible with homeassistant.helpers.device_registry."""
 
@@ -1754,6 +1757,10 @@ class RustDeviceEntry:
         return self._rust_entry.name_by_user
 
     @property
+    def orphaned_timestamp(self) -> float | None:
+        return self._rust_entry.orphaned_timestamp
+
+    @property
     def primary_config_entry(self) -> str | None:
         return self._rust_entry.primary_config_entry
 
@@ -1849,6 +1856,49 @@ class RustDeviceRegistryItems(dict):
         return result
 
 
+class DeletedDeviceRegistryItems(dict):
+    """Dict subclass for deleted devices with get_entry() lookup."""
+
+    def __init__(self, rust_registry, entry_cache):
+        self._rust_registry = rust_registry
+        # Populate dict from Rust deleted devices - reuse cached wrappers when data unchanged
+        raw = rust_registry.deleted_devices
+        entries = {}
+        for k, v in raw.items():
+            # Build a fingerprint from the mutable fields to detect changes
+            fingerprint = (
+                tuple(sorted(v.config_entries)),
+                tuple(sorted(
+                    (ce_id, tuple(sorted(str(s) for s in subs)))
+                    for ce_id, subs in v.config_entries_subentries.items()
+                )),
+                v.orphaned_timestamp,
+            )
+            cached = entry_cache.get(k)
+            if cached is not None and cached[0] == fingerprint:
+                entries[k] = cached[1]
+            else:
+                wrapper = RustDeviceEntry(v)
+                entry_cache[k] = (fingerprint, wrapper)
+                entries[k] = wrapper
+        super().__init__(entries)
+
+    def get_entry(self, identifiers=None, connections=None):
+        """Find a deleted device by identifiers or connections."""
+        ident_list = [tuple(i) for i in identifiers] if identifiers else []
+        conn_list = [tuple(c) for c in connections] if connections else []
+        result = self._rust_registry.async_get_deleted_by_identifiers_or_connections(
+            ident_list, conn_list
+        )
+        if result is None:
+            return None
+        # Return the cached wrapper from the dict if available (for identity stability)
+        device_id = result.id
+        if device_id in self:
+            return self[device_id]
+        return RustDeviceEntry(result)
+
+
 class RustDeviceRegistry:
     """Wrapper that provides HA-compatible DeviceRegistry API backed by Rust."""
 
@@ -1861,6 +1911,8 @@ class RustDeviceRegistry:
         self._field_overrides: dict[str, dict[str, object]] = {}
         # Cache for returning same entry object on no-op updates
         self._device_entries: dict[str, "RustDeviceEntry"] = {}
+        # Cache for deleted device entries (identity stability for `is` checks)
+        self._deleted_entry_cache: dict[str, tuple] = {}
 
     async def async_load(self) -> None:
         # No-op for testing - Rust registries start empty in test context
@@ -1871,13 +1923,15 @@ class RustDeviceRegistry:
         pass
 
     def async_clear_area_id(self, area_id: str) -> None:
-        """Clear an area id from all devices."""
+        """Clear an area id from all devices (active and deleted)."""
         modified_ids = self._rust_registry.async_clear_area_id(area_id)
         for dev_id in modified_ids:
             self._fire_event("update", dev_id, changes={"area_id": area_id})
+        # Also clear from deleted devices
+        self._rust_registry.async_clear_area_id_from_deleted(area_id)
 
     def async_clear_config_entry(self, config_entry_id: str) -> None:
-        """Clear a config entry from all devices."""
+        """Clear a config entry from all devices (active and deleted)."""
         # Capture old snapshots and dict_reprs before clearing (needed for events)
         affected = {}
         for dev in self._rust_registry.async_entries_for_config_entry(config_entry_id):
@@ -1907,18 +1961,36 @@ class RustDeviceRegistry:
             old_dict_repr = affected.get(dev_id, (None, None))[1]
             self._fire_event("remove", dev_id, device=old_dict_repr)
 
+        # Also clear from deleted devices (sets orphaned_timestamp when empty)
+        import time
+        self._rust_registry.async_clear_config_entry_from_deleted(
+            config_entry_id, time.time()
+        )
+
     def async_clear_config_subentry(
-        self, config_entry_id: str, config_subentry_id: str
+        self, config_entry_id: str, config_subentry_id: str | None
     ) -> None:
-        """Clear config subentry from device registry entries (stub)."""
-        # For now, remove devices that only have this config entry/subentry
-        pass
+        """Clear config subentry from device registry entries."""
+        # For active devices with this config entry, remove the subentry
+        for entry in self._rust_registry.async_entries_for_config_entry(config_entry_id):
+            self.async_update_device(
+                entry.id,
+                remove_config_entry_id=config_entry_id,
+                remove_config_subentry_id=config_subentry_id,
+            )
+        # For deleted devices, clear the subentry directly
+        import time
+        self._rust_registry.async_clear_config_subentry_from_deleted(
+            config_entry_id, config_subentry_id, time.time()
+        )
 
     def async_clear_label_id(self, label_id: str) -> None:
-        """Clear a label from all devices."""
+        """Clear a label from all devices (active and deleted)."""
         modified_ids = self._rust_registry.async_clear_label_id(label_id)
         for dev_id in modified_ids:
             self._fire_event("update", dev_id, changes={"labels": label_id})
+        # Also clear from deleted devices
+        self._rust_registry.async_clear_label_id_from_deleted(label_id)
 
     def async_entries_for_area(self, area_id: str) -> list[RustDeviceEntry]:
         return [
@@ -2031,8 +2103,8 @@ class RustDeviceRegistry:
         sw_version: str | None = None,
         hw_version: str | None = None,
         via_device: tuple[str, str] | None = None,
-        configuration_url: str | None = None,
-        entry_type: str | None = None,
+        configuration_url=_GOC_UNSET,
+        entry_type=_GOC_UNSET,
         disabled_by=None,
         default_manufacturer: str | None = None,
         default_model: str | None = None,
@@ -2050,6 +2122,29 @@ class RustDeviceRegistry:
             identifiers=identifiers if identifiers else None,
             connections=connections if connections else None,
         )
+
+        # If no existing device, check if there's a matching deleted device to restore
+        was_restored = False
+        if existing is None:
+            ident_list = [tuple(i) for i in identifiers] if identifiers else []
+            conn_list = [tuple(c) for c in connections] if connections else []
+            deleted = self._rust_registry.async_get_deleted_by_identifiers_or_connections(
+                ident_list, conn_list
+            )
+            if deleted is not None:
+                # Restore as a fresh entry preserving only user customizations
+                now_ts = datetime.now(timezone.utc).timestamp()
+                self._rust_registry.async_restore_deleted_fresh(
+                    deleted.id,
+                    ident_list,
+                    conn_list,
+                    config_entry_id,
+                    config_subentry_id,
+                    now_ts,
+                )
+                was_restored = True
+                # Keep existing=None so we fire "create" event below
+
         old_snapshot = self._get_device_snapshot(existing) if existing else None
 
         # Look up the domain of the current primary config entry (for Rust promotion decision)
@@ -2063,6 +2158,24 @@ class RustDeviceRegistry:
         initial_disabled_by = None
         if disabled_by is not None and existing is None:
             initial_disabled_by = str(disabled_by.value) if hasattr(disabled_by, 'value') else str(disabled_by)
+
+        # Convert entry_type: _GOC_UNSET=don't set, None=clear, enum=set
+        rust_entry_type = None
+        if entry_type is not _GOC_UNSET:
+            if entry_type is None:
+                rust_entry_type = ""  # Empty string = clear
+            elif hasattr(entry_type, 'value'):
+                rust_entry_type = str(entry_type.value)
+            else:
+                rust_entry_type = str(entry_type)
+
+        # Convert configuration_url: _GOC_UNSET=don't set, None=clear, str=set
+        rust_config_url = None
+        if configuration_url is not _GOC_UNSET:
+            if configuration_url is None:
+                rust_config_url = ""  # Empty string = clear
+            else:
+                rust_config_url = str(configuration_url)
 
         now_ts = datetime.now(timezone.utc).timestamp()
         entry, changed_fields = self._rust_registry.async_get_or_create(
@@ -2079,8 +2192,8 @@ class RustDeviceRegistry:
             sw_version=sw_version,
             hw_version=hw_version,
             via_device=via_device,
-            configuration_url=configuration_url,
-            entry_type=entry_type,
+            configuration_url=rust_config_url,
+            entry_type=rust_entry_type,
             default_manufacturer=default_manufacturer,
             default_model=default_model,
             default_name=default_name,
@@ -2103,7 +2216,8 @@ class RustDeviceRegistry:
 
         # Handle suggested_area: create area and set area_id on device
         # (cross-registry coordination stays in Python)
-        if suggested_area and not entry.area_id:
+        # Skip for restored devices - they preserve their existing area_id
+        if suggested_area and not entry.area_id and not was_restored:
             from homeassistant.helpers import area_registry as ar
             if ar.DATA_REGISTRY in self.hass.data:
                 area_reg = self.hass.data[ar.DATA_REGISTRY]
@@ -2124,6 +2238,14 @@ class RustDeviceRegistry:
                 self._fire_event("update", entry.id, changes=changes)
 
         return RustDeviceEntry(entry)
+
+    def async_purge_expired_orphaned_devices(self) -> None:
+        """Purge expired orphaned deleted devices."""
+        import time
+        from homeassistant.helpers.device_registry import ORPHANED_DEVICE_KEEP_SECONDS
+        self._rust_registry.async_purge_expired_orphaned_devices(
+            time.time(), float(ORPHANED_DEVICE_KEEP_SECONDS)
+        )
 
     def async_remove_device(self, device_id: str) -> None:
         from homeassistant.helpers import entity_registry as er
@@ -2262,6 +2384,12 @@ class RustDeviceRegistry:
             elif et is None:
                 kwargs['entry_type'] = ""  # Empty string = clear
 
+        # Clearable fields: None means "clear", convert to "" for Rust
+        for field in ('area_id', 'via_device_id', 'name_by_user',
+                      'configuration_url', 'suggested_area'):
+            if field in kwargs and kwargs[field] is None:
+                kwargs[field] = ""
+
         # Convert labels set to list for Rust
         if 'labels' in kwargs and isinstance(kwargs['labels'], set):
             kwargs['labels'] = list(kwargs['labels'])
@@ -2391,6 +2519,10 @@ class RustDeviceRegistry:
     def _async_update_device(self, device_id: str, **kwargs) -> RustDeviceEntry | None:
         """Private update method called by native HA helpers (e.g., async_config_entry_disabled_by_changed)."""
         return self.async_update_device(device_id, **kwargs)
+
+    @property
+    def deleted_devices(self) -> DeletedDeviceRegistryItems:
+        return DeletedDeviceRegistryItems(self._rust_registry, self._deleted_entry_cache)
 
     @property
     def devices(self) -> RustDeviceRegistryItems:
