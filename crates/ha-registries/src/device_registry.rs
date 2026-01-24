@@ -971,6 +971,100 @@ impl DeviceRegistry {
         }
     }
 
+    /// Clear area_id from all devices that reference the given area_id.
+    ///
+    /// Returns the list of device IDs that were modified.
+    pub fn clear_area_id(&self, area_id: &str) -> Vec<String> {
+        let device_ids: Vec<String> = self
+            .by_area_id
+            .get(area_id)
+            .map(|ids| ids.iter().cloned().collect())
+            .unwrap_or_default();
+
+        let mut modified = Vec::new();
+        for device_id in &device_ids {
+            self.update(device_id, |entry| {
+                entry.area_id = None;
+            });
+            modified.push(device_id.clone());
+        }
+        modified
+    }
+
+    /// Clear a label from all devices that have it.
+    ///
+    /// Returns the list of device IDs that were modified.
+    pub fn clear_label_id(&self, label_id: &str) -> Vec<String> {
+        let device_ids: Vec<String> = self
+            .by_id
+            .iter()
+            .filter(|r| r.value().labels.contains(&label_id.to_string()))
+            .map(|r| r.key().clone())
+            .collect();
+
+        let mut modified = Vec::new();
+        for device_id in &device_ids {
+            self.update(device_id, |entry| {
+                entry.labels.retain(|l| l != label_id);
+            });
+            modified.push(device_id.clone());
+        }
+        modified
+    }
+
+    /// Clear a config entry from all devices, returning change info.
+    ///
+    /// Returns `(removed_device_ids, updated_devices)` where:
+    /// - `removed_device_ids`: devices that were deleted (had only this config entry)
+    /// - `updated_devices`: `Vec<(device_id, changed_fields)>` for devices that were modified
+    pub fn clear_config_entry_with_changes(
+        &self,
+        config_entry_id: &str,
+    ) -> (Vec<String>, Vec<(String, Vec<String>)>) {
+        let device_ids: Vec<String> = self
+            .get_by_config_entry_id(config_entry_id)
+            .iter()
+            .map(|d| d.id.clone())
+            .collect();
+
+        let mut removed = Vec::new();
+        let mut updated = Vec::new();
+
+        for device_id in device_ids {
+            let old_entry = match self.get(&device_id) {
+                Some(e) => e,
+                None => continue,
+            };
+
+            let should_remove = old_entry.config_entries.len() <= 1;
+
+            if should_remove {
+                self.remove(&device_id);
+                removed.push(device_id);
+            } else {
+                let old = (*old_entry).clone();
+                let ce_id = config_entry_id.to_string();
+                self.update(&device_id, |entry| {
+                    entry.config_entries.retain(|id| id != &ce_id);
+                    entry.config_entries_subentries.remove(&ce_id);
+                    if entry.primary_config_entry.as_deref() == Some(&ce_id) {
+                        entry.primary_config_entry = entry.config_entries.first().cloned();
+                    }
+                });
+
+                // Compute changed fields
+                if let Some(new_entry) = self.get(&device_id) {
+                    let changed = compute_device_changed_fields(&old, &new_entry);
+                    if !changed.is_empty() {
+                        updated.push((device_id, changed));
+                    }
+                }
+            }
+        }
+
+        (removed, updated)
+    }
+
     /// Clear via_device_id from all devices that reference the given device_id
     pub fn clear_via_device_id(&self, removed_device_id: &str) {
         let device_ids: Vec<String> = self
@@ -1008,6 +1102,72 @@ impl DeviceRegistry {
     pub fn iter(&self) -> impl Iterator<Item = Arc<DeviceEntry>> + '_ {
         self.by_id.iter().map(|r| Arc::clone(r.value()))
     }
+}
+
+/// Compare two DeviceEntry instances and return the list of field names that changed.
+pub fn compute_device_changed_fields(old: &DeviceEntry, new: &DeviceEntry) -> Vec<String> {
+    let mut changed = Vec::new();
+    if old.area_id != new.area_id {
+        changed.push("area_id".to_string());
+    }
+    if old.config_entries != new.config_entries {
+        changed.push("config_entries".to_string());
+    }
+    if old.config_entries_subentries != new.config_entries_subentries {
+        changed.push("config_entries_subentries".to_string());
+    }
+    if old.configuration_url != new.configuration_url {
+        changed.push("configuration_url".to_string());
+    }
+    if old.connections != new.connections {
+        changed.push("connections".to_string());
+    }
+    if old.disabled_by != new.disabled_by {
+        changed.push("disabled_by".to_string());
+    }
+    if old.entry_type != new.entry_type {
+        changed.push("entry_type".to_string());
+    }
+    if old.hw_version != new.hw_version {
+        changed.push("hw_version".to_string());
+    }
+    if old.identifiers != new.identifiers {
+        changed.push("identifiers".to_string());
+    }
+    if old.labels != new.labels {
+        changed.push("labels".to_string());
+    }
+    if old.manufacturer != new.manufacturer {
+        changed.push("manufacturer".to_string());
+    }
+    if old.model != new.model {
+        changed.push("model".to_string());
+    }
+    if old.model_id != new.model_id {
+        changed.push("model_id".to_string());
+    }
+    if old.name != new.name {
+        changed.push("name".to_string());
+    }
+    if old.name_by_user != new.name_by_user {
+        changed.push("name_by_user".to_string());
+    }
+    if old.primary_config_entry != new.primary_config_entry {
+        changed.push("primary_config_entry".to_string());
+    }
+    if old.serial_number != new.serial_number {
+        changed.push("serial_number".to_string());
+    }
+    if old.suggested_area != new.suggested_area {
+        changed.push("suggested_area".to_string());
+    }
+    if old.sw_version != new.sw_version {
+        changed.push("sw_version".to_string());
+    }
+    if old.via_device_id != new.via_device_id {
+        changed.push("via_device_id".to_string());
+    }
+    changed
 }
 
 // Unit tests removed - covered by HA native tests via `make ha-compat-test`

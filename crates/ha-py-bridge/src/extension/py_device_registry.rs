@@ -1316,6 +1316,30 @@ impl PyDeviceRegistry {
         self.inner.clear_config_entry(config_entry_id);
     }
 
+    /// Clear a config entry from all devices, returning change information.
+    ///
+    /// Returns (removed_device_ids, [(device_id, changed_fields)])
+    fn async_clear_config_entry_with_changes(
+        &self,
+        config_entry_id: &str,
+    ) -> (Vec<String>, Vec<(String, Vec<String>)>) {
+        self.inner.clear_config_entry_with_changes(config_entry_id)
+    }
+
+    /// Clear area_id from all devices that reference it.
+    ///
+    /// Returns the list of modified device IDs.
+    fn async_clear_area_id(&self, area_id: &str) -> Vec<String> {
+        self.inner.clear_area_id(area_id)
+    }
+
+    /// Clear a label from all devices that have it.
+    ///
+    /// Returns the list of modified device IDs.
+    fn async_clear_label_id(&self, label_id: &str) -> Vec<String> {
+        self.inner.clear_label_id(label_id)
+    }
+
     /// Remove a device and clean up via_device_id references
     fn async_remove_device(&self, device_id: &str) -> PyResult<()> {
         self.inner.remove(device_id).ok_or_else(|| {

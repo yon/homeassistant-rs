@@ -999,7 +999,15 @@ class _MockStore:
 
 
 class RustEntityRegistryItems(dict):
-    """Dict subclass that provides extra lookup methods like HA's EntityRegistryItems."""
+    """Dict subclass that provides extra lookup methods like HA's EntityRegistryItems.
+
+    Filter methods delegate to Rust indices for O(1) lookups instead of O(n) iteration.
+    """
+
+    def __init__(self, data, rust_registry=None, wrapper_fn=None):
+        super().__init__(data)
+        self._rust_registry = rust_registry
+        self._wrapper_fn = wrapper_fn
 
     def get_device_ids(self):
         """Return device ids."""
@@ -1008,46 +1016,39 @@ class RustEntityRegistryItems(dict):
     def get_entity_id(self, key: tuple[str, str, str]) -> str | None:
         """Get entity_id from (domain, platform, unique_id)."""
         domain, platform, unique_id = key
-        for entity_id, entry in self.items():
-            if entry.domain == domain and entry.platform == platform and entry.unique_id == unique_id:
-                return entity_id
-        return None
+        entity_id = self._rust_registry.async_get_entity_id(domain, platform, unique_id)
+        return entity_id
 
     def get_entries_for_area_id(self, area_id: str) -> list:
-        """Get entries for area."""
-        return [
-            entry for entry in self.values()
-            if entry.area_id == area_id
-        ]
+        """Get entries for area (Rust index for matching IDs, dict order preserved)."""
+        matching = {e.entity_id for e in self._rust_registry.async_entries_for_area(area_id)}
+        return [entry for eid, entry in self.items() if eid in matching]
 
     def get_entries_for_config_entry_id(self, config_entry_id: str) -> list:
-        """Get entries for config entry."""
-        return [
-            entry for entry in self.values()
-            if entry.config_entry_id == config_entry_id
-        ]
+        """Get entries for config entry (Rust index for matching IDs, dict order preserved)."""
+        matching = {e.entity_id for e in self._rust_registry.async_entries_for_config_entry(config_entry_id)}
+        return [entry for eid, entry in self.items() if eid in matching]
 
     def get_entries_for_device_id(self, device_id: str, include_disabled_entities: bool = False) -> list:
-        """Get entries for device."""
+        """Get entries for device (Rust index for matching IDs, dict order preserved)."""
+        matching = {e.entity_id for e in self._rust_registry.async_entries_for_device(device_id)}
         return [
-            entry for entry in self.values()
-            if entry.device_id == device_id
+            entry for eid, entry in self.items()
+            if eid in matching
             and (include_disabled_entities or not entry.disabled_by)
         ]
 
     def get_entries_for_label(self, label_id: str) -> list:
-        """Get entries for label."""
-        return [
-            entry for entry in self.values()
-            if label_id in (entry.labels or set())
-        ]
+        """Get entries for label (Rust index for matching IDs, dict order preserved)."""
+        matching = {e.entity_id for e in self._rust_registry.async_entries_for_label(label_id)}
+        return [entry for eid, entry in self.items() if eid in matching]
 
     def get_entry(self, entity_id_or_uuid: str) -> object | None:
         """Get entry by entity_id or UUID."""
         # Try direct entity_id lookup first
         if entity_id_or_uuid in self:
             return self[entity_id_or_uuid]
-        # Try UUID lookup
+        # Try UUID lookup via Rust
         for entry in self.values():
             if entry.id == entity_id_or_uuid:
                 return entry
@@ -1127,14 +1128,16 @@ class RustEntityRegistry:
         """Clear config entry from registry entries."""
         import time
 
-        # Get all entity IDs for this config entry before removing
+        # Get all entity IDs for this config entry via Rust index
         entity_ids = [
             entry.entity_id
             for entry in self._rust_registry.async_entries_for_config_entry(config_entry_id)
         ]
-        # Remove each entity
-        for entity_id in entity_ids:
-            self.async_remove(entity_id)
+        # Bulk remove all entities at once in Rust, then fire events
+        removed = self._rust_registry.async_bulk_remove(entity_ids)
+        for entity_id in removed:
+            self._entry_cache.pop(entity_id, None)
+            self._fire_event("remove", entity_id)
         # Also clear config_entry_id from deleted entities and mark orphaned
         now_time = time.time()
         self._rust_registry.clear_deleted_config_entry(config_entry_id, now_time)
@@ -1162,10 +1165,10 @@ class RustEntityRegistry:
 
     def async_clear_label_id(self, label_id: str) -> None:
         """Clear label from registry entries."""
-        for entry in list(self.entities.values()):
-            if label_id in entry.labels:
-                new_labels = entry.labels - {label_id}
-                self.async_update_entity(entry.entity_id, labels=new_labels)
+        # Use Rust label index for O(1) lookup instead of iterating all entities
+        for entry in self._rust_registry.async_entries_for_label(label_id):
+            new_labels = set(entry.labels) - {label_id}
+            self.async_update_entity(entry.entity_id, labels=new_labels)
         # Clear from deleted entities
         self._rust_registry.clear_deleted_label_id(label_id)
 
@@ -1584,7 +1587,11 @@ class RustEntityRegistry:
             entity_id: self._get_or_create_wrapper(entry)
             for entity_id, entry in self._rust_registry.entities.items()
         }
-        return RustEntityRegistryItems(data)
+        return RustEntityRegistryItems(
+            data,
+            rust_registry=self._rust_registry,
+            wrapper_fn=self._get_or_create_wrapper,
+        )
 
     @entities.setter
     def entities(self, value):
@@ -1865,43 +1872,39 @@ class RustDeviceRegistry:
 
     def async_clear_area_id(self, area_id: str) -> None:
         """Clear an area id from all devices."""
-        all_devices = self._rust_registry.devices
-        for dev_id, dev in all_devices.items():
-            if dev.area_id == area_id:
-                _, _ = self._rust_registry.async_update_device(dev_id, area_id="")
+        modified_ids = self._rust_registry.async_clear_area_id(area_id)
+        for dev_id in modified_ids:
+            self._fire_event("update", dev_id, changes={"area_id": area_id})
 
     def async_clear_config_entry(self, config_entry_id: str) -> None:
         """Clear a config entry from all devices."""
-        # Get affected devices before clearing
-        affected_devices = []
-        all_devices = self._rust_registry.devices
-        for dev_id, dev in all_devices.items():
-            if config_entry_id in dev.config_entries:
-                snapshot = self._get_device_snapshot(dev)
-                dict_repr = RustDeviceEntry(dev, self._field_overrides.get(dev_id, {})).dict_repr
-                affected_devices.append((dev_id, snapshot, dict_repr))
+        # Capture old snapshots and dict_reprs before clearing (needed for events)
+        affected = {}
+        for dev in self._rust_registry.async_entries_for_config_entry(config_entry_id):
+            affected[dev.id] = (
+                self._get_device_snapshot(dev),
+                RustDeviceEntry(dev, self._field_overrides.get(dev.id, {})).dict_repr,
+            )
 
-        # Clear the config entry from Rust
-        self._rust_registry.async_clear_config_entry(config_entry_id)
+        # Clear in Rust - returns (removed_ids, [(dev_id, changed_fields)])
+        removed_ids, updated = self._rust_registry.async_clear_config_entry_with_changes(
+            config_entry_id
+        )
 
-        # Fire events: updates first, then removes (matches HA ordering)
-        update_events = []
-        remove_events = []
-        for dev_id, old_snapshot, old_dict_repr in affected_devices:
-            updated_dev = self._rust_registry.async_get(dev_id)
-            if updated_dev is None:
-                # Device was removed (had only this config entry)
-                remove_events.append((dev_id, old_dict_repr))
-            else:
-                # Device still exists - compute changes
-                new_snapshot = self._get_device_snapshot(updated_dev)
-                changes = self._compute_changes(old_snapshot, new_snapshot)
-                if changes:
-                    update_events.append((dev_id, changes))
+        # Fire update events first (with old values from snapshots)
+        for dev_id, changed_fields in updated:
+            old_snapshot = affected.get(dev_id, ({},))[0]
+            changes = {
+                field: old_snapshot.get(field)
+                for field in changed_fields
+                if field not in self.RUNTIME_ONLY_ATTRS
+            }
+            if changes:
+                self._fire_event("update", dev_id, changes=changes)
 
-        for dev_id, changes in update_events:
-            self._fire_event("update", dev_id, changes=changes)
-        for dev_id, old_dict_repr in remove_events:
+        # Fire remove events
+        for dev_id in removed_ids:
+            old_dict_repr = affected.get(dev_id, (None, None))[1]
             self._fire_event("remove", dev_id, device=old_dict_repr)
 
     def async_clear_config_subentry(
@@ -1913,11 +1916,9 @@ class RustDeviceRegistry:
 
     def async_clear_label_id(self, label_id: str) -> None:
         """Clear a label from all devices."""
-        all_devices = self._rust_registry.devices
-        for dev_id, dev in all_devices.items():
-            if label_id in dev.labels:
-                new_labels = [l for l in dev.labels if l != label_id]
-                _, _ = self._rust_registry.async_update_device(dev_id, labels=new_labels)
+        modified_ids = self._rust_registry.async_clear_label_id(label_id)
+        for dev_id in modified_ids:
+            self._fire_event("update", dev_id, changes={"labels": label_id})
 
     def async_entries_for_area(self, area_id: str) -> list[RustDeviceEntry]:
         return [

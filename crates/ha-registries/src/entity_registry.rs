@@ -285,6 +285,9 @@ pub struct EntityRegistry {
     /// Index: area_id -> set of entity_ids
     by_area_id: DashMap<String, HashSet<String>>,
 
+    /// Index: label_id -> set of entity_ids
+    by_label_id: DashMap<String, HashSet<String>>,
+
     /// Index: platform -> set of entity_ids
     by_platform: DashMap<String, HashSet<String>>,
 
@@ -304,6 +307,7 @@ impl EntityRegistry {
             by_device_id: DashMap::new(),
             by_config_entry_id: DashMap::new(),
             by_area_id: DashMap::new(),
+            by_label_id: DashMap::new(),
             by_platform: DashMap::new(),
             deleted: RwLock::new(IndexMap::new()),
         }
@@ -405,6 +409,14 @@ impl EntityRegistry {
                 .insert(entity_id.clone());
         }
 
+        // label_id index
+        for label_id in &entry.labels {
+            self.by_label_id
+                .entry(label_id.clone())
+                .or_default()
+                .insert(entity_id.clone());
+        }
+
         // platform index
         self.by_platform
             .entry(entry.platform.clone())
@@ -444,6 +456,13 @@ impl EntityRegistry {
         // Remove from area_id index
         if let Some(ref area_id) = entry.area_id {
             if let Some(mut ids) = self.by_area_id.get_mut(area_id) {
+                ids.remove(entity_id);
+            }
+        }
+
+        // Remove from label_id index
+        for label_id in &entry.labels {
+            if let Some(mut ids) = self.by_label_id.get_mut(label_id) {
                 ids.remove(entity_id);
             }
         }
@@ -513,6 +532,14 @@ impl EntityRegistry {
     pub fn get_by_area_id(&self, area_id: &str) -> Vec<Arc<EntityEntry>> {
         self.by_area_id
             .get(area_id)
+            .map(|ids| ids.iter().filter_map(|id| self.get(id)).collect())
+            .unwrap_or_default()
+    }
+
+    /// Get all entities with a given label
+    pub fn get_by_label_id(&self, label_id: &str) -> Vec<Arc<EntityEntry>> {
+        self.by_label_id
+            .get(label_id)
             .map(|ids| ids.iter().filter_map(|id| self.get(id)).collect())
             .unwrap_or_default()
     }
@@ -638,6 +665,11 @@ impl EntityRegistry {
                     ids.remove(&entry.entity_id);
                 }
             }
+            for label_id in &entry.labels {
+                if let Some(mut ids) = self.by_label_id.get_mut(label_id) {
+                    ids.remove(&entry.entity_id);
+                }
+            }
             if let Some(mut ids) = self.by_platform.get_mut(&entry.platform) {
                 ids.remove(&entry.entity_id);
             }
@@ -682,6 +714,62 @@ impl EntityRegistry {
         } else {
             None
         }
+    }
+
+    /// Remove multiple entities at once, returning the removed entity IDs.
+    ///
+    /// More efficient than calling `remove()` in a loop because it acquires
+    /// the write lock once for the primary index.
+    pub fn bulk_remove(&self, entity_ids: &[String]) -> Vec<String> {
+        let mut removed = Vec::new();
+        if let Ok(mut idx) = self.by_entity_id.write() {
+            for entity_id in entity_ids {
+                if let Some(arc_entry) = idx.shift_remove(entity_id.as_str()) {
+                    // Unindex from secondary indexes
+                    if let Some(ref unique_id) = arc_entry.unique_id {
+                        let key = format!("{}\0{}", arc_entry.platform, unique_id);
+                        self.by_unique_id.remove(&key);
+                    }
+                    if let Some(ref device_id) = arc_entry.device_id {
+                        if let Some(mut ids) = self.by_device_id.get_mut(device_id) {
+                            ids.remove(entity_id.as_str());
+                        }
+                    }
+                    if let Some(ref config_entry_id) = arc_entry.config_entry_id {
+                        if let Some(mut ids) = self.by_config_entry_id.get_mut(config_entry_id) {
+                            ids.remove(entity_id.as_str());
+                        }
+                    }
+                    if let Some(ref area_id) = arc_entry.area_id {
+                        if let Some(mut ids) = self.by_area_id.get_mut(area_id) {
+                            ids.remove(entity_id.as_str());
+                        }
+                    }
+                    for label_id in &arc_entry.labels {
+                        if let Some(mut ids) = self.by_label_id.get_mut(label_id) {
+                            ids.remove(entity_id.as_str());
+                        }
+                    }
+                    if let Some(mut ids) = self.by_platform.get_mut(&arc_entry.platform) {
+                        ids.remove(entity_id.as_str());
+                    }
+                    // Add to deleted for tracking
+                    let key = (
+                        arc_entry.domain().to_string(),
+                        arc_entry.platform.clone(),
+                        arc_entry.unique_id.clone().unwrap_or_default(),
+                    );
+                    if let Ok(mut deleted) = self.deleted.write() {
+                        deleted.insert(key, Arc::clone(&arc_entry));
+                    }
+                    removed.push(entity_id.clone());
+                }
+            }
+        }
+        if !removed.is_empty() {
+            info!("Bulk removed {} entities", removed.len());
+        }
+        removed
     }
 
     /// Get all entity IDs

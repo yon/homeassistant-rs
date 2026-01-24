@@ -423,6 +423,15 @@ impl PyEntityRegistry {
             .collect()
     }
 
+    /// Get all entities with a given label
+    fn async_entries_for_label(&self, label_id: &str) -> Vec<PyEntityEntry> {
+        self.inner
+            .get_by_label_id(label_id)
+            .into_iter()
+            .map(PyEntityEntry::from_inner)
+            .collect()
+    }
+
     /// Get all entities for a platform
     fn async_entries_for_platform(&self, platform: &str) -> Vec<PyEntityEntry> {
         self.inner
@@ -875,6 +884,11 @@ impl PyEntityRegistry {
     fn async_remove(&self, entity_id: &str) {
         // Ignore result - removing non-existent entity is a no-op
         let _ = self.inner.remove(entity_id);
+    }
+
+    /// Remove multiple entities at once, returning the list of removed entity IDs.
+    fn async_bulk_remove(&self, entity_ids: Vec<String>) -> Vec<String> {
+        self.inner.bulk_remove(&entity_ids)
     }
 
     /// Check if an entity is registered
