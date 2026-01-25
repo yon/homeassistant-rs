@@ -76,6 +76,10 @@ class RustStateMixin(metaclass=_CachedProperties):
         if self.name:
             attributes["friendly_name"] = self.name
 
+        # Add device_class if available (important for frontend icons)
+        if hasattr(self, "device_class") and self.device_class is not None:
+            attributes["device_class"] = self.device_class
+
         # Route to Rust via PyO3 wrapper
         if hasattr(self.hass, "states") and self.hass.states is not None:
             try:
