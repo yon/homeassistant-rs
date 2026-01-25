@@ -793,14 +793,17 @@ fn entity_entry_to_json(entry: &ha_registries::EntityEntry) -> serde_json::Value
             ha_registries::EntityCategory::Config => "config",
             ha_registries::EntityCategory::Diagnostic => "diagnostic",
         }),
-        "has_entity_name": entry.has_entity_name,
+        "has_entity_name": entry.has_entity_name.unwrap_or(false),
         "aliases": entry.aliases,
         "labels": entry.labels,
-        "categories": entry.categories,
+        "categories": entry.categories.clone().unwrap_or_else(|| serde_json::json!({})),
         "capabilities": entry.capabilities,
         "device_class": entry.device_class,
         "original_device_class": entry.original_device_class,
         "translation_key": entry.translation_key,
+        "options": entry.options.clone().unwrap_or_else(|| serde_json::json!({})),
+        "created_at": entry.created_at.timestamp_millis() as f64 / 1000.0,
+        "modified_at": entry.modified_at.timestamp_millis() as f64 / 1000.0,
     })
 }
 

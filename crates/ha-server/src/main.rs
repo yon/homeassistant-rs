@@ -859,9 +859,45 @@ impl HomeAssistant {
 
     /// Add hardcoded demo entities (fallback)
     fn add_hardcoded_demo_entities(&self) {
-        // Add some demo lights
-        self.states.set(
-            EntityId::new("light", "living_room").unwrap(),
+        // Helper to register entity in registry and set state
+        let add_entity = |entity_id_str: &str,
+                          platform: &str,
+                          state: &str,
+                          attrs: HashMap<String, serde_json::Value>,
+                          device_class: Option<&str>,
+                          original_name: Option<&str>| {
+            let parts: Vec<&str> = entity_id_str.split('.').collect();
+            let entity_id = EntityId::new(parts[0], parts[1]).unwrap();
+
+            // Register in entity registry
+            self.registries.entities.get_or_create(
+                platform,
+                entity_id_str,
+                Some(&format!("demo_{}", entity_id_str)), // unique_id
+                None,                                     // config_entry_id
+                None,                                     // device_id
+            );
+
+            // Set device class and original name if provided
+            if device_class.is_some() || original_name.is_some() {
+                let _ = self.registries.entities.update(entity_id_str, |e| {
+                    if let Some(dc) = device_class {
+                        e.original_device_class = Some(dc.to_string());
+                    }
+                    if let Some(name) = original_name {
+                        e.original_name = Some(name.to_string());
+                    }
+                });
+            }
+
+            // Set state
+            self.states.set(entity_id, state, attrs, Context::new());
+        };
+
+        // Add demo lights
+        add_entity(
+            "light.living_room",
+            "demo",
             "on",
             HashMap::from([
                 ("brightness".to_string(), serde_json::json!(255)),
@@ -870,11 +906,13 @@ impl HomeAssistant {
                     serde_json::json!("Living Room Light"),
                 ),
             ]),
-            Context::new(),
+            None,
+            Some("Living Room Light"),
         );
 
-        self.states.set(
-            EntityId::new("light", "bedroom").unwrap(),
+        add_entity(
+            "light.bedroom",
+            "demo",
             "off",
             HashMap::from([
                 ("brightness".to_string(), serde_json::json!(0)),
@@ -883,12 +921,14 @@ impl HomeAssistant {
                     serde_json::json!("Bedroom Light"),
                 ),
             ]),
-            Context::new(),
+            None,
+            Some("Bedroom Light"),
         );
 
-        // Add some sensors
-        self.states.set(
-            EntityId::new("sensor", "temperature").unwrap(),
+        // Add sensors
+        add_entity(
+            "sensor.temperature",
+            "demo",
             "22.5",
             HashMap::from([
                 ("unit_of_measurement".to_string(), serde_json::json!("°C")),
@@ -898,40 +938,47 @@ impl HomeAssistant {
                 ),
                 ("device_class".to_string(), serde_json::json!("temperature")),
             ]),
-            Context::new(),
+            Some("temperature"),
+            Some("Temperature"),
         );
 
-        self.states.set(
-            EntityId::new("sensor", "humidity").unwrap(),
+        add_entity(
+            "sensor.humidity",
+            "demo",
             "45",
             HashMap::from([
                 ("unit_of_measurement".to_string(), serde_json::json!("%")),
                 ("friendly_name".to_string(), serde_json::json!("Humidity")),
                 ("device_class".to_string(), serde_json::json!("humidity")),
             ]),
-            Context::new(),
+            Some("humidity"),
+            Some("Humidity"),
         );
 
         // Add a switch
-        self.states.set(
-            EntityId::new("switch", "coffee_maker").unwrap(),
+        add_entity(
+            "switch.coffee_maker",
+            "demo",
             "off",
             HashMap::from([(
                 "friendly_name".to_string(),
                 serde_json::json!("Coffee Maker"),
             )]),
-            Context::new(),
+            None,
+            Some("Coffee Maker"),
         );
 
         // Add a binary sensor
-        self.states.set(
-            EntityId::new("binary_sensor", "front_door").unwrap(),
+        add_entity(
+            "binary_sensor.front_door",
+            "demo",
             "off",
             HashMap::from([
                 ("friendly_name".to_string(), serde_json::json!("Front Door")),
                 ("device_class".to_string(), serde_json::json!("door")),
             ]),
-            Context::new(),
+            Some("door"),
+            Some("Front Door"),
         );
 
         info!("Demo entities added");
