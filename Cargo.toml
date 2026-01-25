@@ -56,10 +56,12 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Concurrent data structures
 dashmap = "6.0"
+indexmap = { version = "2.7", features = ["serde"] }
 
 # IDs and time
 chrono = { version = "0.4", features = ["serde"] }
 ulid = "1.1"
+uuid = { version = "1", features = ["v4"] }
 
 # Schema validation
 jsonschema = "0.18"

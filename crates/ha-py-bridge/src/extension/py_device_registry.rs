@@ -1,15 +1,137 @@
 //! Python wrappers for DeviceRegistry
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
+/// Config entry domains that are considered low priority for primary_config_entry promotion.
+/// When these domains hold the primary position, other integrations can take over.
+const LOW_PRIO_CONFIG_ENTRY_DOMAINS: &[&str] = &["homekit_controller", "matter", "mqtt", "upnp"];
+
 use ha_registries::device_registry::{
     DeviceConnection, DeviceEntry, DeviceEntryType, DeviceIdentifier, DeviceRegistry,
 };
 use ha_registries::entity_registry::DisabledBy;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PySet, PyTuple};
-use std::sync::Arc;
 use tokio::runtime::Handle;
 
-use super::py_storage::PyStorage;
+/// Compare two DeviceEntry instances and return the list of field names that changed.
+/// Uses set-based comparison for collections (config_entries, connections, identifiers, labels).
+fn compute_changed_fields(old: &DeviceEntry, new: &DeviceEntry) -> Vec<String> {
+    use std::collections::HashSet;
+
+    let mut changed = Vec::new();
+
+    if old.area_id != new.area_id {
+        changed.push("area_id".to_string());
+    }
+
+    // config_entries: compare as sets
+    let old_ces: HashSet<&String> = old.config_entries.iter().collect();
+    let new_ces: HashSet<&String> = new.config_entries.iter().collect();
+    if old_ces != new_ces {
+        changed.push("config_entries".to_string());
+    }
+
+    if old.config_entries_subentries != new.config_entries_subentries {
+        changed.push("config_entries_subentries".to_string());
+    }
+
+    if old.configuration_url != new.configuration_url {
+        changed.push("configuration_url".to_string());
+    }
+
+    // connections: compare as sets of (type, id) tuples
+    let old_conns: HashSet<(&str, &str)> = old
+        .connections
+        .iter()
+        .map(|c| (c.connection_type(), c.id()))
+        .collect();
+    let new_conns: HashSet<(&str, &str)> = new
+        .connections
+        .iter()
+        .map(|c| (c.connection_type(), c.id()))
+        .collect();
+    if old_conns != new_conns {
+        changed.push("connections".to_string());
+    }
+
+    if old.disabled_by != new.disabled_by {
+        changed.push("disabled_by".to_string());
+    }
+
+    if old.entry_type != new.entry_type {
+        changed.push("entry_type".to_string());
+    }
+
+    if old.hw_version != new.hw_version {
+        changed.push("hw_version".to_string());
+    }
+
+    // identifiers: compare as sets of (domain, id) tuples
+    let old_idents: HashSet<(&str, &str)> = old
+        .identifiers
+        .iter()
+        .map(|i| (i.domain(), i.id()))
+        .collect();
+    let new_idents: HashSet<(&str, &str)> = new
+        .identifiers
+        .iter()
+        .map(|i| (i.domain(), i.id()))
+        .collect();
+    if old_idents != new_idents {
+        changed.push("identifiers".to_string());
+    }
+
+    // labels: compare as sets
+    let old_labels: HashSet<&String> = old.labels.iter().collect();
+    let new_labels: HashSet<&String> = new.labels.iter().collect();
+    if old_labels != new_labels {
+        changed.push("labels".to_string());
+    }
+
+    if old.manufacturer != new.manufacturer {
+        changed.push("manufacturer".to_string());
+    }
+
+    if old.model != new.model {
+        changed.push("model".to_string());
+    }
+
+    if old.model_id != new.model_id {
+        changed.push("model_id".to_string());
+    }
+
+    if old.name != new.name {
+        changed.push("name".to_string());
+    }
+
+    if old.name_by_user != new.name_by_user {
+        changed.push("name_by_user".to_string());
+    }
+
+    if old.primary_config_entry != new.primary_config_entry {
+        changed.push("primary_config_entry".to_string());
+    }
+
+    if old.serial_number != new.serial_number {
+        changed.push("serial_number".to_string());
+    }
+
+    if old.suggested_area != new.suggested_area {
+        changed.push("suggested_area".to_string());
+    }
+
+    if old.sw_version != new.sw_version {
+        changed.push("sw_version".to_string());
+    }
+
+    if old.via_device_id != new.via_device_id {
+        changed.push("via_device_id".to_string());
+    }
+
+    changed
+}
 
 /// Python wrapper for DeviceEntry
 #[pyclass(name = "DeviceEntry")]
@@ -56,8 +178,8 @@ impl PyDeviceEntry {
     }
 
     #[getter]
-    fn name(&self) -> &str {
-        &self.inner.name
+    fn name(&self) -> Option<&str> {
+        self.inner.name.as_deref()
     }
 
     #[getter]
@@ -96,6 +218,11 @@ impl PyDeviceEntry {
     }
 
     #[getter]
+    fn suggested_area(&self) -> Option<&str> {
+        self.inner.suggested_area.as_deref()
+    }
+
+    #[getter]
     fn via_device_id(&self) -> Option<&str> {
         self.inner.via_device_id.as_deref()
     }
@@ -110,10 +237,11 @@ impl PyDeviceEntry {
     #[getter]
     fn disabled_by(&self) -> Option<&str> {
         self.inner.disabled_by.as_ref().map(|d| match d {
-            DisabledBy::Integration => "integration",
-            DisabledBy::User => "user",
             DisabledBy::ConfigEntry => "config_entry",
             DisabledBy::Device => "device",
+            DisabledBy::Hass => "hass",
+            DisabledBy::Integration => "integration",
+            DisabledBy::User => "user",
         })
     }
 
@@ -133,6 +261,16 @@ impl PyDeviceEntry {
     }
 
     #[getter]
+    fn config_entries_subentries(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        let dict = PyDict::new_bound(py);
+        for (config_entry_id, subentries) in &self.inner.config_entries_subentries {
+            let py_list: Vec<Option<String>> = subentries.clone();
+            dict.set_item(config_entry_id, py_list)?;
+        }
+        Ok(dict.unbind())
+    }
+
+    #[getter]
     fn created_at(&self) -> String {
         self.inner.created_at.to_rfc3339()
     }
@@ -142,6 +280,28 @@ impl PyDeviceEntry {
         self.inner.modified_at.to_rfc3339()
     }
 
+    #[getter]
+    fn created_at_timestamp(&self) -> f64 {
+        self.inner.created_at.timestamp() as f64
+            + self.inner.created_at.timestamp_subsec_nanos() as f64 / 1_000_000_000.0
+    }
+
+    #[getter]
+    fn modified_at_timestamp(&self) -> f64 {
+        self.inner.modified_at.timestamp() as f64
+            + self.inner.modified_at.timestamp_subsec_nanos() as f64 / 1_000_000_000.0
+    }
+
+    #[getter]
+    fn orphaned_timestamp(&self) -> Option<f64> {
+        self.inner.orphaned_timestamp
+    }
+
+    #[getter]
+    fn insertion_order(&self) -> u64 {
+        self.inner.insertion_order
+    }
+
     fn is_disabled(&self) -> bool {
         self.inner.is_disabled()
     }
@@ -149,7 +309,8 @@ impl PyDeviceEntry {
     fn __repr__(&self) -> String {
         format!(
             "DeviceEntry(id='{}', name='{}')",
-            self.inner.id, self.inner.name
+            self.inner.id,
+            self.inner.name.as_deref().unwrap_or("<unnamed>")
         )
     }
 
@@ -180,10 +341,11 @@ impl PyDeviceEntry {
 
 fn parse_disabled_by(s: Option<&str>) -> Option<DisabledBy> {
     s.and_then(|s| match s {
-        "integration" => Some(DisabledBy::Integration),
-        "user" => Some(DisabledBy::User),
         "config_entry" => Some(DisabledBy::ConfigEntry),
         "device" => Some(DisabledBy::Device),
+        "hass" => Some(DisabledBy::Hass),
+        "integration" => Some(DisabledBy::Integration),
+        "user" => Some(DisabledBy::User),
         _ => None,
     })
 }
@@ -208,7 +370,51 @@ fn parse_connections(py_set: &Bound<'_, PySet>) -> PyResult<Vec<DeviceConnection
         if tuple.len() == 2 {
             let conn_type: String = tuple.get_item(0)?.extract()?;
             let id: String = tuple.get_item(1)?.extract()?;
-            result.push(DeviceConnection::new(conn_type, id));
+            result.push(DeviceConnection::normalized(conn_type, id));
+        }
+    }
+    Ok(result)
+}
+
+/// Parse identifiers from any iterable (set, list, or frozenset)
+fn parse_identifiers_any(py_obj: &Bound<'_, PyAny>) -> PyResult<Vec<DeviceIdentifier>> {
+    let mut result = Vec::new();
+    // Try as a set first
+    if let Ok(set) = py_obj.downcast::<PySet>() {
+        return parse_identifiers(set);
+    }
+    // Try as a list
+    if let Ok(list) = py_obj.downcast::<pyo3::types::PyList>() {
+        for item in list.iter() {
+            if let Ok(tuple) = item.downcast::<PyTuple>() {
+                if tuple.len() == 2 {
+                    let domain: String = tuple.get_item(0)?.extract()?;
+                    let id: String = tuple.get_item(1)?.extract()?;
+                    result.push(DeviceIdentifier::new(domain, id));
+                }
+            }
+        }
+    }
+    Ok(result)
+}
+
+/// Parse connections from any iterable (set, list, or frozenset)
+fn parse_connections_any(py_obj: &Bound<'_, PyAny>) -> PyResult<Vec<DeviceConnection>> {
+    let mut result = Vec::new();
+    // Try as a set first
+    if let Ok(set) = py_obj.downcast::<PySet>() {
+        return parse_connections(set);
+    }
+    // Try as a list
+    if let Ok(list) = py_obj.downcast::<pyo3::types::PyList>() {
+        for item in list.iter() {
+            if let Ok(tuple) = item.downcast::<PyTuple>() {
+                if tuple.len() == 2 {
+                    let conn_type: String = tuple.get_item(0)?.extract()?;
+                    let id: String = tuple.get_item(1)?.extract()?;
+                    result.push(DeviceConnection::normalized(conn_type, id));
+                }
+            }
         }
     }
     Ok(result)
@@ -218,43 +424,63 @@ fn parse_connections(py_set: &Bound<'_, PySet>) -> PyResult<Vec<DeviceConnection
 #[pyclass(name = "DeviceRegistry")]
 pub struct PyDeviceRegistry {
     inner: Arc<DeviceRegistry>,
+    #[pyo3(get)]
+    hass: PyObject,
 }
 
 #[pymethods]
 impl PyDeviceRegistry {
     #[new]
-    fn new(storage: &PyStorage) -> Self {
-        Self {
-            inner: Arc::new(DeviceRegistry::new(storage.inner().clone())),
-        }
+    fn new(py: Python<'_>, hass: PyObject) -> PyResult<Self> {
+        // Extract config directory path from hass.config.path()
+        // Note: Storage::new() adds ".storage" internally, so we pass the config dir
+        let config = hass.getattr(py, "config")?;
+        let config_dir: String = config.call_method1(py, "path", ("",))?.extract(py)?;
+
+        // Create Rust storage and registry
+        let storage = Arc::new(ha_registries::storage::Storage::new(&config_dir));
+        let registry = DeviceRegistry::new(storage);
+
+        Ok(Self {
+            inner: Arc::new(registry),
+            hass,
+        })
     }
 
     /// Load devices from storage
     fn async_load(&self) -> PyResult<()> {
-        let handle = Handle::try_current().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "No Tokio runtime available: {}",
-                e
-            ))
-        })?;
-
         let inner = self.inner.clone();
-        tokio::task::block_in_place(|| handle.block_on(async { inner.load().await }))
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        if let Ok(handle) = Handle::try_current() {
+            tokio::task::block_in_place(|| handle.block_on(async { inner.load().await }))
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        } else {
+            let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to create Tokio runtime: {}",
+                    e
+                ))
+            })?;
+            rt.block_on(async { inner.load().await })
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        }
     }
 
     /// Save devices to storage
     fn async_save(&self) -> PyResult<()> {
-        let handle = Handle::try_current().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "No Tokio runtime available: {}",
-                e
-            ))
-        })?;
-
         let inner = self.inner.clone();
-        tokio::task::block_in_place(|| handle.block_on(async { inner.save().await }))
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        if let Ok(handle) = Handle::try_current() {
+            tokio::task::block_in_place(|| handle.block_on(async { inner.save().await }))
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        } else {
+            let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to create Tokio runtime: {}",
+                    e
+                ))
+            })?;
+            rt.block_on(async { inner.save().await })
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        }
     }
 
     /// Get device by ID
@@ -323,36 +549,278 @@ impl PyDeviceRegistry {
     }
 
     /// Get or create a device
-    #[pyo3(signature = (*, identifiers=None, connections=None, config_entry_id=None, name=None))]
+    ///
+    /// Handles field updates, primary_config_entry promotion, disabled_by on
+    /// creation, and suggested_area storage.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        *,
+        config_entry_id,
+        identifiers=None,
+        connections=None,
+        manufacturer=None,
+        model=None,
+        model_id=None,
+        name=None,
+        serial_number=None,
+        suggested_area=None,
+        sw_version=None,
+        hw_version=None,
+        via_device=None,
+        configuration_url=None,
+        entry_type=None,
+        config_subentry_id=None,
+        default_manufacturer=None,
+        default_model=None,
+        default_name=None,
+        disabled_by=None,
+        translation_key=None,
+        translation_placeholders=None,
+        created_at=None,
+        modified_at=None,
+        current_primary_domain=None,
+        initial_disabled_by=None
+    ))]
     fn async_get_or_create(
         &self,
-        identifiers: Option<&Bound<'_, PySet>>,
-        connections: Option<&Bound<'_, PySet>>,
-        config_entry_id: Option<&str>,
+        config_entry_id: &str,
+        identifiers: Option<&Bound<'_, PyAny>>,
+        connections: Option<&Bound<'_, PyAny>>,
+        manufacturer: Option<&str>,
+        model: Option<&str>,
+        model_id: Option<&str>,
         name: Option<&str>,
-    ) -> PyResult<PyDeviceEntry> {
+        serial_number: Option<&str>,
+        suggested_area: Option<&str>,
+        sw_version: Option<&str>,
+        hw_version: Option<&str>,
+        via_device: Option<&Bound<'_, PyAny>>,
+        configuration_url: Option<&str>,
+        entry_type: Option<&str>,
+        config_subentry_id: Option<&str>,
+        default_manufacturer: Option<&str>,
+        default_model: Option<&str>,
+        default_name: Option<&str>,
+        #[allow(unused_variables)] disabled_by: Option<&Bound<'_, PyAny>>,
+        #[allow(unused_variables)] translation_key: Option<&str>,
+        #[allow(unused_variables)] translation_placeholders: Option<&Bound<'_, PyAny>>,
+        created_at: Option<f64>,
+        #[allow(unused_variables)] modified_at: Option<f64>,
+        // Domain of the current primary config entry (for promotion decision)
+        current_primary_domain: Option<String>,
+        // Applied only on newly created devices
+        initial_disabled_by: Option<String>,
+    ) -> PyResult<(PyDeviceEntry, Vec<String>)> {
+        // Parse timestamp (seconds since epoch from Python's time.time())
+        let timestamp = created_at.and_then(|ts| {
+            chrono::DateTime::from_timestamp(ts as i64, ((ts % 1.0) * 1_000_000_000.0) as u32)
+        });
+
+        // Parse identifiers (can be set or list of tuples)
         let idents = if let Some(i) = identifiers {
-            parse_identifiers(i)?
+            parse_identifiers_any(i)?
         } else {
             Vec::new()
         };
 
+        // Parse connections (can be set or list of tuples)
         let conns = if let Some(c) = connections {
-            parse_connections(c)?
+            parse_connections_any(c)?
         } else {
             Vec::new()
         };
 
-        let device_name = name.unwrap_or("Unknown Device");
-
-        let entry = self
+        // Check if device already exists (for is_new detection)
+        let existing = self
             .inner
-            .get_or_create(&idents, &conns, config_entry_id, device_name);
+            .get_by_identifiers_or_connections(&idents, &conns);
+        let is_new = existing.is_none();
 
-        Ok(PyDeviceEntry::from_inner(entry))
+        // Get or create the base entry
+        let entry = self.inner.get_or_create(
+            &idents,
+            &conns,
+            Some(config_entry_id),
+            Some(config_subentry_id),
+            name,
+            timestamp,
+        );
+
+        // Parse via_device tuple to get device ID
+        let via_device_id = if let Some(vd) = via_device {
+            if let Ok(tuple) = vd.downcast::<pyo3::types::PyTuple>() {
+                if tuple.len() == 2 {
+                    let domain: String = tuple.get_item(0)?.extract()?;
+                    let identifier: String = tuple.get_item(1)?.extract()?;
+                    self.inner
+                        .get_by_identifier(&domain, &identifier)
+                        .map(|d| d.id.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Determine if we need to update fields
+        let needs_field_update = name.is_some()
+            || manufacturer.is_some()
+            || model.is_some()
+            || model_id.is_some()
+            || serial_number.is_some()
+            || sw_version.is_some()
+            || hw_version.is_some()
+            || via_device.is_some()
+            || configuration_url.is_some()
+            || entry_type.is_some()
+            || default_name.is_some()
+            || default_manufacturer.is_some()
+            || default_model.is_some()
+            || suggested_area.is_some();
+
+        // Primary config entry promotion decision
+        // "Primary keys" are fields that indicate the integration provides
+        // substantive device info (excludes default_* fields)
+        let has_primary_keys = name.is_some()
+            || manufacturer.is_some()
+            || model.is_some()
+            || model_id.is_some()
+            || serial_number.is_some()
+            || sw_version.is_some()
+            || hw_version.is_some()
+            || via_device.is_some()
+            || configuration_url.is_some()
+            || entry_type.is_some()
+            || suggested_area.is_some();
+
+        let needs_primary = if has_primary_keys {
+            let current_primary = existing
+                .as_ref()
+                .and_then(|e| e.primary_config_entry.as_deref());
+            match current_primary {
+                None => true,                               // No current primary
+                Some(cp) if cp == config_entry_id => false, // Already the primary
+                Some(_) => {
+                    // Check if current primary is low-priority or doesn't exist
+                    match &current_primary_domain {
+                        None => true, // Config entry doesn't exist
+                        Some(domain) => LOW_PRIO_CONFIG_ENTRY_DOMAINS.contains(&domain.as_str()),
+                    }
+                }
+            }
+        } else {
+            false
+        };
+        let needs_disabled = is_new && initial_disabled_by.is_some();
+
+        // Capture old state for change detection (before applying field updates)
+        let old_for_changes = existing.clone();
+
+        if needs_field_update || needs_primary || needs_disabled {
+            let ce_id = config_entry_id.to_string();
+            let initial_db = initial_disabled_by.clone();
+
+            let updated = self.inner.update_at(
+                &entry.id,
+                |e| {
+                    // Field updates
+                    if let Some(n) = name {
+                        e.name = Some(n.to_string());
+                    } else if let Some(dn) = default_name {
+                        if e.name.is_none() {
+                            e.name = Some(dn.to_string());
+                        }
+                    }
+                    if let Some(v) = manufacturer {
+                        e.manufacturer = Some(v.to_string());
+                    } else if let Some(dm) = default_manufacturer {
+                        if e.manufacturer.is_none() {
+                            e.manufacturer = Some(dm.to_string());
+                        }
+                    }
+                    if let Some(v) = model {
+                        e.model = Some(v.to_string());
+                    } else if let Some(dm) = default_model {
+                        if e.model.is_none() {
+                            e.model = Some(dm.to_string());
+                        }
+                    }
+                    if let Some(v) = model_id {
+                        e.model_id = Some(v.to_string());
+                    }
+                    if let Some(v) = serial_number {
+                        e.serial_number = Some(v.to_string());
+                    }
+                    if let Some(v) = sw_version {
+                        e.sw_version = Some(v.to_string());
+                    }
+                    if let Some(v) = hw_version {
+                        e.hw_version = Some(v.to_string());
+                    }
+                    if via_device_id.is_some() {
+                        e.via_device_id = via_device_id.clone();
+                    }
+                    if let Some(v) = configuration_url {
+                        e.configuration_url = if v.is_empty() {
+                            None
+                        } else {
+                            Some(v.to_string())
+                        };
+                    }
+                    if let Some(v) = entry_type {
+                        e.entry_type = match v {
+                            "service" => {
+                                Some(ha_registries::device_registry::DeviceEntryType::Service)
+                            }
+                            _ => None,
+                        };
+                    }
+                    if let Some(sa) = suggested_area {
+                        e.suggested_area = Some(sa.to_string());
+                    }
+
+                    // Primary config entry promotion
+                    if needs_primary {
+                        e.primary_config_entry = Some(ce_id.clone());
+                    }
+
+                    // Disabled_by on creation
+                    if let Some(ref db) = initial_db {
+                        e.disabled_by = parse_disabled_by(Some(db.as_str()));
+                    }
+                },
+                timestamp,
+            );
+
+            if let Some(ref updated_entry) = updated {
+                let changed = match &old_for_changes {
+                    Some(old) => compute_changed_fields(old, updated_entry),
+                    None => Vec::new(),
+                };
+                return Ok((PyDeviceEntry::from_inner(updated_entry.clone()), changed));
+            }
+        }
+
+        // No field update was needed - compare entry to existing for changes
+        // (get_or_create may have added config entry/subentry)
+        let changed = match &old_for_changes {
+            Some(old) => compute_changed_fields(old, &entry),
+            None => Vec::new(),
+        };
+        Ok((PyDeviceEntry::from_inner(entry), changed))
     }
 
     /// Update a device
+    ///
+    /// Supports add/remove of config entries with subentry management,
+    /// automatic disabled_by propagation based on config entry disabled status,
+    /// merge/new connections/identifiers with collision detection, and
+    /// via_device_id cleanup on device removal.
+    ///
+    /// Returns None if the device was removed (last config entry removed).
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         device_id,
@@ -365,13 +833,30 @@ impl PyDeviceRegistry {
         hw_version=None,
         sw_version=None,
         serial_number=None,
+        suggested_area=None,
         via_device_id=None,
         area_id=None,
         disabled_by=None,
         configuration_url=None,
         labels=None,
         identifiers=None,
-        connections=None
+        connections=None,
+        config_entries=None,
+        config_entries_subentries=None,
+        modified_at=None,
+        entry_type=None,
+        primary_config_entry=None,
+        add_config_entry_id=None,
+        add_config_subentry_id=None,
+        add_config_entry_disabled=None,
+        remove_config_entry_id=None,
+        remove_config_subentry_only=None,
+        remove_config_subentry_id=None,
+        config_entry_disabled_map=None,
+        merge_connections=None,
+        new_connections=None,
+        merge_identifiers=None,
+        new_identifiers=None
     ))]
     fn async_update_device(
         &self,
@@ -384,6 +869,7 @@ impl PyDeviceRegistry {
         hw_version: Option<String>,
         sw_version: Option<String>,
         serial_number: Option<String>,
+        suggested_area: Option<String>,
         via_device_id: Option<String>,
         area_id: Option<String>,
         disabled_by: Option<String>,
@@ -391,77 +877,496 @@ impl PyDeviceRegistry {
         labels: Option<Vec<String>>,
         identifiers: Option<&Bound<'_, PySet>>,
         connections: Option<&Bound<'_, PySet>>,
-    ) -> PyResult<PyDeviceEntry> {
-        // Parse identifiers/connections outside the closure
-        let parsed_identifiers = if let Some(i) = identifiers {
+        config_entries: Option<Vec<String>>,
+        config_entries_subentries: Option<&Bound<'_, PyDict>>,
+        modified_at: Option<f64>,
+        entry_type: Option<String>,
+        primary_config_entry: Option<String>,
+        // Config entry add/remove parameters
+        add_config_entry_id: Option<String>,
+        add_config_subentry_id: Option<String>,
+        add_config_entry_disabled: Option<bool>,
+        remove_config_entry_id: Option<String>,
+        remove_config_subentry_only: Option<bool>,
+        remove_config_subentry_id: Option<String>,
+        config_entry_disabled_map: Option<&Bound<'_, PyDict>>,
+        // Merge/new connections/identifiers
+        merge_connections: Option<&Bound<'_, PySet>>,
+        new_connections: Option<&Bound<'_, PySet>>,
+        merge_identifiers: Option<&Bound<'_, PySet>>,
+        new_identifiers: Option<&Bound<'_, PySet>>,
+    ) -> PyResult<(Option<PyDeviceEntry>, Vec<String>)> {
+        // Validate: can't specify both merge and new
+        if merge_connections.is_some() && new_connections.is_some() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Cannot specify both new_connections and merge_connections",
+            ));
+        }
+        if merge_identifiers.is_some() && new_identifiers.is_some() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Cannot specify both new_identifiers and merge_identifiers",
+            ));
+        }
+
+        // Resolve final connections (merge with existing or replace)
+        let resolved_connections = if let Some(nc) = new_connections {
+            let parsed = parse_connections(nc)?;
+            Some(parsed)
+        } else if let Some(mc) = merge_connections {
+            let merge_parsed = parse_connections(mc)?;
+            // Merge with existing device connections
+            let mut result = if let Some(current) = self.inner.get(device_id) {
+                current.connections.clone()
+            } else {
+                Vec::new()
+            };
+            for conn in merge_parsed {
+                if !result
+                    .iter()
+                    .any(|c| c.connection_type() == conn.connection_type() && c.id() == conn.id())
+                {
+                    result.push(conn);
+                }
+            }
+            Some(result)
+        } else {
+            None
+        };
+
+        // Resolve final identifiers (merge with existing or replace)
+        let resolved_identifiers = if let Some(ni) = new_identifiers {
+            let parsed = parse_identifiers(ni)?;
+            Some(parsed)
+        } else if let Some(mi) = merge_identifiers {
+            let merge_parsed = parse_identifiers(mi)?;
+            // Merge with existing device identifiers
+            let mut result = if let Some(current) = self.inner.get(device_id) {
+                current.identifiers.clone()
+            } else {
+                Vec::new()
+            };
+            for ident in merge_parsed {
+                if !result
+                    .iter()
+                    .any(|i| i.domain() == ident.domain() && i.id() == ident.id())
+                {
+                    result.push(ident);
+                }
+            }
+            Some(result)
+        } else {
+            None
+        };
+
+        // Validate: can't clear both connections and identifiers
+        if let (Some(ref conns), Some(ref idents)) = (&resolved_connections, &resolved_identifiers)
+        {
+            if conns.is_empty() && idents.is_empty() {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "A device must have at least one of identifiers or connections",
+                ));
+            }
+        }
+
+        // Collision detection for connections
+        let connections_to_validate = if new_connections.is_some() || merge_connections.is_some() {
+            resolved_connections.as_ref()
+        } else {
+            None
+        };
+        if let Some(conns) = connections_to_validate {
+            for conn in conns {
+                if let Some(existing) = self
+                    .inner
+                    .get_by_connection(conn.connection_type(), conn.id())
+                {
+                    if existing.id != device_id {
+                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                            "Connections already registered with {}",
+                            existing.id
+                        )));
+                    }
+                }
+            }
+        }
+
+        // Collision detection for identifiers
+        let identifiers_to_validate = if new_identifiers.is_some() || merge_identifiers.is_some() {
+            resolved_identifiers.as_ref()
+        } else {
+            None
+        };
+        if let Some(idents) = identifiers_to_validate {
+            for ident in idents {
+                if let Some(existing) = self.inner.get_by_identifier(ident.domain(), ident.id()) {
+                    if existing.id != device_id {
+                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                            "Identifiers already registered with {}",
+                            existing.id
+                        )));
+                    }
+                }
+            }
+        }
+
+        // Parse direct identifiers/connections params (lower priority than merge/new)
+        let parsed_identifiers = if resolved_identifiers.is_some() {
+            resolved_identifiers
+        } else if let Some(i) = identifiers {
             Some(parse_identifiers(i)?)
         } else {
             None
         };
 
-        let parsed_connections = if let Some(c) = connections {
+        let parsed_connections = if resolved_connections.is_some() {
+            resolved_connections
+        } else if let Some(c) = connections {
             Some(parse_connections(c)?)
         } else {
             None
         };
 
-        let entry = self.inner.update(device_id, |entry| {
-            if let Some(ref n) = name {
-                entry.name = n.clone();
+        let parsed_subentries = if let Some(ces_dict) = config_entries_subentries {
+            let mut map = std::collections::HashMap::new();
+            for (key, value) in ces_dict.iter() {
+                let config_entry_id: String = key.extract()?;
+                let subentries: Vec<Option<String>> = value.extract()?;
+                map.insert(config_entry_id, subentries);
             }
-            if name_by_user.is_some() {
-                entry.name_by_user = name_by_user.clone();
+            Some(map)
+        } else {
+            None
+        };
+
+        // Parse config entry disabled map for disabled_by computation
+        let disabled_map: HashMap<String, bool> = if let Some(dm) = config_entry_disabled_map {
+            let mut map = HashMap::new();
+            for (key, value) in dm.iter() {
+                let ce_id: String = key.extract()?;
+                let is_disabled: bool = value.extract()?;
+                map.insert(ce_id, is_disabled);
             }
-            if manufacturer.is_some() {
-                entry.manufacturer = manufacturer.clone();
-            }
-            if model.is_some() {
-                entry.model = model.clone();
-            }
-            if model_id.is_some() {
-                entry.model_id = model_id.clone();
-            }
-            if hw_version.is_some() {
-                entry.hw_version = hw_version.clone();
-            }
-            if sw_version.is_some() {
-                entry.sw_version = sw_version.clone();
-            }
-            if serial_number.is_some() {
-                entry.serial_number = serial_number.clone();
-            }
-            if via_device_id.is_some() {
-                entry.via_device_id = via_device_id.clone();
-            }
-            if area_id.is_some() {
-                entry.area_id = area_id.clone();
-            }
-            if disabled_by.is_some() {
-                entry.disabled_by = parse_disabled_by(disabled_by.as_deref());
-            }
-            if configuration_url.is_some() {
-                entry.configuration_url = configuration_url.clone();
-            }
-            if let Some(ref l) = labels {
-                entry.labels = l.clone();
-            }
-            if let Some(ref i) = parsed_identifiers {
-                entry.identifiers = i.clone();
-            }
-            if let Some(ref c) = parsed_connections {
-                entry.connections = c.clone();
-            }
+            map
+        } else {
+            HashMap::new()
+        };
+
+        let timestamp = modified_at.and_then(|ts| {
+            chrono::DateTime::from_timestamp(ts as i64, ((ts % 1.0) * 1_000_000_000.0) as u32)
         });
 
-        entry.map(PyDeviceEntry::from_inner).ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyKeyError, _>(format!(
-                "Device not found: {}",
-                device_id
-            ))
-        })
+        // Handle add_config_entry_id: check for no-op before calling update
+        if let Some(ref add_ce_id) = add_config_entry_id {
+            let subentry_to_add = add_config_subentry_id.clone();
+            if let Some(current) = self.inner.get(device_id) {
+                // Check if this is a no-op (CE + subentry already present)
+                if current.config_entries.contains(add_ce_id) {
+                    if let Some(existing_subs) = current.config_entries_subentries.get(add_ce_id) {
+                        if existing_subs.contains(&subentry_to_add) {
+                            // No-op: config entry and subentry already present
+                            return Ok((Some(PyDeviceEntry::from_inner(current)), Vec::new()));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Handle remove_config_entry_id: determine what to remove
+        let mut should_remove_device = false;
+        if let Some(ref remove_ce_id) = remove_config_entry_id {
+            if let Some(current) = self.inner.get(device_id) {
+                let subentry_only = remove_config_subentry_only.unwrap_or(false);
+                if subentry_only {
+                    // Remove specific subentry
+                    let sub_to_remove = remove_config_subentry_id.clone();
+                    if let Some(existing_subs) = current.config_entries_subentries.get(remove_ce_id)
+                    {
+                        if !existing_subs.contains(&sub_to_remove) {
+                            // Subentry not present - no-op
+                            return Ok((Some(PyDeviceEntry::from_inner(current)), Vec::new()));
+                        }
+                        // Check if removing this subentry empties the CE
+                        let remaining_subs: Vec<_> = existing_subs
+                            .iter()
+                            .filter(|s| *s != &sub_to_remove)
+                            .collect();
+                        if remaining_subs.is_empty() {
+                            // This CE will be fully removed
+                            if current.config_entries.len() <= 1 {
+                                should_remove_device = true;
+                            }
+                        }
+                    } else if !current.config_entries.contains(remove_ce_id) {
+                        // CE not on device - no-op
+                        return Ok((Some(PyDeviceEntry::from_inner(current)), Vec::new()));
+                    }
+                } else {
+                    // Remove entire config entry
+                    if !current.config_entries.contains(remove_ce_id) {
+                        // CE not on device - no-op
+                        return Ok((Some(PyDeviceEntry::from_inner(current)), Vec::new()));
+                    }
+                    if current.config_entries.len() <= 1 {
+                        should_remove_device = true;
+                    }
+                }
+            }
+        }
+
+        // If device should be removed, do it and return None
+        if should_remove_device {
+            self.inner.remove(device_id);
+            // Clear via_device_id on devices that referenced the removed device
+            self.inner.clear_via_device_id(device_id);
+            return Ok((None, Vec::new()));
+        }
+
+        // Capture old state for change detection
+        let old_entry = self.inner.get(device_id);
+
+        let entry = self.inner.update_at(
+            device_id,
+            |entry| {
+                // Handle add_config_entry_id
+                if let Some(ref add_ce_id) = add_config_entry_id {
+                    let subentry_to_add = add_config_subentry_id.clone();
+                    let is_new_ce = !entry.config_entries.contains(add_ce_id);
+
+                    if is_new_ce {
+                        // Add new config entry
+                        entry.config_entries.push(add_ce_id.clone());
+                        entry
+                            .config_entries_subentries
+                            .insert(add_ce_id.clone(), vec![subentry_to_add]);
+
+                        // Disabled_by logic: if adding enabled CE and device disabled by CONFIG_ENTRY → clear
+                        if let Some(false) = add_config_entry_disabled {
+                            if entry.disabled_by == Some(DisabledBy::ConfigEntry) {
+                                entry.disabled_by = None;
+                            }
+                        }
+                    } else {
+                        // CE already exists - add subentry if new
+                        let subs = entry
+                            .config_entries_subentries
+                            .entry(add_ce_id.clone())
+                            .or_default();
+                        if !subs.contains(&subentry_to_add) {
+                            subs.push(subentry_to_add);
+                        }
+                    }
+                }
+
+                // Handle remove_config_entry_id
+                if let Some(ref remove_ce_id) = remove_config_entry_id {
+                    let subentry_only = remove_config_subentry_only.unwrap_or(false);
+                    let mut ce_fully_removed = false;
+
+                    if subentry_only {
+                        // Remove specific subentry
+                        let sub_to_remove = remove_config_subentry_id.clone();
+                        if let Some(subs) = entry.config_entries_subentries.get_mut(remove_ce_id) {
+                            subs.retain(|s| s != &sub_to_remove);
+                            if subs.is_empty() {
+                                // No subentries left → remove the config entry
+                                entry.config_entries_subentries.remove(remove_ce_id);
+                                entry.config_entries.retain(|id| id != remove_ce_id);
+                                ce_fully_removed = true;
+                            }
+                        }
+                    } else {
+                        // Remove entire config entry
+                        entry.config_entries.retain(|id| id != remove_ce_id);
+                        entry.config_entries_subentries.remove(remove_ce_id);
+                        ce_fully_removed = true;
+                    }
+
+                    if ce_fully_removed {
+                        // Update primary_config_entry if it was removed
+                        if entry.primary_config_entry.as_deref() == Some(remove_ce_id) {
+                            entry.primary_config_entry = None;
+                        }
+
+                        // Disabled_by logic: if device not disabled and all remaining CEs are disabled → set CONFIG_ENTRY
+                        if entry.disabled_by.is_none() && !entry.config_entries.is_empty() {
+                            let all_remaining_disabled = entry
+                                .config_entries
+                                .iter()
+                                .all(|ce_id| disabled_map.get(ce_id).copied().unwrap_or(false));
+                            if all_remaining_disabled {
+                                entry.disabled_by = Some(DisabledBy::ConfigEntry);
+                            }
+                        }
+                    }
+                }
+
+                // Apply standard field updates
+                if let Some(ref n) = name {
+                    entry.name = Some(n.clone());
+                }
+                if let Some(ref nbu) = name_by_user {
+                    entry.name_by_user = if nbu.is_empty() {
+                        None
+                    } else {
+                        Some(nbu.clone())
+                    };
+                }
+                if manufacturer.is_some() {
+                    entry.manufacturer = manufacturer.clone();
+                }
+                if model.is_some() {
+                    entry.model = model.clone();
+                }
+                if model_id.is_some() {
+                    entry.model_id = model_id.clone();
+                }
+                if hw_version.is_some() {
+                    entry.hw_version = hw_version.clone();
+                }
+                if sw_version.is_some() {
+                    entry.sw_version = sw_version.clone();
+                }
+                if serial_number.is_some() {
+                    entry.serial_number = serial_number.clone();
+                }
+                if let Some(ref sa) = suggested_area {
+                    entry.suggested_area = if sa.is_empty() {
+                        None
+                    } else {
+                        Some(sa.clone())
+                    };
+                }
+                if let Some(ref vid) = via_device_id {
+                    entry.via_device_id = if vid.is_empty() {
+                        None
+                    } else {
+                        Some(vid.clone())
+                    };
+                }
+                if let Some(ref aid) = area_id {
+                    entry.area_id = if aid.is_empty() {
+                        None
+                    } else {
+                        Some(aid.clone())
+                    };
+                }
+                if disabled_by.is_some() {
+                    entry.disabled_by = parse_disabled_by(disabled_by.as_deref());
+                }
+                if let Some(ref curl) = configuration_url {
+                    entry.configuration_url = if curl.is_empty() {
+                        None
+                    } else {
+                        Some(curl.clone())
+                    };
+                }
+                if let Some(ref et) = entry_type {
+                    entry.entry_type = if et.is_empty() {
+                        None
+                    } else {
+                        match et.as_str() {
+                            "service" => Some(DeviceEntryType::Service),
+                            _ => None,
+                        }
+                    };
+                }
+                if let Some(ref l) = labels {
+                    entry.labels = l.clone();
+                }
+                if let Some(ref i) = parsed_identifiers {
+                    entry.identifiers = i.clone();
+                }
+                if let Some(ref c) = parsed_connections {
+                    entry.connections = c.clone();
+                }
+                if let Some(ref ces) = config_entries {
+                    // Add default subentry for new config entries
+                    for ce_id in ces {
+                        if !entry.config_entries.contains(ce_id) {
+                            entry
+                                .config_entries_subentries
+                                .entry(ce_id.clone())
+                                .or_insert_with(|| vec![None]);
+                        }
+                    }
+                    entry.config_entries = ces.clone();
+                    // Clean up config_entries_subentries for removed entries
+                    entry
+                        .config_entries_subentries
+                        .retain(|k, _| ces.contains(k));
+                    // Update primary_config_entry if it was removed
+                    if let Some(ref pce) = entry.primary_config_entry {
+                        if !ces.contains(pce) {
+                            entry.primary_config_entry = None;
+                        }
+                    }
+                }
+                if let Some(ref ces_map) = parsed_subentries {
+                    entry.config_entries_subentries = ces_map.clone();
+                }
+                if let Some(ref pce) = primary_config_entry {
+                    entry.primary_config_entry = if pce.is_empty() {
+                        None
+                    } else {
+                        Some(pce.clone())
+                    };
+                }
+            },
+            timestamp,
+        );
+
+        // Compute changed fields by comparing old and new entries
+        let changed_fields = match (&old_entry, &entry) {
+            (Some(old), Some(new)) => compute_changed_fields(old, new),
+            _ => Vec::new(),
+        };
+
+        // Remove deleted devices whose identifiers/connections were taken by this update
+        if let Some(ref updated) = entry {
+            if (changed_fields.contains(&"connections".to_string())
+                || changed_fields.contains(&"identifiers".to_string()))
+                && (!updated.identifiers.is_empty() || !updated.connections.is_empty())
+            {
+                self.inner.remove_deleted_by_identifiers_or_connections(
+                    &updated.identifiers,
+                    &updated.connections,
+                );
+            }
+        }
+
+        Ok((entry.map(PyDeviceEntry::from_inner), changed_fields))
     }
 
-    /// Remove a device
+    /// Clear a config entry from all devices
+    fn async_clear_config_entry(&self, config_entry_id: &str) {
+        self.inner.clear_config_entry(config_entry_id);
+    }
+
+    /// Clear a config entry from all devices, returning change information.
+    ///
+    /// Returns (removed_device_ids, [(device_id, changed_fields)])
+    fn async_clear_config_entry_with_changes(
+        &self,
+        config_entry_id: &str,
+    ) -> (Vec<String>, Vec<(String, Vec<String>)>) {
+        self.inner.clear_config_entry_with_changes(config_entry_id)
+    }
+
+    /// Clear area_id from all devices that reference it.
+    ///
+    /// Returns the list of modified device IDs.
+    fn async_clear_area_id(&self, area_id: &str) -> Vec<String> {
+        self.inner.clear_area_id(area_id)
+    }
+
+    /// Clear a label from all devices that have it.
+    ///
+    /// Returns the list of modified device IDs.
+    fn async_clear_label_id(&self, label_id: &str) -> Vec<String> {
+        self.inner.clear_label_id(label_id)
+    }
+
+    /// Remove a device and clean up via_device_id references
     fn async_remove_device(&self, device_id: &str) -> PyResult<()> {
         self.inner.remove(device_id).ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyKeyError, _>(format!(
@@ -469,6 +1374,8 @@ impl PyDeviceRegistry {
                 device_id
             ))
         })?;
+        // Clear via_device_id on devices that referenced the removed device
+        self.inner.clear_via_device_id(device_id);
         Ok(())
     }
 
@@ -493,17 +1400,149 @@ impl PyDeviceRegistry {
         Ok(dict.unbind())
     }
 
+    /// Get all deleted devices as a dict (device_id -> DeviceEntry)
+    #[getter]
+    fn deleted_devices(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        let dict = PyDict::new_bound(py);
+        for entry in self.inner.iter_deleted() {
+            let id = entry.id.clone();
+            dict.set_item(&id, PyDeviceEntry::from_inner(entry).into_py(py))?;
+        }
+        Ok(dict.unbind())
+    }
+
+    /// Get the count of deleted devices
+    fn deleted_devices_len(&self) -> usize {
+        self.inner.deleted_len()
+    }
+
+    /// Find a deleted device by identifiers or connections
+    fn async_get_deleted_by_identifiers_or_connections(
+        &self,
+        identifiers: Vec<(String, String)>,
+        connections: Vec<(String, String)>,
+    ) -> Option<PyDeviceEntry> {
+        use ha_registries::device_registry::{DeviceConnection, DeviceIdentifier};
+        let idents: Vec<DeviceIdentifier> = identifiers
+            .into_iter()
+            .map(|(d, i)| DeviceIdentifier::new(d, i))
+            .collect();
+        let conns: Vec<DeviceConnection> = connections
+            .into_iter()
+            .map(|(t, i)| DeviceConnection::normalized(t, i))
+            .collect();
+        self.inner
+            .get_deleted_by_identifiers_or_connections(&idents, &conns)
+            .map(PyDeviceEntry::from_inner)
+    }
+
+    /// Restore a deleted device back to the active registry
+    fn async_restore_deleted(&self, device_id: &str) -> Option<PyDeviceEntry> {
+        self.inner
+            .restore_deleted(device_id)
+            .map(PyDeviceEntry::from_inner)
+    }
+
+    /// Restore a deleted device as a fresh entry, preserving only user customizations.
+    ///
+    /// Creates a new DeviceEntry with the deleted device's id, area_id, disabled_by,
+    /// labels, name_by_user, and created_at. All integration-provided fields are cleared.
+    #[pyo3(signature = (device_id, identifiers, connections, config_entry_id, config_subentry_id=None, timestamp=0.0))]
+    fn async_restore_deleted_fresh(
+        &self,
+        device_id: &str,
+        identifiers: Vec<(String, String)>,
+        connections: Vec<(String, String)>,
+        config_entry_id: &str,
+        config_subentry_id: Option<&str>,
+        timestamp: f64,
+    ) -> Option<PyDeviceEntry> {
+        use ha_registries::device_registry::{DeviceConnection, DeviceIdentifier};
+        let idents: Vec<DeviceIdentifier> = identifiers
+            .into_iter()
+            .map(|(d, i)| DeviceIdentifier::new(d, i))
+            .collect();
+        let conns: Vec<DeviceConnection> = connections
+            .into_iter()
+            .map(|(t, i)| DeviceConnection::normalized(t, i))
+            .collect();
+        let ts = chrono::DateTime::from_timestamp(
+            timestamp as i64,
+            ((timestamp % 1.0) * 1_000_000_000.0) as u32,
+        )
+        .unwrap_or_else(chrono::Utc::now);
+        self.inner
+            .restore_deleted_fresh(
+                device_id,
+                &idents,
+                &conns,
+                config_entry_id,
+                config_subentry_id,
+                ts,
+            )
+            .map(PyDeviceEntry::from_inner)
+    }
+
+    /// Clear config entry from all deleted devices
+    fn async_clear_config_entry_from_deleted(&self, config_entry_id: &str, now_time: f64) {
+        self.inner
+            .clear_config_entry_from_deleted(config_entry_id, now_time);
+    }
+
+    /// Clear a config subentry from all deleted devices
+    #[pyo3(signature = (config_entry_id, config_subentry_id, now_time))]
+    fn async_clear_config_subentry_from_deleted(
+        &self,
+        config_entry_id: &str,
+        config_subentry_id: Option<&str>,
+        now_time: f64,
+    ) {
+        self.inner.clear_config_subentry_from_deleted(
+            config_entry_id,
+            config_subentry_id,
+            now_time,
+        );
+    }
+
+    /// Clear area_id from all deleted devices
+    fn async_clear_area_id_from_deleted(&self, area_id: &str) {
+        self.inner.clear_area_id_from_deleted(area_id);
+    }
+
+    /// Clear label from all deleted devices
+    fn async_clear_label_id_from_deleted(&self, label_id: &str) {
+        self.inner.clear_label_id_from_deleted(label_id);
+    }
+
+    /// Purge expired orphaned deleted devices
+    fn async_purge_expired_orphaned_devices(&self, now_time: f64, keep_seconds: f64) {
+        self.inner.purge_expired_orphaned(now_time, keep_seconds);
+    }
+
+    /// Remove deleted devices that have matching identifiers or connections
+    fn remove_deleted_by_identifiers_or_connections(
+        &self,
+        identifiers: Vec<(String, String)>,
+        connections: Vec<(String, String)>,
+    ) {
+        use ha_registries::device_registry::{DeviceConnection, DeviceIdentifier};
+        let idents: Vec<DeviceIdentifier> = identifiers
+            .into_iter()
+            .map(|(d, i)| DeviceIdentifier::new(d, i))
+            .collect();
+        let conns: Vec<DeviceConnection> = connections
+            .into_iter()
+            .map(|(t, i)| DeviceConnection::normalized(t, i))
+            .collect();
+        self.inner
+            .remove_deleted_by_identifiers_or_connections(&idents, &conns);
+    }
+
     fn __len__(&self) -> usize {
         self.inner.len()
     }
 
     fn __repr__(&self) -> String {
         format!("DeviceRegistry(count={})", self.inner.len())
-    }
-}
-
-impl PyDeviceRegistry {
-    pub fn from_arc(inner: Arc<DeviceRegistry>) -> Self {
-        Self { inner }
     }
 }

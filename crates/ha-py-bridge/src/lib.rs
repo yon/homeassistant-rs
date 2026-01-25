@@ -51,7 +51,7 @@ fn ha_core_rs(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Core types - exported at top level for conftest.py compatibility
     m.add_class::<PyHomeAssistant>()?;
     m.add_class::<PyState>()?;
-    m.add_class::<PyEvent>()?;
+    m.add_class::<PyBusEvent>()?;
     m.add_class::<PyContext>()?;
     m.add_class::<PyEntityId>()?;
     m.add_class::<PyEventBus>()?;
@@ -73,6 +73,13 @@ fn ha_core_rs(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAreaRegistry>()?;
     m.add_class::<PyFloorRegistry>()?;
     m.add_class::<PyLabelRegistry>()?;
+
+    // Registry entries (also available via helpers submodules)
+    m.add_class::<PyEntityEntry>()?;
+    m.add_class::<PyDeviceEntry>()?;
+    m.add_class::<PyAreaEntry>()?;
+    m.add_class::<PyFloorEntry>()?;
+    m.add_class::<PyLabelEntry>()?;
 
     // Template
     m.add_class::<PyTemplate>()?;
@@ -125,7 +132,7 @@ fn register_core_module(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()
 
     // Core types
     m.add_class::<PyState>()?;
-    m.add_class::<PyEvent>()?;
+    m.add_class::<PyBusEvent>()?;
     m.add_class::<PyContext>()?;
     m.add_class::<PyEntityId>()?;
 
@@ -163,8 +170,7 @@ fn split_entity_id(entity_id: &str) -> PyResult<(String, String)> {
 #[cfg(feature = "extension")]
 #[pyfunction]
 fn valid_entity_id(entity_id: &str) -> bool {
-    let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
-    parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty()
+    entity_id.parse::<ha_core::EntityId>().is_ok()
 }
 
 /// Decorator to mark a function as safe to call from the event loop

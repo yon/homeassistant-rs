@@ -14,7 +14,7 @@ _native = load_native_module("homeassistant.helpers.storage")
 # Re-export everything from native
 _public_names = []
 for _name in dir(_native):
-    if _name.startswith("_"):
+    if _name.startswith("__") and _name.endswith("__"):
         continue
     _public_names.append(_name)
     globals()[_name] = getattr(_native, _name)

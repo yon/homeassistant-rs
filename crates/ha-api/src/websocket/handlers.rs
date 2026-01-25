@@ -2,7 +2,7 @@
 //!
 //! Individual handlers for each WebSocket command type.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use tokio::sync::{broadcast, mpsc};
@@ -551,6 +551,7 @@ pub async fn handle_entity_registry_list(
         .registries
         .entities
         .iter()
+        .into_iter()
         .map(|entry| entity_entry_to_json(&entry))
         .collect();
 
@@ -615,8 +616,8 @@ pub async fn handle_entity_registry_update(
     disabled_by: Option<String>,
     hidden_by: Option<String>,
     new_entity_id: Option<String>,
-    aliases: Option<Vec<String>>,
-    labels: Option<Vec<String>>,
+    aliases: Option<HashSet<String>>,
+    labels: Option<HashSet<String>>,
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> Result<(), String> {
     // Check if entity exists
@@ -651,10 +652,11 @@ pub async fn handle_entity_registry_update(
             }
             if let Some(d) = disabled_by {
                 entry.disabled_by = match d.as_str() {
-                    "user" => Some(ha_registries::DisabledBy::User),
-                    "integration" => Some(ha_registries::DisabledBy::Integration),
                     "config_entry" => Some(ha_registries::DisabledBy::ConfigEntry),
                     "device" => Some(ha_registries::DisabledBy::Device),
+                    "hass" => Some(ha_registries::DisabledBy::Hass),
+                    "integration" => Some(ha_registries::DisabledBy::Integration),
+                    "user" => Some(ha_registries::DisabledBy::User),
                     "" => None,
                     _ => entry.disabled_by,
                 };
@@ -718,6 +720,7 @@ pub async fn handle_entity_registry_list_for_display(
         .registries
         .entities
         .iter()
+        .into_iter()
         .map(|entry| {
             let mut obj = serde_json::json!({
                 "ei": entry.entity_id,
@@ -739,7 +742,7 @@ pub async fn handle_entity_registry_list_for_display(
                 "lb": entry.labels,
             });
             // Add "hn" (has_entity_name) if true - frontend needs this
-            if entry.has_entity_name {
+            if entry.has_entity_name == Some(true) {
                 obj.as_object_mut()
                     .unwrap()
                     .insert("hn".to_string(), serde_json::json!(true));
@@ -776,10 +779,11 @@ fn entity_entry_to_json(entry: &ha_registries::EntityEntry) -> serde_json::Value
         "original_icon": entry.original_icon,
         "area_id": entry.area_id,
         "disabled_by": entry.disabled_by.map(|d| match d {
-            ha_registries::DisabledBy::User => "user",
-            ha_registries::DisabledBy::Integration => "integration",
             ha_registries::DisabledBy::ConfigEntry => "config_entry",
             ha_registries::DisabledBy::Device => "device",
+            ha_registries::DisabledBy::Hass => "hass",
+            ha_registries::DisabledBy::Integration => "integration",
+            ha_registries::DisabledBy::User => "user",
         }),
         "hidden_by": entry.hidden_by.map(|h| match h {
             ha_registries::HiddenBy::Integration => "integration",
@@ -835,10 +839,11 @@ pub async fn handle_device_registry_list(
                     ha_registries::DeviceEntryType::Service => "service",
                 }),
                 "disabled_by": device.disabled_by.as_ref().map(|d| match d {
-                    ha_registries::DisabledBy::User => "user",
-                    ha_registries::DisabledBy::Integration => "integration",
                     ha_registries::DisabledBy::ConfigEntry => "config_entry",
                     ha_registries::DisabledBy::Device => "device",
+                    ha_registries::DisabledBy::Hass => "hass",
+                    ha_registries::DisabledBy::Integration => "integration",
+                    ha_registries::DisabledBy::User => "user",
                 }),
                 "configuration_url": device.configuration_url,
                 "labels": device.labels,

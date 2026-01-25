@@ -2,7 +2,7 @@
 
 This shim:
 1. Loads the full native device_registry (constants, functions, classes)
-2. Imports Rust classes from ha_core_rs.device_registry
+2. Imports Rust classes from ha_core_rs (which accept hass like native HA)
 3. Re-exports both, with Rust classes taking precedence
 """
 
@@ -11,17 +11,18 @@ from homeassistant._native_loader import load_native_module
 # Load native device_registry module (has EVENT_DEVICE_REGISTRY_UPDATED, etc.)
 _native = load_native_module("homeassistant.helpers.device_registry")
 
-# Re-export everything from native
+# Re-export everything from native first
 _public_names = []
 for _name in dir(_native):
-    if _name.startswith("_"):
+    if _name.startswith("__") and _name.endswith("__"):
         continue
     _public_names.append(_name)
     globals()[_name] = getattr(_native, _name)
 
 # Import Rust classes from ha_core_rs (they take precedence)
+# Rust DeviceRegistry now accepts hass like native HA does
 try:
-    from ha_core_rs.device_registry import DeviceRegistry, DeviceEntry
+    from ha_core_rs import DeviceRegistry, DeviceEntry
 
     globals()["DeviceRegistry"] = DeviceRegistry
     globals()["DeviceEntry"] = DeviceEntry
@@ -29,6 +30,9 @@ try:
         _public_names.append("DeviceRegistry")
     if "DeviceEntry" not in _public_names:
         _public_names.append("DeviceEntry")
+
+    # Also patch the native module so async_get uses Rust
+    _native.DeviceRegistry = DeviceRegistry
 except ImportError:
     # ha_core_rs not available (e.g., in pure Python mode)
     pass

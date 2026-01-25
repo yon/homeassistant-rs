@@ -676,6 +676,21 @@ def _init_registries(hass, config_dir):
     EntityComponent and other HA code can use them. If config_dir is
     provided, loads saved registry data so entity_ids are preserved.
     """
+    # First, set up the loader's data structures (required for async_get_integration to work)
+    try:
+        from homeassistant import loader
+        if loader.DATA_COMPONENTS not in hass.data:
+            hass.data[loader.DATA_COMPONENTS] = {}
+        if loader.DATA_INTEGRATIONS not in hass.data:
+            hass.data[loader.DATA_INTEGRATIONS] = {}
+        if loader.DATA_MISSING_PLATFORMS not in hass.data:
+            hass.data[loader.DATA_MISSING_PLATFORMS] = {}
+        if loader.DATA_PRELOAD_PLATFORMS not in hass.data:
+            hass.data[loader.DATA_PRELOAD_PLATFORMS] = loader.BASE_PRELOAD_PLATFORMS.copy()
+        _LOGGER.debug("Set up loader data structures in hass.data")
+    except Exception as e:
+        _LOGGER.warning(f"Could not set up loader data structures: {e}")
+
     try:
         from homeassistant.helpers import entity_registry as er
         from homeassistant.helpers import device_registry as dr

@@ -1,12 +1,38 @@
 //! Python wrappers for LabelRegistry
 
+use chrono::{DateTime, Utc};
 use ha_registries::label_registry::{LabelEntry, LabelRegistry};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::sync::Arc;
 use tokio::runtime::Handle;
 
-use super::py_storage::PyStorage;
+/// Get the current time from Python's datetime.now(UTC) (respects freezer in tests)
+fn py_utc_now(py: Python<'_>) -> DateTime<Utc> {
+    let datetime_mod = py
+        .import_bound("datetime")
+        .expect("Failed to import datetime module");
+    let timezone = datetime_mod
+        .getattr("timezone")
+        .expect("Failed to get timezone");
+    let utc = timezone.getattr("utc").expect("Failed to get UTC");
+    let now = datetime_mod
+        .getattr("datetime")
+        .expect("Failed to get datetime class")
+        .call_method1("now", (utc,))
+        .expect("Failed to call datetime.now(UTC)");
+    let year: i32 = now.getattr("year").unwrap().extract().unwrap();
+    let month: u32 = now.getattr("month").unwrap().extract().unwrap();
+    let day: u32 = now.getattr("day").unwrap().extract().unwrap();
+    let hour: u32 = now.getattr("hour").unwrap().extract().unwrap();
+    let minute: u32 = now.getattr("minute").unwrap().extract().unwrap();
+    let second: u32 = now.getattr("second").unwrap().extract().unwrap();
+    let microsecond: u32 = now.getattr("microsecond").unwrap().extract().unwrap();
+    chrono::NaiveDate::from_ymd_opt(year, month, day)
+        .and_then(|d| d.and_hms_micro_opt(hour, minute, second, microsecond))
+        .map(|dt| dt.and_utc())
+        .unwrap_or_else(Utc::now)
+}
 
 /// Python wrapper for LabelEntry
 #[pyclass(name = "LabelEntry")]
@@ -98,43 +124,63 @@ impl PyLabelEntry {
 #[pyclass(name = "LabelRegistry")]
 pub struct PyLabelRegistry {
     inner: Arc<LabelRegistry>,
+    #[pyo3(get)]
+    hass: PyObject,
 }
 
 #[pymethods]
 impl PyLabelRegistry {
     #[new]
-    fn new(storage: &PyStorage) -> Self {
-        Self {
-            inner: Arc::new(LabelRegistry::new(storage.inner().clone())),
-        }
+    fn new(py: Python<'_>, hass: PyObject) -> PyResult<Self> {
+        // Extract config directory path from hass.config.path()
+        // Note: Storage::new() adds ".storage" internally, so we pass the config dir
+        let config = hass.getattr(py, "config")?;
+        let config_dir: String = config.call_method1(py, "path", ("",))?.extract(py)?;
+
+        // Create Rust storage and registry
+        let storage = Arc::new(ha_registries::storage::Storage::new(&config_dir));
+        let registry = LabelRegistry::new(storage);
+
+        Ok(Self {
+            inner: Arc::new(registry),
+            hass,
+        })
     }
 
     /// Load labels from storage
     fn async_load(&self) -> PyResult<()> {
-        let handle = Handle::try_current().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "No Tokio runtime available: {}",
-                e
-            ))
-        })?;
-
         let inner = self.inner.clone();
-        tokio::task::block_in_place(|| handle.block_on(async { inner.load().await }))
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        if let Ok(handle) = Handle::try_current() {
+            tokio::task::block_in_place(|| handle.block_on(async { inner.load().await }))
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        } else {
+            let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to create Tokio runtime: {}",
+                    e
+                ))
+            })?;
+            rt.block_on(async { inner.load().await })
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        }
     }
 
     /// Save labels to storage
     fn async_save(&self) -> PyResult<()> {
-        let handle = Handle::try_current().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "No Tokio runtime available: {}",
-                e
-            ))
-        })?;
-
         let inner = self.inner.clone();
-        tokio::task::block_in_place(|| handle.block_on(async { inner.save().await }))
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        if let Ok(handle) = Handle::try_current() {
+            tokio::task::block_in_place(|| handle.block_on(async { inner.save().await }))
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        } else {
+            let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to create Tokio runtime: {}",
+                    e
+                ))
+            })?;
+            rt.block_on(async { inner.save().await })
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        }
     }
 
     /// Get label by ID
@@ -151,12 +197,15 @@ impl PyLabelRegistry {
     #[pyo3(signature = (name, *, icon=None, color=None, description=None))]
     fn async_create(
         &self,
+        py: Python<'_>,
         name: &str,
         icon: Option<String>,
         color: Option<String>,
         description: Option<String>,
-    ) -> PyLabelEntry {
-        let mut entry = LabelEntry::new(name);
+    ) -> PyResult<PyLabelEntry> {
+        let now = py_utc_now(py);
+        let id = self.inner.generate_id(name);
+        let mut entry = LabelEntry::new(id, name, Some(now));
 
         if let Some(i) = icon {
             entry = entry.with_icon(i);
@@ -168,42 +217,74 @@ impl PyLabelRegistry {
             entry = entry.with_description(d);
         }
 
-        let created = self.inner.create_with(entry);
-        PyLabelEntry::from_inner(created)
+        let created = self
+            .inner
+            .create_with(entry)
+            .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?;
+        Ok(PyLabelEntry::from_inner(created))
     }
 
     /// Update a label
     #[pyo3(signature = (label_id, *, name=None, icon=None, color=None, description=None))]
     fn async_update(
         &self,
+        py: Python<'_>,
         label_id: &str,
         name: Option<String>,
         icon: Option<String>,
         color: Option<String>,
         description: Option<String>,
     ) -> PyResult<PyLabelEntry> {
+        let now = py_utc_now(py);
         self.inner
-            .update(label_id, |entry| {
-                if let Some(ref n) = name {
-                    entry.name = n.clone();
-                }
-                if icon.is_some() {
-                    entry.icon = icon.clone();
-                }
-                if color.is_some() {
-                    entry.color = color.clone();
-                }
-                if description.is_some() {
-                    entry.description = description.clone();
-                }
-            })
+            .update(
+                label_id,
+                |entry| {
+                    if let Some(ref n) = name {
+                        entry.name = n.clone();
+                    }
+                    if icon.is_some() {
+                        entry.icon = icon.clone();
+                    }
+                    if color.is_some() {
+                        entry.color = color.clone();
+                    }
+                    if description.is_some() {
+                        entry.description = description.clone();
+                    }
+                },
+                Some(now),
+            )
             .map(PyLabelEntry::from_inner)
-            .ok_or_else(|| {
-                PyErr::new::<pyo3::exceptions::PyKeyError, _>(format!(
-                    "Label not found: {}",
-                    label_id
-                ))
-            })
+            .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)
+    }
+
+    /// Update a label, always setting all fields (None means "clear the field")
+    /// This is different from async_update where None means "don't change"
+    #[pyo3(signature = (label_id, name, icon=None, color=None, description=None))]
+    fn async_set_fields(
+        &self,
+        py: Python<'_>,
+        label_id: &str,
+        name: String,
+        icon: Option<String>,
+        color: Option<String>,
+        description: Option<String>,
+    ) -> PyResult<PyLabelEntry> {
+        let now = py_utc_now(py);
+        self.inner
+            .update(
+                label_id,
+                |entry| {
+                    entry.name = name.clone();
+                    entry.icon = icon.clone();
+                    entry.color = color.clone();
+                    entry.description = description.clone();
+                },
+                Some(now),
+            )
+            .map(PyLabelEntry::from_inner)
+            .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)
     }
 
     /// Delete a label
@@ -245,11 +326,5 @@ impl PyLabelRegistry {
 
     fn __repr__(&self) -> String {
         format!("LabelRegistry(count={})", self.inner.len())
-    }
-}
-
-impl PyLabelRegistry {
-    pub fn from_arc(inner: Arc<LabelRegistry>) -> Self {
-        Self { inner }
     }
 }

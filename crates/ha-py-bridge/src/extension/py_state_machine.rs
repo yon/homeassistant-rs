@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use ha_core::EntityId;
+use ha_core::{EntityId, MAX_STATE_LENGTH};
 use ha_event_bus::EventBus;
 use ha_state_store::StateStore;
 use pyo3::prelude::*;
@@ -161,6 +161,46 @@ impl PyStateStore {
     /// Get the total number of entities
     fn entity_count(&self) -> usize {
         self.inner.entity_count()
+    }
+
+    /// Set state with validation, change detection, and event firing.
+    ///
+    /// This performs:
+    /// - Validates entity_id format (raises ValueError)
+    /// - Validates state length (raises ValueError if > 255)
+    /// - Stores state and fires STATE_CHANGED/STATE_REPORTED on the Rust EventBus
+    #[pyo3(signature = (entity_id, state, attributes=None, context=None, force_update=false))]
+    fn async_set(
+        &self,
+        entity_id: &str,
+        state: &str,
+        attributes: Option<&Bound<'_, PyDict>>,
+        context: Option<PyContext>,
+        force_update: bool,
+    ) -> PyResult<()> {
+        let entity_id: EntityId = entity_id
+            .parse()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("{}", e)))?;
+
+        // Validate state length (Python HA raises, Rust fallbacks to "unknown")
+        if state.len() > MAX_STATE_LENGTH {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Invalid state with length {}. State max length is {} characters.",
+                state.len(),
+                MAX_STATE_LENGTH
+            )));
+        }
+
+        let attrs = match attributes {
+            Some(dict) => py_dict_to_hashmap(dict)?,
+            None => std::collections::HashMap::new(),
+        };
+
+        let ctx = context.map(|c| c.into_inner()).unwrap_or_default();
+        self.inner
+            .set_with_force(entity_id, state, attrs, ctx, force_update);
+
+        Ok(())
     }
 
     fn __repr__(&self) -> String {

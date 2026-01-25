@@ -14,10 +14,12 @@ serde_json = { workspace = true }
 
 # Concurrent data structures
 dashmap = { workspace = true }
+indexmap = { workspace = true }
 
 # IDs and time
 chrono = { workspace = true }
 ulid = { workspace = true }
+uuid = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }

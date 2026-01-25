@@ -1,6 +1,6 @@
 //! Python wrappers for core types
 
-use ha_core::{Context, EntityId, Event, State};
+use ha_core::{Context, EntityId, State};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::collections::HashMap;
@@ -63,25 +63,53 @@ impl PyEntityId {
 }
 
 /// Python wrapper for Context
+///
+/// Matches HA's Context signature: Context(user_id=None, parent_id=None, id=None)
+/// Stores user_id/parent_id as Python objects to preserve original types (HA doesn't enforce str).
 #[pyclass(name = "Context")]
-#[derive(Clone)]
 pub struct PyContext {
     inner: Context,
+    /// Original Python user_id value (may be int, str, etc.)
+    user_id_py: Option<PyObject>,
+    /// Original Python parent_id value (may be int, str, etc.)
+    parent_id_py: Option<PyObject>,
+}
+
+impl Clone for PyContext {
+    fn clone(&self) -> Self {
+        Python::with_gil(|py| Self {
+            inner: self.inner.clone(),
+            user_id_py: self.user_id_py.as_ref().map(|o| o.clone_ref(py)),
+            parent_id_py: self.parent_id_py.as_ref().map(|o| o.clone_ref(py)),
+        })
+    }
 }
 
 #[pymethods]
 impl PyContext {
     #[new]
-    #[pyo3(signature = (id=None, user_id=None, parent_id=None))]
-    fn new(id: Option<String>, user_id: Option<String>, parent_id: Option<String>) -> Self {
-        let mut ctx = if let Some(id) = id {
-            Context::with_id(id)
+    #[pyo3(signature = (user_id=None, parent_id=None, id=None))]
+    fn new(
+        py: Python<'_>,
+        user_id: Option<PyObject>,
+        parent_id: Option<PyObject>,
+        id: Option<PyObject>,
+    ) -> Self {
+        let ctx = if let Some(ref id_obj) = id {
+            // Try to extract as string; if it fails (e.g. ANY sentinel), generate a new id
+            if let Ok(id_str) = id_obj.extract::<String>(py) {
+                Context::with_id(id_str)
+            } else {
+                Context::new()
+            }
         } else {
             Context::new()
         };
-        ctx.user_id = user_id;
-        ctx.parent_id = parent_id;
-        Self { inner: ctx }
+        Self {
+            inner: ctx,
+            user_id_py: user_id,
+            parent_id_py: parent_id,
+        }
     }
 
     #[getter]
@@ -90,29 +118,44 @@ impl PyContext {
     }
 
     #[getter]
-    fn user_id(&self) -> Option<&str> {
-        self.inner.user_id.as_deref()
+    fn user_id(&self, py: Python<'_>) -> Option<PyObject> {
+        if let Some(ref obj) = self.user_id_py {
+            Some(obj.clone_ref(py))
+        } else {
+            self.inner.user_id.as_ref().map(|s| s.clone().into_py(py))
+        }
     }
 
     #[getter]
-    fn parent_id(&self) -> Option<&str> {
-        self.inner.parent_id.as_deref()
+    fn parent_id(&self, py: Python<'_>) -> Option<PyObject> {
+        if let Some(ref obj) = self.parent_id_py {
+            Some(obj.clone_ref(py))
+        } else {
+            self.inner.parent_id.as_ref().map(|s| s.clone().into_py(py))
+        }
     }
 
     /// Return dictionary representation of context
     fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let dict = PyDict::new_bound(py);
         dict.set_item("id", &self.inner.id)?;
-        dict.set_item("parent_id", self.inner.parent_id.as_deref())?;
-        dict.set_item("user_id", self.inner.user_id.as_deref())?;
+        dict.set_item("parent_id", self.parent_id(py))?;
+        dict.set_item("user_id", self.user_id(py))?;
         Ok(dict.into_any().unbind())
     }
 
-    fn __repr__(&self) -> String {
-        format!(
-            "Context(id='{}', user_id={:?})",
-            self.inner.id, self.inner.user_id
-        )
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let user_id_repr = match self.user_id(py) {
+            Some(obj) => format!(
+                "{:?}",
+                obj.bind(py)
+                    .repr()
+                    .map(|r| r.to_string())
+                    .unwrap_or_default()
+            ),
+            None => "None".to_string(),
+        };
+        format!("<Context id={} user_id={}>", self.inner.id, user_id_repr)
     }
 
     fn __eq__(&self, other: &Self) -> bool {
@@ -133,13 +176,21 @@ impl PyContext {
     }
 
     pub fn from_inner(inner: Context) -> Self {
-        Self { inner }
+        Self {
+            user_id_py: None,
+            parent_id_py: None,
+            inner,
+        }
     }
 }
 
 impl Default for PyContext {
     fn default() -> Self {
-        Self::new(None, None, None)
+        Self {
+            inner: Context::new(),
+            user_id_py: None,
+            parent_id_py: None,
+        }
     }
 }
 
@@ -244,81 +295,6 @@ impl PyState {
     }
 }
 
-/// Python wrapper for Event
-///
-/// Events are stored as Arc<Event> to avoid cloning event data.
-/// This matches the EventBus optimization where events are broadcast as Arc.
-#[pyclass(name = "Event")]
-#[derive(Clone)]
-pub struct PyEvent {
-    inner: std::sync::Arc<Event<serde_json::Value>>,
-}
-
-#[pymethods]
-impl PyEvent {
-    #[getter]
-    fn event_type(&self) -> &str {
-        self.inner.event_type.as_str()
-    }
-
-    #[getter]
-    fn data(&self, py: Python<'_>) -> PyResult<PyObject> {
-        json_to_py(py, &self.inner.data)
-    }
-
-    #[getter]
-    fn time_fired(&self) -> String {
-        self.inner.time_fired.to_rfc3339()
-    }
-
-    #[getter]
-    fn context(&self) -> PyContext {
-        PyContext::from_inner(self.inner.context.clone())
-    }
-
-    /// Return dictionary representation of event
-    fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let dict = PyDict::new_bound(py);
-        dict.set_item("event_type", self.inner.event_type.as_str())?;
-        dict.set_item("data", json_to_py(py, &self.inner.data)?)?;
-        dict.set_item("origin", "LOCAL")?; // Default origin
-        dict.set_item("time_fired", self.inner.time_fired.to_rfc3339())?;
-
-        // Add context as dict
-        let ctx_dict = PyDict::new_bound(py);
-        ctx_dict.set_item("id", &self.inner.context.id)?;
-        ctx_dict.set_item("parent_id", self.inner.context.parent_id.as_deref())?;
-        ctx_dict.set_item("user_id", self.inner.context.user_id.as_deref())?;
-        dict.set_item("context", ctx_dict)?;
-
-        Ok(dict.into_any().unbind())
-    }
-
-    fn __repr__(&self) -> String {
-        format!("<Event {}>", self.inner.event_type)
-    }
-
-    fn __eq__(&self, other: &Self) -> bool {
-        self.inner.event_type == other.inner.event_type
-            && self.inner.data == other.inner.data
-            && self.inner.context.id == other.inner.context.id
-    }
-}
-
-impl PyEvent {
-    /// Create a PyEvent from an Arc<Event> (cheap, no clone)
-    pub fn from_arc(inner: std::sync::Arc<Event<serde_json::Value>>) -> Self {
-        Self { inner }
-    }
-
-    /// Create a PyEvent from an owned Event (wraps in Arc)
-    pub fn from_inner(inner: Event<serde_json::Value>) -> Self {
-        Self {
-            inner: std::sync::Arc::new(inner),
-        }
-    }
-}
-
 /// Convert serde_json::Value to Python object
 pub fn json_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
     use pyo3::IntoPy;
@@ -375,6 +351,14 @@ pub fn py_to_json(obj: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
             map.insert(key, py_to_json(&v)?);
         }
         Ok(serde_json::Value::Object(map))
+    } else if let Ok(set) = obj.downcast::<pyo3::types::PySet>() {
+        // Convert Python set to JSON array
+        let arr: Result<Vec<_>, _> = set.iter().map(|item| py_to_json(&item)).collect();
+        Ok(serde_json::Value::Array(arr?))
+    } else if let Ok(frozenset) = obj.downcast::<pyo3::types::PyFrozenSet>() {
+        // Convert Python frozenset to JSON array
+        let arr: Result<Vec<_>, _> = frozenset.iter().map(|item| py_to_json(&item)).collect();
+        Ok(serde_json::Value::Array(arr?))
     } else {
         Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
             "Cannot convert Python object to JSON",

@@ -253,6 +253,36 @@ impl HassWrapper {
         // No-op - we're always running in the right thread context
     }
 
+    /// Check if Home Assistant is running
+    ///
+    /// Returns true when HA is in starting or running state.
+    /// We're always running while serving requests.
+    #[getter]
+    fn is_running(&self) -> bool {
+        true
+    }
+
+    /// Check if Home Assistant is stopping
+    ///
+    /// Returns true when HA is in stopping or final_write state.
+    /// We return false since we're serving requests.
+    #[getter]
+    fn is_stopping(&self) -> bool {
+        false
+    }
+
+    /// Get the current state of Home Assistant
+    ///
+    /// Returns CoreState.running since we're serving requests.
+    #[getter]
+    fn state(&self, py: Python<'_>) -> PyResult<PyObject> {
+        // Import CoreState enum from homeassistant.core
+        let ha_core = py.import_bound("homeassistant.core")?;
+        let core_state = ha_core.getattr("CoreState")?;
+        let running = core_state.getattr("running")?;
+        Ok(running.unbind())
+    }
+
     /// Hash based on instance ID (identity-based hashing)
     fn __hash__(&self) -> u64 {
         self.instance_id

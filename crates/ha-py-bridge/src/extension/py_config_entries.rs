@@ -161,7 +161,7 @@ fn parse_source(s: &str) -> ConfigEntrySource {
 }
 
 /// Python wrapper for ConfigEntry
-#[pyclass(name = "ConfigEntry")]
+#[pyclass(name = "ConfigEntry", subclass)]
 #[derive(Clone)]
 pub struct PyConfigEntry {
     inner: ConfigEntry,
