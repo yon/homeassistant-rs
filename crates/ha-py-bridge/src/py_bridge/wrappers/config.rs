@@ -27,6 +27,16 @@ pub struct ConfigWrapper {
     pub recovery_mode: bool,
     #[pyo3(get)]
     pub safe_mode: bool,
+    #[pyo3(get)]
+    pub language: String,
+    #[pyo3(get)]
+    pub country: Option<String>,
+    #[pyo3(get)]
+    pub currency: String,
+    #[pyo3(get)]
+    pub skip_pip: bool,
+    #[pyo3(get)]
+    pub skip_pip_packages: Vec<String>,
     components: Py<PySet>,
     units: Py<UnitSystemWrapper>,
 }
@@ -45,6 +55,11 @@ impl ConfigWrapper {
             external_url: None,
             recovery_mode: false,
             safe_mode: false,
+            language: "en".to_string(),
+            country: None,
+            currency: "EUR".to_string(),
+            skip_pip: true, // Skip pip installs since we assume deps are pre-installed
+            skip_pip_packages: Vec::new(),
             components: PySet::empty_bound(py)?.unbind(),
             units,
         })
