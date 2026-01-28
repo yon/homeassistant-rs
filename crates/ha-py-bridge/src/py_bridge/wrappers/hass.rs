@@ -1,5 +1,6 @@
 //! HassWrapper - hashable Home Assistant object for Python integrations
 
+use super::auth::AuthWrapper;
 use super::bus::BusWrapper;
 use super::config::ConfigWrapper;
 use super::services::ServicesWrapper;
@@ -38,6 +39,8 @@ pub struct HassWrapper {
     /// Configuration
     #[pyo3(get)]
     pub config: Py<ConfigWrapper>,
+    /// Auth manager
+    auth: Py<AuthWrapper>,
     /// Data storage dict
     data: Py<PyDict>,
     /// Config entries wrapper
@@ -183,12 +186,16 @@ def init_network(hass_data):
         let init_fn = globals.get_item("init_network")?.unwrap();
         let _ = init_fn.call1((data_bound.clone(),));
 
+        // Create auth manager
+        let auth = Py::new(py, AuthWrapper::new(py)?)?;
+
         Ok(Self {
             instance_id: HASS_INSTANCE_COUNTER.fetch_add(1, Ordering::SeqCst),
             bus,
             states,
             services,
             config,
+            auth,
             data,
             config_entries,
             helpers,
@@ -206,6 +213,12 @@ impl HassWrapper {
     #[getter]
     fn data(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
         Ok(self.data.clone_ref(py))
+    }
+
+    /// Get auth manager
+    #[getter]
+    fn auth(&self, py: Python<'_>) -> PyResult<Py<AuthWrapper>> {
+        Ok(self.auth.clone_ref(py))
     }
 
     /// Get config_entries

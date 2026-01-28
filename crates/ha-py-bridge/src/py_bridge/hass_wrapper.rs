@@ -165,11 +165,23 @@ def _update_entity_state_sync(entity):
         attributes['color_mode'] = cm.value if hasattr(cm, 'value') else str(cm)
     if hasattr(entity, '_attr_hs_color') and entity._attr_hs_color is not None:
         attributes['hs_color'] = list(entity._attr_hs_color)
-    if hasattr(entity, '_attr_friendly_name'):
-        attributes['friendly_name'] = entity._attr_friendly_name
+
+    # Get friendly_name, checking for UndefinedType sentinel values
+    def _is_valid_name(value):
+        if value is None:
+            return False
+        type_str = str(type(value))
+        if 'UndefinedType' in type_str or str(value) == 'UndefinedType._singleton':
+            return False
+        return True
+
+    if hasattr(entity, '_attr_friendly_name') and _is_valid_name(entity._attr_friendly_name):
+        attributes['friendly_name'] = str(entity._attr_friendly_name)
     elif hasattr(entity, 'name'):
         try:
-            attributes['friendly_name'] = entity.name
+            name = entity.name
+            if _is_valid_name(name):
+                attributes['friendly_name'] = str(name)
         except:
             pass
 
@@ -275,41 +287,8 @@ fn json_to_pyobject(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObj
     }
 }
 
-/// Convert Python object to JSON value
-fn pyobject_to_json(obj: &Bound<'_, pyo3::PyAny>) -> PyResult<serde_json::Value> {
-    if obj.is_none() {
-        return Ok(serde_json::Value::Null);
-    }
-    if let Ok(b) = obj.extract::<bool>() {
-        return Ok(serde_json::Value::Bool(b));
-    }
-    if let Ok(i) = obj.extract::<i64>() {
-        return Ok(serde_json::Value::Number(i.into()));
-    }
-    if let Ok(f) = obj.extract::<f64>() {
-        if let Some(n) = serde_json::Number::from_f64(f) {
-            return Ok(serde_json::Value::Number(n));
-        }
-    }
-    if let Ok(s) = obj.extract::<String>() {
-        return Ok(serde_json::Value::String(s));
-    }
-    if let Ok(list) = obj.downcast::<pyo3::types::PyList>() {
-        let arr: Result<Vec<_>, _> = list.iter().map(|item| pyobject_to_json(&item)).collect();
-        return Ok(serde_json::Value::Array(arr?));
-    }
-    if let Ok(dict) = obj.downcast::<PyDict>() {
-        let mut map = serde_json::Map::new();
-        for (k, v) in dict.iter() {
-            if let Ok(key) = k.extract::<String>() {
-                map.insert(key, pyobject_to_json(&v)?);
-            }
-        }
-        return Ok(serde_json::Value::Object(map));
-    }
-    // Default to string representation
-    Ok(serde_json::Value::String(obj.to_string()))
-}
+// Use shared pyobject_to_json from py_utils module
+use super::py_utils::pyobject_to_json;
 
 /// Create a Python HomeAssistant-like object
 ///
@@ -1013,35 +992,87 @@ async def _update_entity_state(entity):
     entity_id = entity.entity_id
     domain = entity_id.split('.')[0]
 
-    # Get current state
+    # Get current state - check domain first to use correct attribute
     state = None
-    if hasattr(entity, '_attr_is_on'):
-        state = 'on' if entity._attr_is_on else 'off'
-    elif hasattr(entity, 'is_on'):
-        try:
-            is_on = entity.is_on
-            state = 'on' if is_on else 'off'
-        except:
-            pass
-    elif hasattr(entity, '_attr_native_value'):
-        state = str(entity._attr_native_value) if entity._attr_native_value is not None else 'unknown'
-    elif hasattr(entity, 'native_value'):
-        try:
-            val = entity.native_value
-            state = str(val) if val is not None else 'unknown'
-        except:
-            state = 'unknown'
-    elif hasattr(entity, '_attr_state'):
-        state = str(entity._attr_state)
-    elif hasattr(entity, 'state'):
-        try:
-            state = str(entity.state)
-        except:
-            pass
 
-    if state is None:
-        if domain in ('light', 'switch', 'fan'):
+    # Sensor/number entities use native_value
+    if domain in ('sensor', 'number'):
+        if hasattr(entity, '_attr_native_value'):
+            val = entity._attr_native_value
+            state = str(val) if val is not None else 'unknown'
+        elif hasattr(entity, 'native_value'):
+            try:
+                val = entity.native_value
+                state = str(val) if val is not None else 'unknown'
+            except:
+                state = 'unknown'
+        else:
+            state = 'unknown'
+    # Toggle entities (light, switch, fan, etc.) use is_on
+    elif domain in ('light', 'switch', 'fan', 'siren', 'humidifier', 'binary_sensor'):
+        if hasattr(entity, '_attr_is_on'):
+            state = 'on' if entity._attr_is_on else 'off'
+        elif hasattr(entity, 'is_on'):
+            try:
+                is_on = entity.is_on
+                state = 'on' if is_on else 'off'
+            except:
+                state = 'off'
+        else:
             state = 'off'
+    # Select entities use current_option
+    elif domain == 'select':
+        if hasattr(entity, '_attr_current_option'):
+            state = str(entity._attr_current_option) if entity._attr_current_option else 'unknown'
+        elif hasattr(entity, 'current_option'):
+            try:
+                val = entity.current_option
+                state = str(val) if val is not None else 'unknown'
+            except:
+                state = 'unknown'
+        else:
+            state = 'unknown'
+    # Lock entities use is_locked
+    elif domain == 'lock':
+        if hasattr(entity, '_attr_is_locked'):
+            state = 'locked' if entity._attr_is_locked else 'unlocked'
+        elif hasattr(entity, 'is_locked'):
+            try:
+                is_locked = entity.is_locked
+                state = 'locked' if is_locked else 'unlocked'
+            except:
+                state = 'unknown'
+        else:
+            state = 'unknown'
+    # Cover entities use is_closed
+    elif domain == 'cover':
+        if hasattr(entity, '_attr_is_closed'):
+            is_closed = entity._attr_is_closed
+            if is_closed is None:
+                state = 'unknown'
+            else:
+                state = 'closed' if is_closed else 'open'
+        elif hasattr(entity, 'is_closed'):
+            try:
+                is_closed = entity.is_closed
+                if is_closed is None:
+                    state = 'unknown'
+                else:
+                    state = 'closed' if is_closed else 'open'
+            except:
+                state = 'unknown'
+        else:
+            state = 'unknown'
+    # Other domains - try state property
+    else:
+        if hasattr(entity, '_attr_state'):
+            state = str(entity._attr_state) if entity._attr_state is not None else 'unknown'
+        elif hasattr(entity, 'state'):
+            try:
+                val = entity.state
+                state = str(val) if val is not None else 'unknown'
+            except:
+                state = 'unknown'
         else:
             state = 'unknown'
 
@@ -1238,13 +1269,20 @@ def _update_entity_state_after_lifecycle(hass, entity, entity_id):
     if friendly_name:
         attributes['friendly_name'] = friendly_name
 
-    # Get device class
+    # Get device class - try _attr_ first, then property, then entity_description
     device_class = _get_value_or_none(getattr(entity, '_attr_device_class', None))
     if device_class is None:
         try:
             device_class = _get_value_or_none(getattr(entity, 'device_class', None))
         except Exception:
             pass
+        # Fall back to entity_description.device_class if property returned None
+        if device_class is None and hasattr(entity, 'entity_description'):
+            ed = getattr(entity, 'entity_description', None)
+            if ed is not None:
+                ed_dc = getattr(ed, 'device_class', None)
+                if ed_dc is not None and not _is_undefined(ed_dc):
+                    device_class = ed_dc
     if device_class and not _is_undefined(device_class):
         if hasattr(device_class, 'value'):
             device_class = device_class.value
@@ -1284,6 +1322,7 @@ def _create_add_entities_callback(hass, entry, platform_name):
 
     def add_entities(entities, update_before_add=False, config_subentry_id=None):
         """Add entities to Home Assistant."""
+        entities = list(entities)  # Convert to list so we can iterate multiple times
         for entity in entities:
             try:
                 # Get domain from the entity class or default to platform
@@ -1326,55 +1365,29 @@ def _create_add_entities_callback(hass, entry, platform_name):
                     else:
                         domain = platform_name
 
+                # Get the integration domain from the config entry (e.g., "airthings", "unifi")
+                # This is different from entity domain (e.g., "sensor", "light")
+                integration_domain = entry.get("domain") if isinstance(entry, dict) else getattr(entry, "domain", None)
+
                 # Set platform_data on entity BEFORE accessing properties
                 # This is required for entities with translation keys
                 if not hasattr(entity, 'platform_data') or entity.platform_data is None:
                     try:
-                        platform_data = PlatformData(hass, domain=domain, platform_name=platform_name)
+                        # platform_name should be the integration domain, not entity domain
+                        platform_data = PlatformData(hass, domain=domain, platform_name=integration_domain or platform_name)
                         entity.platform_data = platform_data
                     except Exception as e:
                         _LOGGER.debug(f"Could not set platform_data: {e}")
 
-                # Get entity unique_id and try to look up existing entity_id from registry
+                # Get entity unique_id - required for registry lookup
                 unique_id = getattr(entity, '_attr_unique_id', None) or getattr(entity, 'unique_id', None)
-
-                # Get the integration domain from the config entry
-                integration_domain = entry.get("domain") if isinstance(entry, dict) else getattr(entry, "domain", None)
-
-                # First, try to find existing entity_id from loaded entity registry
-                entity_id = None
-                if unique_id and hass and hasattr(hass, 'data'):
-                    try:
-                        from homeassistant.helpers import entity_registry as er
-                        if er.DATA_REGISTRY in hass.data:
-                            entity_reg = hass.data[er.DATA_REGISTRY]
-                            # Look up by unique_id and platform (platform in registry is integration domain, not entity type)
-                            for reg_entry in entity_reg.entities.values():
-                                if reg_entry.unique_id == unique_id and reg_entry.platform == integration_domain:
-                                    entity_id = reg_entry.entity_id
-                                    _LOGGER.debug(f"Found existing entity_id from registry: {entity_id} (unique_id={unique_id})")
-                                    break
-                    except Exception as e:
-                        _LOGGER.debug(f"Could not look up entity in registry: {e}")
-
-                # If not found in registry, generate a new entity_id
-                if entity_id is None:
-                    suggested_id = unique_id or getattr(entity, '_attr_name', None) or getattr(entity, 'name', 'entity')
-                    # Clean the suggested_id
-                    if suggested_id:
-                        suggested_id = str(suggested_id).lower().replace(' ', '_').replace('-', '_')
-                    entity_id = _generate_entity_id(domain, platform_name, suggested_id, existing_ids)
-
-                existing_ids.add(entity_id)
-
-                # Store the entity_id on the entity for future reference
-                entity.entity_id = entity_id
+                if unique_id is None:
+                    # Generate a fallback unique_id
+                    unique_id = f"{integration_domain}_{len(existing_ids)}"
+                unique_id = str(unique_id)
 
                 # Set hass reference on entity (required for service calls)
                 entity.hass = hass
-
-                # Store entity in registry for service dispatch
-                _entity_registry[entity_id] = entity
 
                 # Extract device_info and register device in Rust registry
                 device_id = None
@@ -1463,7 +1476,8 @@ def _create_add_entities_callback(hass, entry, platform_name):
                                 'identifiers': identifiers,
                             }
 
-                # Register entity in Rust registry
+                # Register entity in Rust registry - this looks up existing entity_id or generates new one
+                entity_id = None
                 if _registries is not None:
                     try:
                         config_entry_id = entry.get("entry_id") if isinstance(entry, dict) else getattr(entry, "entry_id", None)
@@ -1473,54 +1487,156 @@ def _create_add_entities_callback(hass, entry, platform_name):
                                 entity_name = _get_value_or_none(getattr(entity, 'name', None))
                             except:
                                 pass
-                        _registries.register_entity(
-                            platform_name,
-                            entity_id,
-                            unique_id=unique_id,
+                        # Get device_class for proper frontend icons
+                        # Try _attr_device_class first (direct attribute)
+                        device_class = _get_value_or_none(getattr(entity, '_attr_device_class', None))
+                        if device_class is None:
+                            # Try the device_class property (which may read from entity_description)
+                            try:
+                                device_class = _get_value_or_none(getattr(entity, 'device_class', None))
+                            except Exception:
+                                pass
+                            # If property returned None but entity_description has device_class, use that
+                            if device_class is None and hasattr(entity, 'entity_description'):
+                                ed = getattr(entity, 'entity_description', None)
+                                if ed is not None:
+                                    ed_dc = getattr(ed, 'device_class', None)
+                                    if ed_dc is not None and not _is_undefined(ed_dc):
+                                        device_class = ed_dc
+                        # Get suggested object_id from entity name
+                        suggested_object_id = None
+                        if entity_name and not _is_undefined(entity_name):
+                            suggested_object_id = str(entity_name).lower().replace(' ', '_').replace('-', '_')
+                        elif unique_id:
+                            suggested_object_id = str(unique_id).lower().replace(' ', '_').replace('-', '_')
+
+                        # Call Rust registry - it looks up existing entity_id or generates new one
+                        result = _registries.register_entity(
+                            domain,  # Entity domain (e.g., "sensor", "light")
+                            integration_domain or platform_name,  # Platform (e.g., "airthings")
+                            unique_id,  # Unique ID for lookup
+                            suggested_object_id=suggested_object_id,
                             config_entry_id=config_entry_id,
                             device_id=device_id,
                             name=str(entity_name) if entity_name and not _is_undefined(entity_name) else None,
+                            original_device_class=str(device_class) if device_class and not _is_undefined(device_class) else None,
                         )
+                        # Get the resolved entity_id from Rust
+                        entity_id = result.get('entity_id')
+                        _LOGGER.debug(f"Registered entity: {entity_id} (unique_id={unique_id})")
                     except Exception as e:
                         _LOGGER.error(f"Failed to register entity in Rust: {e}")
+
+                # Fall back to generated entity_id if Rust registration failed
+                if entity_id is None:
+                    suggested_id = unique_id or 'entity'
+                    suggested_id = str(suggested_id).lower().replace(' ', '_').replace('-', '_')
+                    entity_id = _generate_entity_id(domain, platform_name, suggested_id, existing_ids)
+
+                existing_ids.add(entity_id)
+
+                # Store the entity_id on the entity
+                entity.entity_id = entity_id
+
+                # Store entity in registry for service dispatch
+                _entity_registry[entity_id] = entity
 
                 # Register domain services if not already done
                 _register_domain_services(hass, domain)
 
-                # Get entity state
+                # Get entity state - check domain first to use correct attribute
                 state = None
-                # Try different state attributes based on entity type
-                if hasattr(entity, '_attr_is_on'):
-                    state = 'on' if entity._attr_is_on else 'off'
-                elif hasattr(entity, 'is_on'):
-                    try:
-                        is_on = entity.is_on
-                        if callable(is_on):
-                            is_on = is_on()
-                        state = 'on' if is_on else 'off'
-                    except:
-                        pass
-                elif hasattr(entity, '_state'):
-                    state = entity._state
-                    if isinstance(state, bool):
-                        state = 'on' if state else 'off'
-                elif hasattr(entity, '_attr_native_value'):
-                    state = str(entity._attr_native_value) if entity._attr_native_value is not None else 'unknown'
-                elif hasattr(entity, 'native_value'):
-                    try:
-                        val = entity.native_value
-                        if callable(val):
-                            val = val()
-                        state = str(val) if val is not None else 'unknown'
-                    except:
-                        state = 'unknown'
 
-                # Default state based on domain
-                if state is None:
-                    if domain in ('light', 'switch', 'fan'):
+                # Sensor/number entities use native_value
+                if domain in ('sensor', 'number'):
+                    if hasattr(entity, '_attr_native_value'):
+                        val = entity._attr_native_value
+                        state = str(val) if val is not None else 'unknown'
+                    elif hasattr(entity, 'native_value'):
+                        try:
+                            val = entity.native_value
+                            if callable(val):
+                                val = val()
+                            state = str(val) if val is not None else 'unknown'
+                        except:
+                            state = 'unknown'
+                    else:
+                        state = 'unknown'
+                # Toggle entities (light, switch, fan, etc.) use is_on
+                elif domain in ('light', 'switch', 'fan', 'siren', 'humidifier', 'binary_sensor'):
+                    if hasattr(entity, '_attr_is_on'):
+                        state = 'on' if entity._attr_is_on else 'off'
+                    elif hasattr(entity, 'is_on'):
+                        try:
+                            is_on = entity.is_on
+                            if callable(is_on):
+                                is_on = is_on()
+                            state = 'on' if is_on else 'off'
+                        except:
+                            state = 'off'
+                    else:
                         state = 'off'
-                    elif domain == 'binary_sensor':
-                        state = 'off'
+                # Select entities use current_option
+                elif domain == 'select':
+                    if hasattr(entity, '_attr_current_option'):
+                        state = str(entity._attr_current_option) if entity._attr_current_option else 'unknown'
+                    elif hasattr(entity, 'current_option'):
+                        try:
+                            val = entity.current_option
+                            state = str(val) if val is not None else 'unknown'
+                        except:
+                            state = 'unknown'
+                    else:
+                        state = 'unknown'
+                # Lock entities use is_locked
+                elif domain == 'lock':
+                    if hasattr(entity, '_attr_is_locked'):
+                        state = 'locked' if entity._attr_is_locked else 'unlocked'
+                    elif hasattr(entity, 'is_locked'):
+                        try:
+                            is_locked = entity.is_locked
+                            state = 'locked' if is_locked else 'unlocked'
+                        except:
+                            state = 'unknown'
+                    else:
+                        state = 'unknown'
+                # Cover entities use is_closed
+                elif domain == 'cover':
+                    if hasattr(entity, '_attr_is_closed'):
+                        is_closed = entity._attr_is_closed
+                        if is_closed is None:
+                            state = 'unknown'
+                        else:
+                            state = 'closed' if is_closed else 'open'
+                    elif hasattr(entity, 'is_closed'):
+                        try:
+                            is_closed = entity.is_closed
+                            if is_closed is None:
+                                state = 'unknown'
+                            else:
+                                state = 'closed' if is_closed else 'open'
+                        except:
+                            state = 'unknown'
+                    else:
+                        state = 'unknown'
+                # Other domains - try state property or _attr_state
+                else:
+                    if hasattr(entity, '_attr_state'):
+                        state = str(entity._attr_state) if entity._attr_state is not None else 'unknown'
+                    elif hasattr(entity, 'state'):
+                        try:
+                            val = entity.state
+                            state = str(val) if val is not None else 'unknown'
+                        except:
+                            state = 'unknown'
+                    elif hasattr(entity, '_state'):
+                        state = entity._state
+                        if isinstance(state, bool):
+                            state = 'on' if state else 'off'
+                        elif state is not None:
+                            state = str(state)
+                        else:
+                            state = 'unknown'
                     else:
                         state = 'unknown'
 
@@ -1588,13 +1704,20 @@ def _create_add_entities_callback(hass, entry, platform_name):
                 if friendly_name:
                     attributes['friendly_name'] = friendly_name
 
-                # Get device class - try _attr_ first, then property
+                # Get device class - try _attr_ first, then property, then entity_description
                 device_class = _get_value_or_none(getattr(entity, '_attr_device_class', None))
                 if device_class is None:
                     try:
                         device_class = _get_value_or_none(getattr(entity, 'device_class', None))
                     except (ValueError, AttributeError):
                         pass
+                    # Fall back to entity_description.device_class if property returned None
+                    if device_class is None and hasattr(entity, 'entity_description'):
+                        ed = getattr(entity, 'entity_description', None)
+                        if ed is not None:
+                            ed_dc = getattr(ed, 'device_class', None)
+                            if ed_dc is not None and not _is_undefined(ed_dc):
+                                device_class = ed_dc
                 if device_class and not _is_undefined(device_class):
                     # Handle enums
                     if hasattr(device_class, 'value'):

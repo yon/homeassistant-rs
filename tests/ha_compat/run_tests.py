@@ -911,6 +911,12 @@ TEST_CATEGORIES = {
         "helpers/test_entity.py::test_device_class",
         "helpers/test_entity.py::test_capability_attrs",
         "helpers/test_entity.py::test_entity_category_property",
+        # TODO: Add when entity platform infrastructure (Phase 8) is complete:
+        # These tests validate UNDEFINED handling in friendly_name - would have
+        # caught the UndefinedType._singleton issue in the more-info modal.
+        # "helpers/test_entity.py::test_friendly_name_attr",
+        # "helpers/test_entity.py::test_friendly_name_description",
+        # "helpers/test_entity.py::test_friendly_name_description_device_class_name",
     ],
     "shim_exceptions": [
         # Exception tests - validates our exceptions module

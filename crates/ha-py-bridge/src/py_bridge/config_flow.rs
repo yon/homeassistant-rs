@@ -896,41 +896,11 @@ fn json_to_pyobject(py: Python<'_>, value: &serde_json::Value) -> Option<PyObjec
     }
 }
 
+// Use shared pyobject_to_json from py_utils module (handles UNDEFINED filtering)
+use super::py_utils::pyobject_to_json as py_utils_to_json;
+
 /// Convert Python object to JSON value
-fn pyobject_to_json(py: Python<'_>, obj: &pyo3::Bound<'_, pyo3::PyAny>) -> serde_json::Value {
-    if obj.is_none() {
-        return serde_json::Value::Null;
-    }
-    if let Ok(b) = obj.extract::<bool>() {
-        return serde_json::Value::Bool(b);
-    }
-    if let Ok(i) = obj.extract::<i64>() {
-        return serde_json::Value::Number(i.into());
-    }
-    if let Ok(f) = obj.extract::<f64>() {
-        if let Some(n) = serde_json::Number::from_f64(f) {
-            return serde_json::Value::Number(n);
-        }
-    }
-    if let Ok(s) = obj.extract::<String>() {
-        return serde_json::Value::String(s);
-    }
-    if let Ok(list) = obj.downcast::<pyo3::types::PyList>() {
-        let arr: Vec<serde_json::Value> = list
-            .iter()
-            .map(|item| pyobject_to_json(py, &item))
-            .collect();
-        return serde_json::Value::Array(arr);
-    }
-    if let Ok(dict) = obj.downcast::<PyDict>() {
-        let mut map = serde_json::Map::new();
-        for (k, v) in dict.iter() {
-            if let Ok(key) = k.extract::<String>() {
-                map.insert(key, pyobject_to_json(py, &v));
-            }
-        }
-        return serde_json::Value::Object(map);
-    }
-    // Default to string representation
-    serde_json::Value::String(obj.to_string())
+fn pyobject_to_json(_py: Python<'_>, obj: &pyo3::Bound<'_, pyo3::PyAny>) -> serde_json::Value {
+    // Delegate to the shared implementation that handles UNDEFINED
+    py_utils_to_json(obj).unwrap_or(serde_json::Value::Null)
 }

@@ -85,6 +85,8 @@ pub struct AppState {
     pub config_flow_handler: Option<Arc<dyn config_flow::ConfigFlowHandler>>,
     /// Application credentials for OAuth2 integrations
     pub application_credentials: ApplicationCredentialsStore,
+    /// Path to Home Assistant components directory (for icons, etc.)
+    pub components_path: Option<std::path::PathBuf>,
 }
 
 /// API status response
@@ -917,6 +919,7 @@ mod tests {
             service_registry,
             config: Arc::new(CoreConfig::default()),
             components: Arc::new(vec![]),
+            components_path: None,
             config_entries,
             registries,
             notifications,

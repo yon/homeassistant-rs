@@ -19,6 +19,7 @@ CONFIG_DIR ?=
 SITE_PACKAGES = $(shell $(PYTHON) -c "import site; print(site.getsitepackages()[0])")
 RUN_ENV = PYTHONPATH=$(CURDIR)/crates/ha-py-bridge/python:$(SITE_PACKAGES) \
 	HA_FRONTEND_PATH=$(SITE_PACKAGES)/hass_frontend \
+	HA_COMPONENTS_PATH=$(CURDIR)/vendor/ha-core/homeassistant/components \
 	PYO3_PYTHON=$(CURDIR)/$(PYTHON) \
 	$(if $(CONFIG_DIR),HA_CONFIG_DIR=$(CONFIG_DIR))
 
