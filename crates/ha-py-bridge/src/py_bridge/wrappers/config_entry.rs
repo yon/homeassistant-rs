@@ -149,6 +149,19 @@ impl ConfigEntryWrapper {
         self.discovery_keys.clone_ref(py)
     }
 
+    /// Whether polling is disabled by user preference (readonly)
+    /// Used by update_coordinator.py to skip polling if user disabled it
+    #[getter]
+    fn pref_disable_polling(&self) -> bool {
+        false // Default to allowing polling
+    }
+
+    /// Whether new entities should be disabled by default (readonly)
+    #[getter]
+    fn pref_disable_new_entities(&self) -> bool {
+        false // Default to enabling new entities
+    }
+
     /// Runtime data (read/write)
     /// This is where integrations store their runtime state
     #[getter]
@@ -214,6 +227,28 @@ impl ConfigEntryWrapper {
             "<ConfigEntry entry_id={} domain={} title={}>",
             self.entry_id, self.domain, self.title
         )
+    }
+
+    /// Start a reauthentication flow for this config entry
+    ///
+    /// Called when authentication fails and user needs to re-authenticate.
+    /// For now, this is a no-op since we don't have full reauth support.
+    #[pyo3(signature = (_hass, context=None, data=None))]
+    fn async_start_reauth(
+        &self,
+        _py: Python<'_>,
+        _hass: PyObject,
+        context: Option<PyObject>,
+        data: Option<PyObject>,
+    ) -> PyResult<()> {
+        // Silence unused warnings
+        let _ = (context, data);
+        tracing::warn!(
+            "ConfigEntry.async_start_reauth called for {} ({}), but reauth is not yet implemented",
+            self.domain,
+            self.entry_id
+        );
+        Ok(())
     }
 
     /// Create a background task tied to the config entry lifecycle

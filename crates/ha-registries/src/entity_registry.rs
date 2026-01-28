@@ -235,6 +235,128 @@ impl EntityEntry {
     pub fn is_hidden(&self) -> bool {
         self.hidden_by.is_some()
     }
+
+    /// Enrich state attributes with entity registry data.
+    ///
+    /// This adds missing attributes like unit_of_measurement, friendly_name,
+    /// device_class, and state_class from the entity registry when they're
+    /// not already present in the state attributes.
+    ///
+    /// Also fixes friendly_name if it contains "UndefinedType" (bad Python serialization).
+    pub fn enrich_attributes(
+        &self,
+        attrs: &mut std::collections::HashMap<String, serde_json::Value>,
+    ) {
+        // Add unit_of_measurement if not already present
+        if !attrs.contains_key("unit_of_measurement") {
+            if let Some(ref uom) = self.unit_of_measurement {
+                attrs.insert(
+                    "unit_of_measurement".to_string(),
+                    serde_json::Value::String(uom.clone()),
+                );
+            }
+        }
+
+        // Add or fix friendly_name from entity registry
+        // Override if missing or if contains "UndefinedType" (bad Python serialization)
+        let should_set_friendly_name = !attrs.contains_key("friendly_name")
+            || attrs
+                .get("friendly_name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.contains("UndefinedType"))
+                .unwrap_or(false);
+
+        if should_set_friendly_name {
+            let friendly_name = self.name.clone().or_else(|| self.original_name.clone());
+            if let Some(name) = friendly_name {
+                attrs.insert("friendly_name".to_string(), serde_json::Value::String(name));
+            }
+        }
+
+        // Add device_class if not present
+        if !attrs.contains_key("device_class") {
+            let dc = self
+                .device_class
+                .clone()
+                .or_else(|| self.original_device_class.clone());
+            if let Some(device_class) = dc {
+                attrs.insert(
+                    "device_class".to_string(),
+                    serde_json::Value::String(device_class),
+                );
+            }
+        }
+
+        // Add state_class from capabilities if not present
+        if !attrs.contains_key("state_class") {
+            if let Some(ref caps) = self.capabilities {
+                if let Some(sc) = caps.get("state_class").and_then(|v| v.as_str()) {
+                    attrs.insert(
+                        "state_class".to_string(),
+                        serde_json::Value::String(sc.to_string()),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Enrich serde_json::Map attributes with entity registry data.
+    ///
+    /// Same as `enrich_attributes` but for JSON objects (serde_json::Map).
+    /// Used for WebSocket event handling where attributes come from JSON.
+    pub fn enrich_json_attributes(&self, attrs: &mut serde_json::Map<String, serde_json::Value>) {
+        // Add unit_of_measurement if not already present
+        if !attrs.contains_key("unit_of_measurement") {
+            if let Some(ref uom) = self.unit_of_measurement {
+                attrs.insert(
+                    "unit_of_measurement".to_string(),
+                    serde_json::Value::String(uom.clone()),
+                );
+            }
+        }
+
+        // Add or fix friendly_name from entity registry
+        // Override if missing or if contains "UndefinedType" (bad Python serialization)
+        let should_set_friendly_name = !attrs.contains_key("friendly_name")
+            || attrs
+                .get("friendly_name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.contains("UndefinedType"))
+                .unwrap_or(false);
+
+        if should_set_friendly_name {
+            let friendly_name = self.name.clone().or_else(|| self.original_name.clone());
+            if let Some(name) = friendly_name {
+                attrs.insert("friendly_name".to_string(), serde_json::Value::String(name));
+            }
+        }
+
+        // Add device_class if not present
+        if !attrs.contains_key("device_class") {
+            let dc = self
+                .device_class
+                .clone()
+                .or_else(|| self.original_device_class.clone());
+            if let Some(device_class) = dc {
+                attrs.insert(
+                    "device_class".to_string(),
+                    serde_json::Value::String(device_class),
+                );
+            }
+        }
+
+        // Add state_class from capabilities if not present
+        if !attrs.contains_key("state_class") {
+            if let Some(ref caps) = self.capabilities {
+                if let Some(sc) = caps.get("state_class").and_then(|v| v.as_str()) {
+                    attrs.insert(
+                        "state_class".to_string(),
+                        serde_json::Value::String(sc.to_string()),
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// Entity registry data for storage

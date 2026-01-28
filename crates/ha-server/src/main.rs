@@ -1400,6 +1400,7 @@ async fn setup_config_entries(hass: &HomeAssistant) {
 /// service calls route to the Python entity methods.
 #[cfg(feature = "python")]
 fn register_python_entity_services(services: &ServiceRegistry) {
+    use ha_core::domains;
     use std::collections::HashSet;
 
     // Get all Python entities and extract unique domains
@@ -1424,83 +1425,16 @@ fn register_python_entity_services(services: &ServiceRegistry) {
         domains
     );
 
-    // Define services for each domain type
-    let domain_services: std::collections::HashMap<&str, Vec<&str>> = [
-        ("light", vec!["turn_on", "turn_off", "toggle"]),
-        ("switch", vec!["turn_on", "turn_off", "toggle"]),
-        (
-            "fan",
-            vec![
-                "turn_on",
-                "turn_off",
-                "toggle",
-                "set_percentage",
-                "set_preset_mode",
-            ],
-        ),
-        (
-            "cover",
-            vec![
-                "open_cover",
-                "close_cover",
-                "stop_cover",
-                "set_cover_position",
-            ],
-        ),
-        ("lock", vec!["lock", "unlock", "open"]),
-        (
-            "climate",
-            vec!["set_temperature", "set_hvac_mode", "set_preset_mode"],
-        ),
-        (
-            "media_player",
-            vec![
-                "turn_on",
-                "turn_off",
-                "play_media",
-                "media_play",
-                "media_pause",
-                "media_stop",
-                "volume_up",
-                "volume_down",
-                "volume_set",
-                "volume_mute",
-            ],
-        ),
-        ("vacuum", vec!["start", "stop", "pause", "return_to_base"]),
-        ("button", vec!["press"]),
-        ("number", vec!["set_value"]),
-        ("select", vec!["select_option"]),
-        (
-            "humidifier",
-            vec!["turn_on", "turn_off", "set_humidity", "set_mode"],
-        ),
-        ("siren", vec!["turn_on", "turn_off"]),
-        ("valve", vec!["open_valve", "close_valve"]),
-        (
-            "water_heater",
-            vec!["set_temperature", "set_operation_mode"],
-        ),
-        (
-            "alarm_control_panel",
-            vec![
-                "alarm_arm_home",
-                "alarm_arm_away",
-                "alarm_arm_night",
-                "alarm_disarm",
-                "alarm_trigger",
-            ],
-        ),
-    ]
-    .into_iter()
-    .collect();
-
     for domain in &domains {
-        // Get services for this domain, or default to turn_on/turn_off/toggle
-        let services_list = domain_services
-            .get(domain.as_str())
-            .cloned()
-            .unwrap_or_else(|| vec!["turn_on", "turn_off", "toggle"]);
+        // Get services for this domain from ha-core domain metadata
+        // Returns None for read-only domains (sensor, binary_sensor, etc.)
+        let services_list = match domains::get_domain_services(domain.as_str()) {
+            Some(services) => services,
+            None => {
+                debug!("Skipping read-only domain: {}", domain);
+                continue;
+            }
+        };
 
         for service_name in services_list {
             // Skip if already registered
@@ -1742,6 +1676,19 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Configure components path if HA_COMPONENTS_PATH is set
+    // This is used for loading icons.json files from integrations
+    let components_path = std::env::var("HA_COMPONENTS_PATH").ok().and_then(|path| {
+        let path = PathBuf::from(&path);
+        if path.exists() {
+            info!("Components path enabled: {:?}", path);
+            Some(path)
+        } else {
+            warn!("Components path does not exist: {:?}", path);
+            None
+        }
+    });
+
     // Create persistent notification manager
     let notifications = persistent_notification::create_manager();
 
@@ -1794,6 +1741,7 @@ async fn main() -> Result<()> {
         auth_state: AuthState::new_onboarded(),
         config_flow_handler,
         application_credentials,
+        components_path,
     };
 
     // Start API server

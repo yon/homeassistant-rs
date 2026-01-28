@@ -248,6 +248,14 @@ pub async fn handle_message(
             conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_floor_registry_list(conn, id, tx).await
         }
+        IncomingMessage::FrontendGetIcons {
+            id,
+            category,
+            integration,
+        } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handlers::handle_frontend_get_icons(conn, id, &category, integration, tx).await
+        }
         IncomingMessage::FrontendGetThemes { id } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_frontend_get_themes(conn, id, tx).await
@@ -361,6 +369,10 @@ pub async fn handle_message(
         IncomingMessage::ScriptConfig { id, entity_id } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_script_config(conn, id, &entity_id, tx).await
+        }
+        IncomingMessage::SensorNumericDeviceClasses { id } => {
+            conn.validate_id(id).map_err(|e| e.to_string())?;
+            handlers::handle_sensor_numeric_device_classes(conn, id, tx).await
         }
         IncomingMessage::SubscribeEntities { id, entity_ids } => {
             conn.validate_id(id).map_err(|e| e.to_string())?;

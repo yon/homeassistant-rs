@@ -283,14 +283,27 @@ pub async fn handle_subscribe_entities(
         states.iter().collect()
     };
 
-    // Build initial state response
+    // Build initial state response, enriching with entity registry data
     let mut additions = serde_json::Map::new();
     for state in filtered_states {
+        // Start with the state's attributes
+        let mut attrs = state.attributes.clone();
+
+        // Enrich with entity registry data if available
+        if let Some(entry) = conn
+            .state
+            .registries
+            .entities
+            .get(&state.entity_id.to_string())
+        {
+            entry.enrich_attributes(&mut attrs);
+        }
+
         additions.insert(
             state.entity_id.to_string(),
             serde_json::json!({
                 "s": state.state,
-                "a": state.attributes,
+                "a": attrs,
                 "c": state.context.id.to_string(),
                 "lc": state.last_changed.timestamp_millis() as f64 / 1000.0,
                 "lu": state.last_updated.timestamp_millis() as f64 / 1000.0,
@@ -312,6 +325,7 @@ pub async fn handle_subscribe_entities(
     let entity_ids_filter = entity_ids.clone();
     let tx_clone = tx.clone();
     let sub_id = id;
+    let registries = conn.state.registries.clone();
 
     let mut event_rx = conn.state.event_bus.subscribe_all();
 
@@ -340,15 +354,27 @@ pub async fn handle_subscribe_entities(
                                     }
                                 }
 
-                                // Build change event
+                                // Build change event with enriched attributes
                                 if let Some(new_state) = event.data.get("new_state") {
+                                    // Get attributes and enrich with entity registry data
+                                    let mut attrs = new_state
+                                        .get("attributes")
+                                        .and_then(|a| a.as_object())
+                                        .cloned()
+                                        .unwrap_or_default();
+
+                                    // Enrich with entity registry data
+                                    if let Some(entry) = registries.entities.get(entity_id) {
+                                        entry.enrich_json_attributes(&mut attrs);
+                                    }
+
                                     let mut changes = serde_json::Map::new();
                                     changes.insert(
                                         entity_id.to_string(),
                                         serde_json::json!({
                                             "+": {
                                                 "s": new_state.get("state"),
-                                                "a": new_state.get("attributes"),
+                                                "a": attrs,
                                                 "c": new_state.get("context").and_then(|c| c.get("id")),
                                                 "lc": new_state.get("last_changed"),
                                                 "lu": new_state.get("last_updated"),
@@ -722,6 +748,11 @@ pub async fn handle_entity_registry_list_for_display(
         .iter()
         .into_iter()
         .map(|entry| {
+            // device_class: use override if set, otherwise original_device_class
+            let device_class = entry
+                .device_class
+                .clone()
+                .or_else(|| entry.original_device_class.clone());
             let mut obj = serde_json::json!({
                 "ei": entry.entity_id,
                 "di": entry.device_id,
@@ -731,6 +762,8 @@ pub async fn handle_entity_registry_list_for_display(
                 "en": entry.name.clone().or_else(|| entry.original_name.clone()),
                 "ic": entry.icon,
                 "ai": entry.area_id,
+                "dc": device_class,
+                "odc": entry.original_device_class,
                 "ec": entry.entity_category.map(|c| match c {
                     ha_registries::EntityCategory::Config => 1,
                     ha_registries::EntityCategory::Diagnostic => 2,
@@ -1008,6 +1041,69 @@ pub async fn handle_frontend_get_themes(
             "default_theme": "default",
             "default_dark_theme": null,
         })),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle frontend/get_icons command
+/// Returns icons.json data from integration components
+pub async fn handle_frontend_get_icons(
+    conn: &Arc<ActiveConnection>,
+    id: u64,
+    category: &str,
+    integration: Option<Vec<String>>,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // Get components path from state
+    let components_path = match &conn.state.components_path {
+        Some(path) => path.clone(),
+        None => {
+            // No components path configured, return empty result
+            let result = OutgoingMessage::Result(ResultMessage {
+                id,
+                msg_type: "result",
+                success: true,
+                result: Some(serde_json::json!({})),
+                error: None,
+            });
+            return tx.send(result).await.map_err(|e| e.to_string());
+        }
+    };
+
+    // Determine which integrations to load icons for
+    let integrations: Vec<String> = integration.unwrap_or_else(|| {
+        // Default to loaded components
+        conn.state.components.iter().cloned().collect()
+    });
+
+    let mut icons_result: HashMap<String, serde_json::Value> = HashMap::new();
+
+    for integration_name in &integrations {
+        let icons_path = components_path.join(integration_name).join("icons.json");
+
+        if icons_path.exists() {
+            match tokio::fs::read_to_string(&icons_path).await {
+                Ok(content) => {
+                    if let Ok(icons_data) = serde_json::from_str::<serde_json::Value>(&content) {
+                        // Extract the requested category from the icons data
+                        if let Some(category_data) = icons_data.get(category) {
+                            icons_result.insert(integration_name.clone(), category_data.clone());
+                        }
+                    }
+                }
+                Err(e) => {
+                    debug!("Failed to read icons.json for {}: {}", integration_name, e);
+                }
+            }
+        }
+    }
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::to_value(icons_result).unwrap_or_default()),
         error: None,
     });
     tx.send(result).await.map_err(|e| e.to_string())
@@ -2379,6 +2475,84 @@ pub async fn handle_manifest_get(
         msg_type: "result",
         success: true,
         result: Some(manifest),
+        error: None,
+    });
+    tx.send(result).await.map_err(|e| e.to_string())
+}
+
+/// Handle sensor/numeric_device_classes command
+///
+/// Returns the list of numeric sensor device classes. The frontend uses this
+/// to determine which sensors should display numeric values vs other UI elements.
+pub async fn handle_sensor_numeric_device_classes(
+    _conn: &Arc<ActiveConnection>,
+    id: u64,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> Result<(), String> {
+    // All sensor device classes except date, enum, and timestamp are numeric
+    // This list matches homeassistant/components/sensor/const.py
+    let numeric_device_classes = vec![
+        "absolute_humidity",
+        "apparent_power",
+        "aqi",
+        "area",
+        "atmospheric_pressure",
+        "battery",
+        "blood_glucose_concentration",
+        "carbon_dioxide",
+        "carbon_monoxide",
+        "conductivity",
+        "current",
+        "data_rate",
+        "data_size",
+        "distance",
+        "duration",
+        "energy",
+        "energy_storage",
+        "frequency",
+        "gas",
+        "humidity",
+        "illuminance",
+        "irradiance",
+        "moisture",
+        "monetary",
+        "nitrogen_dioxide",
+        "nitrogen_monoxide",
+        "nitrous_oxide",
+        "ozone",
+        "ph",
+        "pm1",
+        "pm10",
+        "pm25",
+        "power",
+        "power_factor",
+        "precipitation",
+        "precipitation_intensity",
+        "pressure",
+        "reactive_power",
+        "signal_strength",
+        "sound_pressure",
+        "speed",
+        "sulphur_dioxide",
+        "temperature",
+        "volatile_organic_compounds",
+        "volatile_organic_compounds_parts",
+        "voltage",
+        "volume",
+        "volume_flow_rate",
+        "volume_storage",
+        "water",
+        "weight",
+        "wind_speed",
+    ];
+
+    let result = OutgoingMessage::Result(ResultMessage {
+        id,
+        msg_type: "result",
+        success: true,
+        result: Some(serde_json::json!({
+            "numeric_device_classes": numeric_device_classes
+        })),
         error: None,
     });
     tx.send(result).await.map_err(|e| e.to_string())

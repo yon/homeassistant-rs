@@ -4,6 +4,7 @@
 //! Rust implementation: EntityId, State, Event, Context, and ServiceCall.
 
 mod context;
+pub mod domains;
 mod entity_id;
 mod event;
 mod service_call;

@@ -100,6 +100,15 @@ pub enum IncomingMessage {
         #[serde(default)]
         event_data: Option<serde_json::Value>,
     },
+    #[serde(rename = "frontend/get_icons")]
+    FrontendGetIcons {
+        id: u64,
+        /// Icon category: entity, entity_component, services, conditions, triggers
+        category: String,
+        /// Optional list of integrations to get icons for
+        #[serde(default)]
+        integration: Option<Vec<String>>,
+    },
     #[serde(rename = "frontend/get_themes")]
     FrontendGetThemes {
         id: u64,
@@ -297,6 +306,10 @@ pub enum IncomingMessage {
     ScriptConfig {
         id: u64,
         entity_id: String,
+    },
+    #[serde(rename = "sensor/numeric_device_classes")]
+    SensorNumericDeviceClasses {
+        id: u64,
     },
     #[serde(rename = "system_log/list")]
     SystemLogList {

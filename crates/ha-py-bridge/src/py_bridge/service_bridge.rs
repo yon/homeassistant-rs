@@ -187,36 +187,14 @@ fn json_to_pyobject(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObj
     }
 }
 
+// Use shared pyobject_to_json from py_utils module (handles UNDEFINED filtering)
+use super::py_utils::pyobject_to_json as py_utils_to_json;
+
 /// Convert a Python object to serde_json::Value
 #[allow(clippy::only_used_in_recursion)]
-fn pyobject_to_json(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
-    if obj.is_none() {
-        Ok(serde_json::Value::Null)
-    } else if let Ok(b) = obj.extract::<bool>() {
-        Ok(serde_json::Value::Bool(b))
-    } else if let Ok(i) = obj.extract::<i64>() {
-        Ok(serde_json::json!(i))
-    } else if let Ok(f) = obj.extract::<f64>() {
-        Ok(serde_json::json!(f))
-    } else if let Ok(s) = obj.extract::<String>() {
-        Ok(serde_json::Value::String(s))
-    } else if let Ok(list) = obj.downcast::<pyo3::types::PyList>() {
-        let arr: Result<Vec<_>, _> = list
-            .iter()
-            .map(|item| pyobject_to_json(py, &item))
-            .collect();
-        Ok(serde_json::Value::Array(arr?))
-    } else if let Ok(dict) = obj.downcast::<PyDict>() {
-        let mut map = serde_json::Map::new();
-        for (k, v) in dict.iter() {
-            let key: String = k.extract()?;
-            map.insert(key, pyobject_to_json(py, &v)?);
-        }
-        Ok(serde_json::Value::Object(map))
-    } else {
-        // Try to convert to string as fallback
-        Ok(serde_json::Value::String(obj.str()?.to_string()))
-    }
+fn pyobject_to_json(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
+    // Delegate to the shared implementation that handles UNDEFINED
+    py_utils_to_json(obj)
 }
 
 /// Convert a Rust Context to Python object

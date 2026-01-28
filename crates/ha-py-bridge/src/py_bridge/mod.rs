@@ -39,6 +39,7 @@ mod config_flow;
 mod errors;
 pub mod hass_wrapper;
 mod integration;
+mod py_utils;
 mod pyclass_wrappers;
 mod requirements;
 mod runtime;

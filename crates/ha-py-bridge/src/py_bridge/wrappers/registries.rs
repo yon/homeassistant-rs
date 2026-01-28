@@ -120,54 +120,102 @@ impl RegistriesWrapper {
         Ok(entry.id.clone())
     }
 
-    /// Register an entity and return its entry info
+    /// Register an entity and return its entry info with resolved entity_id
+    ///
+    /// This method looks up the entity_id from the registry by unique_id.
+    /// If an entry exists with the same (platform, unique_id), uses that entity_id.
+    /// Otherwise generates a new entity_id.
     ///
     /// # Arguments
-    /// * `platform` - Platform name (e.g., "light", "sensor")
-    /// * `entity_id` - The entity ID (e.g., "light.living_room")
-    /// * `unique_id` - Optional unique identifier for the entity
+    /// * `domain` - Entity domain (e.g., "sensor", "light")
+    /// * `platform` - Integration platform name (e.g., "airthings", "hue")
+    /// * `unique_id` - Unique identifier for the entity
+    /// * `suggested_object_id` - Suggested object_id for new entities (e.g., "living_room")
     /// * `config_entry_id` - The config entry that owns this entity
     /// * `device_id` - Optional device ID to link this entity to
     /// * `name` - Optional entity name
-    #[pyo3(signature = (platform, entity_id, unique_id=None, config_entry_id=None, device_id=None, name=None))]
+    /// * `original_device_class` - Optional device class (e.g., "temperature", "humidity")
+    #[pyo3(signature = (domain, platform, unique_id, suggested_object_id=None, config_entry_id=None, device_id=None, name=None, original_device_class=None))]
     fn register_entity(
         &self,
         py: Python<'_>,
+        domain: &str,
         platform: &str,
-        entity_id: &str,
-        unique_id: Option<&str>,
+        unique_id: &str,
+        suggested_object_id: Option<&str>,
         config_entry_id: Option<&str>,
         device_id: Option<&str>,
         name: Option<&str>,
+        original_device_class: Option<&str>,
     ) -> PyResult<PyObject> {
+        // First, check if entity with this (platform, unique_id) already exists
+        let existing = self
+            .registries
+            .entities
+            .get_by_platform_unique_id(platform, unique_id);
+
+        // Determine the entity_id to use
+        let entity_id = if let Some(ref existing_entry) = existing {
+            // Entity exists - use its current entity_id
+            tracing::debug!(
+                entity_id = %existing_entry.entity_id,
+                unique_id = %unique_id,
+                platform = %platform,
+                "Found existing entity_id in registry"
+            );
+            existing_entry.entity_id.clone()
+        } else {
+            // New entity - generate entity_id
+            let object_id = suggested_object_id
+                .map(String::from)
+                .unwrap_or_else(|| format!("{}_{}", platform, unique_id));
+            let generated = self
+                .registries
+                .entities
+                .generate_entity_id(domain, &object_id, None, None);
+            tracing::debug!(
+                entity_id = %generated,
+                unique_id = %unique_id,
+                platform = %platform,
+                "Generated new entity_id"
+            );
+            generated
+        };
+
+        // Get or create the entry with the resolved entity_id
         let mut entry = self.registries.entities.get_or_create(
             platform,
-            entity_id,
-            unique_id,
+            &entity_id,
+            Some(unique_id),
             config_entry_id,
             device_id,
         );
 
-        // Update name if provided
-        if let Some(n) = name {
-            // Safe to unwrap since we just created/retrieved the entry
+        // Update name and device_class if provided
+        if name.is_some() || original_device_class.is_some() {
             entry = self
                 .registries
                 .entities
                 .update(&entry.entity_id, |e| {
-                    e.name = Some(n.to_string());
+                    if let Some(n) = name {
+                        e.name = Some(n.to_string());
+                    }
+                    if let Some(dc) = original_device_class {
+                        e.original_device_class = Some(dc.to_string());
+                    }
                 })
                 .expect("Entity should exist after get_or_create");
         }
 
         tracing::info!(
-            entity_id = %entity_id,
+            entity_id = %entry.entity_id,
+            unique_id = %unique_id,
             platform = %platform,
             device_id = ?device_id,
             "Registered entity in Rust registry"
         );
 
-        // Return entry info as a dict
+        // Return entry info as a dict - entity_id is the key field for Python
         let dict = PyDict::new_bound(py);
         dict.set_item("entity_id", &entry.entity_id)?;
         dict.set_item("unique_id", &entry.unique_id)?;
@@ -188,5 +236,18 @@ impl RegistriesWrapper {
     /// Get entity count
     fn entity_count(&self) -> usize {
         self.registries.entities.len()
+    }
+
+    /// Look up entity_id by platform and unique_id
+    ///
+    /// Returns the entity_id if found, None otherwise.
+    /// Used to map unique_id to human-readable entity_id from the registry.
+    #[pyo3(signature = (domain, platform, unique_id))]
+    fn get_entity_id(&self, domain: &str, platform: &str, unique_id: &str) -> Option<String> {
+        self.registries
+            .entities
+            .get_by_platform_unique_id(platform, unique_id)
+            .filter(|e| e.domain() == domain)
+            .map(|e| e.entity_id.clone())
     }
 }
