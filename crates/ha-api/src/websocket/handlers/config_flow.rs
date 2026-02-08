@@ -105,8 +105,8 @@ pub async fn handle_config_entries_flow(
                 success: false,
                 result: None,
                 error: Some(ErrorInfo {
-                    code: "flow_error".to_string(),
-                    message: e,
+                    code: e.error_code().to_string(),
+                    message: e.to_string(),
                 }),
             });
             tx.send(result)
@@ -170,8 +170,8 @@ pub async fn handle_config_entries_flow_progress(
                 success: false,
                 result: None,
                 error: Some(ErrorInfo {
-                    code: "flow_error".to_string(),
-                    message: e,
+                    code: e.error_code().to_string(),
+                    message: e.to_string(),
                 }),
             });
             tx.send(result)
