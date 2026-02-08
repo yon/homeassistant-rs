@@ -199,8 +199,8 @@ audit: ## Run security audit (requires cargo-audit)
 deps: ## Check for outdated dependencies (requires cargo-outdated)
 	cargo outdated --workspace
 
-.PHONY: quality-score
-quality-score: ## Run quality score (0-100) against quality gates
+.PHONY: score
+score: ## Run score (0-100) against quality gates
 	@python3 scripts/score.py --summary
 
 .PHONY: tree
