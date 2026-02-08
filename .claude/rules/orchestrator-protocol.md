@@ -51,7 +51,7 @@ Select relevant agents based on change type:
 - Max 5 review-fix rounds
 
 ### Step 7: Score
-Run `python3 scripts/quality_score.py --summary` for quality gate assessment.
+Run `python3 scripts/score.py --summary` for quality gate assessment.
 
 ### Step 8: Present Results
 Show the user:

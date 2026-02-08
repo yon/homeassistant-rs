@@ -9,9 +9,9 @@ Thresholds:
   95+ = Release-ready (production quality, performance validated)
 
 Usage:
-  python3 scripts/quality_score.py --summary
-  python3 scripts/quality_score.py --verbose
-  python3 scripts/quality_score.py --json
+  python3 scripts/score.py --summary
+  python3 scripts/score.py --verbose
+  python3 scripts/score.py --json
 """
 
 import argparse
@@ -146,6 +146,124 @@ def check_security(qs):
     return True
 
 
+def check_test_coverage(qs):
+    """Check test coverage ratio per crate with tiered scoring.
+
+    Scoring hierarchy (best to worst):
+      1. HA native tests (from tests/ha_compat/) — gold standard
+      2. Rust unit tests (#[test] in source) — proves correctness
+      3. No tests — significant penalty
+
+    Crates covered by HA compat tests get more credit at the same
+    Rust unit test ratio than crates without HA compat coverage.
+    """
+    crates_dir = Path("crates")
+    if not crates_dir.exists():
+        return
+
+    # Crates directly exercised by HA's own test suite (tests/ha_compat/)
+    ha_compat_covered = {
+        "ha-api",              # websocket_commands, api, config_flow
+        "ha-automation",       # trigger, condition
+        "ha-config-entries",   # config_entries, config_entries_state
+        "ha-core",             # state, statemachine, eventbus, event, context
+        "ha-event-bus",        # eventbus, helper_event
+        "ha-py-bridge",        # shim_entity, shim_exceptions
+        "ha-registries",       # entity/device/area/floor/label registries
+        "ha-script",           # script
+        "ha-service-registry", # service, helper_service
+        "ha-state-store",      # state, statemachine, helper_state
+        "ha-template",         # template
+    }
+
+    crate_stats = []
+
+    for crate_dir in sorted(crates_dir.iterdir()):
+        src_dir = crate_dir / "src"
+        if not src_dir.is_dir():
+            continue
+
+        test_count = 0
+        pub_fn_count = 0
+
+        for rs_file in src_dir.rglob("*.rs"):
+            try:
+                content = rs_file.read_text()
+            except Exception:
+                continue
+
+            # Split on #[cfg(test)] — count pub fns only before test modules
+            parts = re.split(r"#\[cfg\(test\)\]", content)
+            non_test_code = parts[0] if parts else content
+
+            # Count pub fn/pub async fn in non-test code
+            pub_fn_count += len(re.findall(
+                r"^\s*pub\s+(?:async\s+)?fn\s+\w+", non_test_code, re.MULTILINE
+            ))
+
+            # Count #[test] and #[tokio::test] in entire file
+            test_count += len(re.findall(
+                r"#\[(?:tokio::)?test", content
+            ))
+
+        crate_name = crate_dir.name
+        if pub_fn_count == 0:
+            continue  # Skip stubs
+
+        has_ha_compat = crate_name in ha_compat_covered
+        ratio = test_count / pub_fn_count
+
+        # Assign tier and penalty
+        if has_ha_compat:
+            if ratio >= 0.7:
+                tier, penalty = "A", 0
+            elif ratio >= 0.3:
+                tier, penalty = "B", 0
+            else:
+                tier, penalty = "B-", 1
+        else:
+            if ratio >= 0.9:
+                tier, penalty = "B", 0
+            elif ratio >= 0.7:
+                tier, penalty = "C+", 1
+            elif ratio >= 0.5:
+                tier, penalty = "C", 2
+            elif ratio >= 0.3:
+                tier, penalty = "D", 3
+            elif test_count > 0:
+                tier, penalty = "D-", 4
+            else:
+                tier, penalty = "F", 5
+
+        crate_stats.append({
+            "name": crate_name,
+            "tests": test_count,
+            "pub_fns": pub_fn_count,
+            "ratio": round(ratio, 2),
+            "ha_compat": has_ha_compat,
+            "tier": tier,
+            "penalty": penalty,
+        })
+
+    # Sum penalties with cap
+    total_penalty = min(30, sum(c["penalty"] for c in crate_stats))
+    undertested = [c for c in crate_stats if c["penalty"] > 0]
+
+    if total_penalty > 0:
+        details = "; ".join(
+            f"{c['name']} [{c['tier']}] -{c['penalty']}"
+            for c in undertested
+        )
+        qs.deduct(total_penalty, "test_coverage",
+                  f"Undertested crates ({total_penalty}pts): {details}", "major")
+
+    qs.checks["test_coverage"] = {
+        "status": "WARN" if total_penalty > 0 else "PASS",
+        "total_penalty": total_penalty,
+        "crates": crate_stats,
+    }
+
+
 def check_source_heuristics(qs):
     """Scan source code for quality heuristics."""
     src_dirs = [Path("crates")]
@@ -240,6 +358,7 @@ def main():
     check_lint(qs)
     check_alphabetization(qs)
     check_source_heuristics(qs)
+    check_test_coverage(qs)
 
     # Security is non-blocking
     check_security(qs)
@@ -273,6 +392,16 @@ def _output(qs, args):
         for name, result in qs.checks.items():
             status = result.get("status", "?")
             print(f"  {name}: {status}")
+
+        # Show per-crate test coverage breakdown
+        tc = qs.checks.get("test_coverage")
+        if tc and tc.get("crates"):
+            print("\nTest Coverage (HA compat > Rust unit > none):")
+            for c in sorted(tc["crates"], key=lambda x: x["name"]):
+                ha = "HA" if c["ha_compat"] else "  "
+                pen = f"-{c['penalty']}" if c["penalty"] > 0 else " 0"
+                print(f"  {c['name']:<22} {c['tier']:>2}  {c['tests']:>3}/{c['pub_fns']:<3} "
+                      f"({c['ratio']:.2f}x)  {ha}  {pen}")
 
         if qs.deductions:
             print("\nDeductions:")

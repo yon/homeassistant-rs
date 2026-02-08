@@ -201,7 +201,7 @@ deps: ## Check for outdated dependencies (requires cargo-outdated)
 
 .PHONY: quality-score
 quality-score: ## Run quality score (0-100) against quality gates
-	@python3 scripts/quality_score.py --summary
+	@python3 scripts/score.py --summary
 
 .PHONY: tree
 tree: ## Display dependency tree

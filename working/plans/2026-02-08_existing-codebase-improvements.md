@@ -13,7 +13,7 @@
 | Lint | PASS (clippy + fmt) |
 | Quality Score | 83/100 (COMMIT threshold met) |
 | HA Compat | 76/77 (99%) |
-| Alphabetization | 1 error (scripts/quality_score.py) |
+| Alphabetization | 1 error (scripts/score.py) |
 
 ### Quality Score Deductions
 
@@ -159,7 +159,7 @@ ha-api has ~14 undocumented public types (WebSocket message structs, auth types)
 
 **Severity: MINOR** | **Impact: -2 quality points**
 
-`scripts/quality_score.py:34`: Method `deduct` appears before `bonus` in class `QualityScore`.
+`scripts/score.py:34`: Method `deduct` appears before `bonus` in class `QualityScore`.
 
 ---
 
@@ -170,7 +170,7 @@ ha-api has ~14 undocumented public types (WebSocket message structs, auth types)
 These can be done in 1-2 sessions and immediately improve the quality score.
 
 #### T1.1: Fix alphabetization error
-- **Files**: `scripts/quality_score.py`
+- **Files**: `scripts/score.py`
 - **Effort**: 5 minutes
 - **Impact**: +2 quality points
 
@@ -285,7 +285,7 @@ These are significant efforts that should be planned individually.
 ### Session 1: Quick Wins (T1.1 through T1.5)
 **Goal**: Quality score from 83 to 90+
 **Time**: ~2 hours
-**Verification**: `make dev`, `python3 scripts/quality_score.py --verbose`
+**Verification**: `make dev`, `python3 scripts/score.py --verbose`
 
 ### Session 2: Error Handling (T2.1)
 **Goal**: Typed errors in ha-api
@@ -324,7 +324,7 @@ These are significant efforts that should be planned individually.
 - [ ] `make test-rust` — all tests green
 - [ ] `make lint` — zero warnings
 - [ ] `./scripts/lint-alpha.py --all` — zero violations
-- [ ] `python3 scripts/quality_score.py --summary` — score >= 90 after Tier 1+2
+- [ ] `python3 scripts/score.py --summary` — score >= 90 after Tier 1+2
 - [ ] `make test-ha-compat` — no regressions (76/77)
 
 ## Risks & Notes
@@ -332,4 +332,4 @@ These are significant efforts that should be planned individually.
 - **ha-registries zero tests**: The comment says "covered by HA native tests". This is true (76/77 pass), but it means `cargo test` alone is blind to registry regressions. Adding Rust unit tests provides defense-in-depth without removing the ha-compat tests.
 - **ha-api error refactor**: Changing 68 function signatures is high-churn. Do it in a single focused PR to minimize merge conflicts. Consider using the agent team pattern (T2.1 is a good candidate for `/team-implement`).
 - **Auth bypass TODO**: The `connection.rs:220` TODO that accepts any token is a security issue. It should be prioritized regardless of quality score impact.
-- **God function threshold**: The quality_score.py counts 48 (not all 129) because it likely uses a different metric or sampling. The 50-line rule from CLAUDE.md is the project convention.
+- **God function threshold**: The score.py counts 48 (not all 129) because it likely uses a different metric or sampling. The 50-line rule from CLAUDE.md is the project convention.

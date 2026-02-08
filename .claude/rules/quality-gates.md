@@ -60,7 +60,7 @@ make audit    # cargo audit for known vulnerabilities
 ### Gate 5: Quality Score (Advisory)
 
 ```bash
-python3 scripts/quality_score.py --summary
+python3 scripts/score.py --summary
 ```
 
 - Score >= 80: auto-commit eligible
@@ -89,4 +89,4 @@ python3 scripts/quality_score.py --summary
 | Lint | `make lint` | Zero warnings | Always |
 | Alphabetization | `./scripts/lint-alpha.py --all` | Zero violations | Always |
 | Security | `make audit` | Zero critical | Dependency/auth changes |
-| Quality Score | `scripts/quality_score.py` | >= 80 preferred | Always (advisory) |
+| Quality Score | `scripts/score.py` | >= 80 preferred | Always (advisory) |

@@ -10,7 +10,7 @@ Refactor code safely: verify tests pass before AND after.
 
 1. **Baseline** — Run `make test-rust` and capture results
 2. **Plan** — Enter plan mode, identify what to refactor and why
-3. **Save plan** — Write to `quality_reports/plans/YYYY-MM-DD_description.md`
+3. **Save plan** — Write to `working/plans/YYYY-MM-DD_description.md`
 4. **Approval** — Present plan, wait for user OK
 5. **Add tests** — If coverage gaps exist, add tests FIRST
 6. **Refactor** — Make changes incrementally

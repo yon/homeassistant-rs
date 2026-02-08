@@ -8,7 +8,7 @@ Spawn implementation subagents working on different crates in parallel, with sep
 
 ## Execution
 
-1. Read the approved plan from `quality_reports/plans/`
+1. Read the approved plan from `working/plans/`
 2. Partition work by crate — each subagent owns specific files
 3. Spawn implementation Task calls **in the same response**:
 
@@ -32,7 +32,7 @@ Task(subagent_type="senior-code-reviewer",
 ## Arguments
 
 - `/team-implement` — use most recent approved plan
-- `/team-implement quality_reports/plans/2026-02-08_feature.md` — specific plan
+- `/team-implement working/plans/2026-02-08_feature.md` — specific plan
 
 ## File Ownership Rules
 

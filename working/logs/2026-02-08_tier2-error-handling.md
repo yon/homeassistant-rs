@@ -14,7 +14,7 @@
 
 ## Changes Made
 
-### T1 Completion: Fix TODO false positives (quality_score.py)
+### T1 Completion: Fix TODO false positives (score.py)
 - Made TODO regex case-sensitive (was catching "todo" HA panel name)
 - Added string literal exclusion to avoid false positives
 - Impact: +5 quality points
@@ -52,7 +52,7 @@
 - God functions (47 remaining, -10 quality points) are Tier 3 architectural work. Next session.
 
 ## Files Modified
-- `scripts/quality_score.py` — TODO regex fix
+- `scripts/score.py` — TODO regex fix
 - `crates/ha-registries/src/error.rs` — NEW: RegistryError
 - `crates/ha-registries/src/lib.rs` — module declaration + re-export
 - `crates/ha-registries/src/area_registry.rs` — typed errors + 4 tests

@@ -68,11 +68,11 @@ homeassistant-rs/
 │   ├── comparison/             # Docker-based API comparison
 │   └── fixtures/               # Test fixtures
 ├── vendor/ha-core/             # Git submodule: Home Assistant core
-├── scripts/                    # lint-alpha.py, quality_score.py
+├── scripts/                    # lint-alpha.py, score.py
 ├── docs/                       # Architecture, plans
-├── quality_reports/            # Plans and session logs
+├── working/            # Plans and session logs
 │   ├── plans/                  # Implementation plans
-│   └── session_logs/           # Session history
+│   └── logs/           # Session history
 └── config/                     # Sample HA configuration
 ```
 

@@ -11,7 +11,7 @@ Complete workflow: plan → test → implement → verify → review.
 ### Phase 1: Plan
 1. Enter plan mode (`EnterPlanMode`)
 2. Draft implementation plan — which crate(s), HA compat impact, tests needed
-3. Save plan to `quality_reports/plans/YYYY-MM-DD_description.md`
+3. Save plan to `working/plans/YYYY-MM-DD_description.md`
 4. Get user approval before proceeding
 
 ### Phase 2: TDD Red (Write Failing Tests)
@@ -45,7 +45,7 @@ Task(subagent_type="security-code-auditor",
 
 ### Phase 7: Fix & Score
 15. Address Critical/Major review findings (max 3 rounds)
-16. Run `python3 scripts/quality_score.py --summary`
+16. Run `python3 scripts/score.py --summary`
 17. Present summary with quality score
 
 ## Arguments

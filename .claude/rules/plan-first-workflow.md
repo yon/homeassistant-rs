@@ -19,7 +19,7 @@ A task is "non-trivial" if it involves:
 
 1. **Enter Plan Mode** — use `EnterPlanMode` to switch to planning
 2. **Draft the plan** — outline what will change, which files are affected, and in what order
-3. **Save the plan** — write it to `quality_reports/plans/` (see Rule 2)
+3. **Save the plan** — write it to `working/plans/` (see Rule 2)
 4. **Present to user** — explain the plan and wait for approval
 5. **Only after approval** — exit plan mode
 6. **Immediately save initial session log** — capture the goal, plan summary, and key context while it's fresh (see Rule 5)
@@ -54,7 +54,7 @@ You may skip plan mode for:
 ### Where to Save
 
 ```
-quality_reports/plans/
+working/plans/
 ├── 2026-02-07_add-websocket-endpoint.md
 ├── 2026-02-07_refactor-state-store.md
 └── ...
@@ -125,7 +125,7 @@ quality_reports/plans/
 If starting a new session (or after heavy compression):
 
 1. Read `CLAUDE.md` for project context
-2. Read the most recent plan in `quality_reports/plans/`
+2. Read the most recent plan in `working/plans/`
 3. Check `git log --oneline -10` for recent changes
 4. Check `git diff` for any uncommitted work
 5. State what you understand the current task to be
@@ -144,7 +144,7 @@ Common categories: `pattern`, `rust`, `python`, `test`, `convention`, `ha-compat
 
 ## Rule 5: Session Logging
 
-**Session logs live at `quality_reports/session_logs/YYYY-MM-DD_description.md`.**
+**Session logs live at `working/logs/YYYY-MM-DD_description.md`.**
 
 ### 5a. Post-Plan Log — Immediately after plan approval, create the session log file
 ### 5b. Incremental Logging — Append 1-3 line entries as significant events happen
