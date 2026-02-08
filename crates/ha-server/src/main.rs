@@ -3,6 +3,7 @@
 //! Main entry point for the Home Assistant Rust implementation.
 
 mod automation_engine;
+mod services;
 
 use anyhow::Result;
 use ha_api::{
@@ -138,286 +139,93 @@ impl HomeAssistant {
 
     /// Register core services
     fn register_core_services(&self) {
-        let states = self.states.clone();
+        use services::{register_state_service, register_stub_service, register_toggle_service};
 
-        // Helper to create entity target spec
-        let entity_target = || Some(json!({}));
-
-        // Register homeassistant.turn_on service
-        let states_clone = states.clone();
-        self.services.register_with_description(
-            ServiceDescription {
-                domain: "homeassistant".to_string(),
-                service: "turn_on".to_string(),
-                name: None,
-                description: None,
-                schema: None,
-                target: entity_target(),
-                supports_response: SupportsResponse::None,
-            },
-            move |call: ServiceCall| {
-                let states = states_clone.clone();
-                async move {
-                    if let Some(entity_id) =
-                        call.service_data.get("entity_id").and_then(|v| v.as_str())
-                    {
-                        let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
-                        if parts.len() == 2 {
-                            if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
-                                states.set(entity, STATE_ON, HashMap::new(), Context::new());
-                            }
-                        }
-                    }
-                    Ok(None)
-                }
-            },
+        // State-modifying services
+        register_state_service(
+            &self.services,
+            &self.states,
+            "homeassistant",
+            "turn_on",
+            STATE_ON,
+            None,
+            false,
         );
-
-        // Register homeassistant.turn_off service
-        let states_clone = states.clone();
-        self.services.register_with_description(
-            ServiceDescription {
-                domain: "homeassistant".to_string(),
-                service: "turn_off".to_string(),
-                name: None,
-                description: None,
-                schema: None,
-                target: entity_target(),
-                supports_response: SupportsResponse::None,
-            },
-            move |call: ServiceCall| {
-                let states = states_clone.clone();
-                async move {
-                    if let Some(entity_id) =
-                        call.service_data.get("entity_id").and_then(|v| v.as_str())
-                    {
-                        let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
-                        if parts.len() == 2 {
-                            if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
-                                states.set(entity, STATE_OFF, HashMap::new(), Context::new());
-                            }
-                        }
-                    }
-                    Ok(None)
-                }
-            },
+        register_state_service(
+            &self.services,
+            &self.states,
+            "homeassistant",
+            "turn_off",
+            STATE_OFF,
+            None,
+            false,
         );
+        register_toggle_service(&self.services, &self.states, "homeassistant", None);
 
-        // Register homeassistant.toggle service
-        let states_clone = states.clone();
-        self.services.register_with_description(
-            ServiceDescription {
-                domain: "homeassistant".to_string(),
-                service: "toggle".to_string(),
-                name: None,
-                description: None,
-                schema: None,
-                target: entity_target(),
-                supports_response: SupportsResponse::None,
-            },
-            move |call: ServiceCall| {
-                let states = states_clone.clone();
-                async move {
-                    if let Some(entity_id) =
-                        call.service_data.get("entity_id").and_then(|v| v.as_str())
-                    {
-                        if let Some(state) = states.get(entity_id) {
-                            let new_state = if state.state == STATE_ON {
-                                STATE_OFF
-                            } else {
-                                STATE_ON
-                            };
-                            let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
-                            if parts.len() == 2 {
-                                if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
-                                    states.set(
-                                        entity,
-                                        new_state,
-                                        state.attributes.clone(),
-                                        Context::new(),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    Ok(None)
-                }
-            },
+        // Stub services (alphabetized by service name)
+        register_stub_service(&self.services, "homeassistant", "check_config", None, None);
+        register_stub_service(
+            &self.services,
+            "homeassistant",
+            "reload_all",
+            None,
+            Some("Reload all requested"),
         );
-
-        // Register homeassistant.update_entity service
-        let states_clone = states.clone();
-        self.services.register_with_description(
-            ServiceDescription {
-                domain: "homeassistant".to_string(),
-                service: "update_entity".to_string(),
-                name: None,
-                description: None,
-                schema: None,
-                target: None,
-                supports_response: SupportsResponse::None,
-            },
-            move |call: ServiceCall| {
-                let _states = states_clone.clone();
-                async move {
-                    // In a real implementation, this would request entities to update
-                    info!("update_entity called: {:?}", call.service_data);
-                    Ok(None)
-                }
-            },
+        register_stub_service(
+            &self.services,
+            "homeassistant",
+            "reload_config_entry",
+            Some(json!({})),
+            Some("Reload config entry requested"),
         );
-
-        // Register homeassistant.check_config service
-        self.services.register_with_description(
-            ServiceDescription {
-                domain: "homeassistant".to_string(),
-                service: "check_config".to_string(),
-                name: None,
-                description: None,
-                schema: None,
-                target: None,
-                supports_response: SupportsResponse::None,
-            },
-            |_call: ServiceCall| async move {
-                // Return success - config check passed
-                Ok(None)
-            },
+        register_stub_service(
+            &self.services,
+            "homeassistant",
+            "reload_core_config",
+            None,
+            Some("Reloading core config"),
         );
-
-        // Register homeassistant.reload_core_config service
-        self.services.register_with_description(
-            ServiceDescription {
-                domain: "homeassistant".to_string(),
-                service: "reload_core_config".to_string(),
-                name: None,
-                description: None,
-                schema: None,
-                target: None,
-                supports_response: SupportsResponse::None,
-            },
-            |_call: ServiceCall| async move {
-                info!("Reloading core config");
-                Ok(None)
-            },
+        register_stub_service(
+            &self.services,
+            "homeassistant",
+            "reload_custom_templates",
+            None,
+            Some("Reload custom templates requested"),
         );
-
-        // Register homeassistant.restart service
-        self.services.register_with_description(
-            ServiceDescription {
-                domain: "homeassistant".to_string(),
-                service: "restart".to_string(),
-                name: None,
-                description: None,
-                schema: None,
-                target: None,
-                supports_response: SupportsResponse::None,
-            },
-            |_call: ServiceCall| async move {
-                info!("Restart requested (not implemented in test mode)");
-                Ok(None)
-            },
+        register_stub_service(
+            &self.services,
+            "homeassistant",
+            "restart",
+            None,
+            Some("Restart requested (not implemented in test mode)"),
         );
-
-        // Register homeassistant.stop service
-        self.services.register_with_description(
-            ServiceDescription {
-                domain: "homeassistant".to_string(),
-                service: "stop".to_string(),
-                name: None,
-                description: None,
-                schema: None,
-                target: None,
-                supports_response: SupportsResponse::None,
-            },
-            |_call: ServiceCall| async move {
-                info!("Stop requested (not implemented in test mode)");
-                Ok(None)
-            },
+        register_stub_service(
+            &self.services,
+            "homeassistant",
+            "save_persistent_states",
+            None,
+            Some("Save persistent states requested"),
         );
-
-        // Register homeassistant.reload_all service
-        self.services.register_with_description(
-            ServiceDescription {
-                domain: "homeassistant".to_string(),
-                service: "reload_all".to_string(),
-                name: None,
-                description: None,
-                schema: None,
-                target: None,
-                supports_response: SupportsResponse::None,
-            },
-            |_call: ServiceCall| async move {
-                info!("Reload all requested");
-                Ok(None)
-            },
+        register_stub_service(
+            &self.services,
+            "homeassistant",
+            "set_location",
+            None,
+            Some("Set location requested"),
         );
-
-        // Register homeassistant.reload_config_entry service
-        self.services.register_with_description(
-            ServiceDescription {
-                domain: "homeassistant".to_string(),
-                service: "reload_config_entry".to_string(),
-                name: None,
-                description: None,
-                schema: None,
-                target: entity_target(),
-                supports_response: SupportsResponse::None,
-            },
-            |_call: ServiceCall| async move {
-                info!("Reload config entry requested");
-                Ok(None)
-            },
+        register_stub_service(
+            &self.services,
+            "homeassistant",
+            "stop",
+            None,
+            Some("Stop requested (not implemented in test mode)"),
         );
-
-        // Register homeassistant.reload_custom_templates service
-        self.services.register_with_description(
-            ServiceDescription {
-                domain: "homeassistant".to_string(),
-                service: "reload_custom_templates".to_string(),
-                name: None,
-                description: None,
-                schema: None,
-                target: None,
-                supports_response: SupportsResponse::None,
-            },
-            |_call: ServiceCall| async move {
-                info!("Reload custom templates requested");
-                Ok(None)
-            },
-        );
-
-        // Register homeassistant.save_persistent_states service
-        self.services.register_with_description(
-            ServiceDescription {
-                domain: "homeassistant".to_string(),
-                service: "save_persistent_states".to_string(),
-                name: None,
-                description: None,
-                schema: None,
-                target: None,
-                supports_response: SupportsResponse::None,
-            },
-            |_call: ServiceCall| async move {
-                info!("Save persistent states requested");
-                Ok(None)
-            },
-        );
-
-        // Register homeassistant.set_location service
-        self.services.register_with_description(
-            ServiceDescription {
-                domain: "homeassistant".to_string(),
-                service: "set_location".to_string(),
-                name: None,
-                description: None,
-                schema: None,
-                target: None,
-                supports_response: SupportsResponse::None,
-            },
-            |_call: ServiceCall| async move {
-                info!("Set location requested");
-                Ok(None)
-            },
+        register_stub_service(
+            &self.services,
+            "homeassistant",
+            "update_entity",
+            None,
+            Some("update_entity called"),
         );
 
         info!("Core services registered");
@@ -635,23 +443,13 @@ impl HomeAssistant {
             },
         );
 
-        // Register automation.reload service
-        self.services.register_with_description(
-            ServiceDescription {
-                domain: "automation".to_string(),
-                service: "reload".to_string(),
-                name: None,
-                description: None,
-                schema: None,
-                target: None,
-                supports_response: SupportsResponse::None,
-            },
-            |_call: ServiceCall| async move {
-                // Note: Full reload would require reloading from config
-                // For now, just log the request
-                info!("Reloading automations (not fully implemented)");
-                Ok(None)
-            },
+        // automation.reload stub
+        services::register_stub_service(
+            &self.services,
+            "automation",
+            "reload",
+            None,
+            Some("Reloading automations (not fully implemented)"),
         );
 
         info!("Automation services registered");
@@ -659,149 +457,33 @@ impl HomeAssistant {
 
     /// Register script domain services
     fn register_script_services(&self) {
-        let states = self.states.clone();
+        use services::{register_state_service, register_stub_service, register_toggle_service};
 
-        // Helper for script entity target
-        let script_target = || {
-            Some(json!({
-                "entity": {
-                    "domain": "script"
-                }
-            }))
-        };
-
-        // Register script.turn_on service - run the script
-        let states_clone = states.clone();
-        self.services.register_with_description(
-            ServiceDescription {
-                domain: "script".to_string(),
-                service: "turn_on".to_string(),
-                name: None,
-                description: None,
-                schema: None,
-                target: script_target(),
-                supports_response: SupportsResponse::None,
-            },
-            move |call: ServiceCall| {
-                let states = states_clone.clone();
-                async move {
-                    if let Some(entity_id) =
-                        call.service_data.get("entity_id").and_then(|v| v.as_str())
-                    {
-                        if let Some(state) = states.get(entity_id) {
-                            let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
-                            if parts.len() == 2 && parts[0] == "script" {
-                                if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
-                                    // Set to "on" while running (scripts run once then go to off)
-                                    states.set(
-                                        entity,
-                                        STATE_ON,
-                                        state.attributes.clone(),
-                                        Context::new(),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    Ok(None)
-                }
-            },
+        register_state_service(
+            &self.services,
+            &self.states,
+            "script",
+            "turn_on",
+            STATE_ON,
+            Some("script"),
+            true,
         );
-
-        // Register script.turn_off service - stop the script
-        let states_clone = states.clone();
-        self.services.register_with_description(
-            ServiceDescription {
-                domain: "script".to_string(),
-                service: "turn_off".to_string(),
-                name: None,
-                description: None,
-                schema: None,
-                target: script_target(),
-                supports_response: SupportsResponse::None,
-            },
-            move |call: ServiceCall| {
-                let states = states_clone.clone();
-                async move {
-                    if let Some(entity_id) =
-                        call.service_data.get("entity_id").and_then(|v| v.as_str())
-                    {
-                        if let Some(state) = states.get(entity_id) {
-                            let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
-                            if parts.len() == 2 && parts[0] == "script" {
-                                if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
-                                    states.set(
-                                        entity,
-                                        STATE_OFF,
-                                        state.attributes.clone(),
-                                        Context::new(),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    Ok(None)
-                }
-            },
+        register_state_service(
+            &self.services,
+            &self.states,
+            "script",
+            "turn_off",
+            STATE_OFF,
+            Some("script"),
+            true,
         );
-
-        // Register script.toggle service
-        let states_clone = states.clone();
-        self.services.register_with_description(
-            ServiceDescription {
-                domain: "script".to_string(),
-                service: "toggle".to_string(),
-                name: None,
-                description: None,
-                schema: None,
-                target: script_target(),
-                supports_response: SupportsResponse::None,
-            },
-            move |call: ServiceCall| {
-                let states = states_clone.clone();
-                async move {
-                    if let Some(entity_id) =
-                        call.service_data.get("entity_id").and_then(|v| v.as_str())
-                    {
-                        if let Some(state) = states.get(entity_id) {
-                            let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
-                            if parts.len() == 2 && parts[0] == "script" {
-                                let new_state = if state.state == STATE_ON {
-                                    STATE_OFF
-                                } else {
-                                    STATE_ON
-                                };
-                                if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
-                                    states.set(
-                                        entity,
-                                        new_state,
-                                        state.attributes.clone(),
-                                        Context::new(),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    Ok(None)
-                }
-            },
-        );
-
-        // Register script.reload service
-        self.services.register_with_description(
-            ServiceDescription {
-                domain: "script".to_string(),
-                service: "reload".to_string(),
-                name: None,
-                description: None,
-                schema: None,
-                target: None,
-                supports_response: SupportsResponse::None,
-            },
-            |_call: ServiceCall| async move {
-                info!("Reloading scripts");
-                Ok(None)
-            },
+        register_toggle_service(&self.services, &self.states, "script", Some("script"));
+        register_stub_service(
+            &self.services,
+            "script",
+            "reload",
+            None,
+            Some("Reloading scripts"),
         );
 
         info!("Script services registered");
