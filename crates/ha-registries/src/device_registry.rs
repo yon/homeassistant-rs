@@ -1505,5 +1505,260 @@ pub fn compute_device_changed_fields(old: &DeviceEntry, new: &DeviceEntry) -> Ve
     changed
 }
 
-// Unit tests removed - covered by HA native tests via `make ha-compat-test`
-// See tests/ha_compat/ for comprehensive DeviceRegistry testing through Python bindings
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::Storage;
+
+    fn test_registry() -> DeviceRegistry {
+        let storage = Arc::new(Storage::new("/tmp/ha-test-device"));
+        DeviceRegistry::new(storage)
+    }
+
+    // --- format_mac tests ---
+
+    #[test]
+    fn format_mac_colon_separated() {
+        assert_eq!(format_mac("AA:BB:CC:DD:EE:FF"), "aa:bb:cc:dd:ee:ff");
+    }
+
+    #[test]
+    fn format_mac_dash_separated() {
+        assert_eq!(format_mac("AA-BB-CC-DD-EE-FF"), "aa:bb:cc:dd:ee:ff");
+    }
+
+    #[test]
+    fn format_mac_dot_separated() {
+        assert_eq!(format_mac("AABB.CCDD.EEFF"), "aa:bb:cc:dd:ee:ff");
+    }
+
+    #[test]
+    fn format_mac_no_separator() {
+        assert_eq!(format_mac("AABBCCDDEEFF"), "aa:bb:cc:dd:ee:ff");
+    }
+
+    #[test]
+    fn format_mac_unknown_format_unchanged() {
+        assert_eq!(format_mac("not-a-mac"), "not-a-mac");
+    }
+
+    // --- DeviceIdentifier / DeviceConnection tests ---
+
+    #[test]
+    fn device_identifier_key() {
+        let ident = DeviceIdentifier::new("hue", "bridge123");
+        assert_eq!(ident.key(), "hue:bridge123");
+        assert_eq!(ident.domain(), "hue");
+        assert_eq!(ident.id(), "bridge123");
+    }
+
+    #[test]
+    fn device_connection_key() {
+        let conn = DeviceConnection::new("mac", "aa:bb:cc:dd:ee:ff");
+        assert_eq!(conn.key(), "mac:aa:bb:cc:dd:ee:ff");
+        assert_eq!(conn.connection_type(), "mac");
+        assert_eq!(conn.id(), "aa:bb:cc:dd:ee:ff");
+    }
+
+    #[test]
+    fn device_connection_normalized_mac() {
+        let conn = DeviceConnection::normalized("mac", "AA-BB-CC-DD-EE-FF");
+        assert_eq!(conn.id(), "aa:bb:cc:dd:ee:ff");
+    }
+
+    // --- DeviceEntry tests ---
+
+    #[test]
+    fn device_entry_display_name_prefers_user_name() {
+        let mut entry = DeviceEntry::new(Some("Original Name"));
+        assert_eq!(entry.display_name(), "Original Name");
+
+        entry.name_by_user = Some("User Name".to_string());
+        assert_eq!(entry.display_name(), "User Name");
+    }
+
+    #[test]
+    fn device_entry_is_disabled() {
+        let mut entry = DeviceEntry::new(None);
+        assert!(!entry.is_disabled());
+        entry.disabled_by = Some(DisabledBy::User);
+        assert!(entry.is_disabled());
+    }
+
+    #[test]
+    fn device_entry_builder_pattern() {
+        let entry = DeviceEntry::new(Some("Test"))
+            .with_identifier("hue", "bridge1")
+            .with_connection("mac", "aa:bb:cc:dd:ee:ff")
+            .with_config_entry("config1");
+
+        assert_eq!(entry.identifiers.len(), 1);
+        assert_eq!(entry.connections.len(), 1);
+        assert_eq!(entry.config_entries, vec!["config1"]);
+        assert_eq!(entry.primary_config_entry.as_deref(), Some("config1"));
+    }
+
+    // --- DeviceRegistry tests ---
+
+    #[test]
+    fn get_or_create_registers_new_device() {
+        let reg = test_registry();
+        let idents = vec![DeviceIdentifier::new("hue", "bridge1")];
+        let entry = reg.get_or_create(
+            &idents,
+            &[],
+            Some("config1"),
+            None,
+            Some("Hue Bridge"),
+            None,
+        );
+        assert!(reg.get(&entry.id).is_some());
+        assert_eq!(entry.name.as_deref(), Some("Hue Bridge"));
+    }
+
+    #[test]
+    fn get_or_create_returns_existing_by_identifier() {
+        let reg = test_registry();
+        let idents = vec![DeviceIdentifier::new("hue", "bridge1")];
+        let first = reg.get_or_create(&idents, &[], Some("config1"), None, Some("Hue"), None);
+        let second = reg.get_or_create(&idents, &[], Some("config1"), None, Some("Hue"), None);
+        assert_eq!(first.id, second.id);
+    }
+
+    #[test]
+    fn get_or_create_returns_existing_by_connection() {
+        let reg = test_registry();
+        let conns = vec![DeviceConnection::new("mac", "aa:bb:cc:dd:ee:ff")];
+        let first = reg.get_or_create(&[], &conns, Some("config1"), None, Some("Dev"), None);
+        let second = reg.get_or_create(&[], &conns, Some("config1"), None, Some("Dev"), None);
+        assert_eq!(first.id, second.id);
+    }
+
+    #[test]
+    fn get_by_identifier_finds_device() {
+        let reg = test_registry();
+        let idents = vec![DeviceIdentifier::new("hue", "bridge1")];
+        reg.get_or_create(&idents, &[], None, None, None, None);
+        assert!(reg.get_by_identifier("hue", "bridge1").is_some());
+        assert!(reg.get_by_identifier("hue", "other").is_none());
+    }
+
+    #[test]
+    fn get_by_connection_normalizes_mac() {
+        let reg = test_registry();
+        let conns = vec![DeviceConnection::new("mac", "AA:BB:CC:DD:EE:FF")];
+        reg.get_or_create(&[], &conns, None, None, None, None);
+        // Lookup with different MAC format should work
+        assert!(reg.get_by_connection("mac", "aa-bb-cc-dd-ee-ff").is_some());
+    }
+
+    #[test]
+    fn secondary_indexes_device() {
+        let reg = test_registry();
+        let idents1 = vec![DeviceIdentifier::new("hue", "bridge1")];
+        let idents2 = vec![DeviceIdentifier::new("hue", "bulb1")];
+
+        let d1 = reg.get_or_create(&idents1, &[], Some("config1"), None, None, None);
+        reg.get_or_create(&idents2, &[], Some("config1"), None, None, None);
+
+        assert_eq!(reg.get_by_config_entry_id("config1").len(), 2);
+
+        // Update d1 with area
+        reg.update(&d1.id, |e| {
+            e.area_id = Some("living_room".to_string());
+        });
+        assert_eq!(reg.get_by_area_id("living_room").len(), 1);
+    }
+
+    #[test]
+    fn update_modifies_device() {
+        let reg = test_registry();
+        let idents = vec![DeviceIdentifier::new("hue", "bridge1")];
+        let entry = reg.get_or_create(&idents, &[], None, None, None, None);
+
+        let updated = reg.update(&entry.id, |e| {
+            e.name = Some("Updated Name".to_string());
+        });
+        assert!(updated.is_some());
+        assert_eq!(updated.unwrap().name.as_deref(), Some("Updated Name"));
+    }
+
+    #[test]
+    fn remove_soft_deletes_device() {
+        let reg = test_registry();
+        let idents = vec![DeviceIdentifier::new("hue", "bridge1")];
+        let entry = reg.get_or_create(&idents, &[], None, None, None, None);
+        let device_id = entry.id.clone();
+
+        assert_eq!(reg.len(), 1);
+        let removed = reg.remove(&device_id);
+        assert!(removed.is_some());
+        assert_eq!(reg.len(), 0);
+        assert_eq!(reg.deleted_len(), 1);
+        assert!(reg.get_deleted(&device_id).is_some());
+    }
+
+    #[test]
+    fn len_and_is_empty() {
+        let reg = test_registry();
+        assert!(reg.is_empty());
+        assert_eq!(reg.len(), 0);
+
+        let idents = vec![DeviceIdentifier::new("hue", "bridge1")];
+        reg.get_or_create(&idents, &[], None, None, None, None);
+        assert!(!reg.is_empty());
+        assert_eq!(reg.len(), 1);
+    }
+
+    #[test]
+    fn clear_config_entry_removes_single_entry_devices() {
+        let reg = test_registry();
+        let idents = vec![DeviceIdentifier::new("hue", "bridge1")];
+        reg.get_or_create(&idents, &[], Some("config1"), None, None, None);
+        assert_eq!(reg.len(), 1);
+
+        reg.clear_config_entry("config1");
+        assert_eq!(
+            reg.len(),
+            0,
+            "device with single config entry should be removed"
+        );
+    }
+
+    #[test]
+    fn restore_deleted_device() {
+        let reg = test_registry();
+        let idents = vec![DeviceIdentifier::new("hue", "bridge1")];
+        let entry = reg.get_or_create(&idents, &[], None, None, Some("Hue"), None);
+        let device_id = entry.id.clone();
+
+        reg.remove(&device_id);
+        assert_eq!(reg.len(), 0);
+        assert_eq!(reg.deleted_len(), 1);
+
+        let restored = reg.restore_deleted(&device_id);
+        assert!(restored.is_some());
+        assert_eq!(reg.len(), 1);
+        assert_eq!(reg.deleted_len(), 0);
+    }
+
+    #[test]
+    fn compute_device_changed_fields_detects_changes() {
+        let old = DeviceEntry::new(Some("Old Name"));
+        let mut new = old.clone();
+        new.name = Some("New Name".to_string());
+        new.area_id = Some("living_room".to_string());
+
+        let changed = compute_device_changed_fields(&old, &new);
+        assert!(changed.contains(&"name".to_string()));
+        assert!(changed.contains(&"area_id".to_string()));
+        assert!(!changed.contains(&"model".to_string()));
+    }
+
+    #[test]
+    fn compute_device_changed_fields_empty_when_identical() {
+        let entry = DeviceEntry::new(Some("Test"));
+        let changed = compute_device_changed_fields(&entry, &entry);
+        assert!(changed.is_empty());
+    }
+}

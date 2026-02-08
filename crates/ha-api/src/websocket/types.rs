@@ -384,6 +384,7 @@ pub enum OutgoingMessage {
     Event(EventMessage),
 }
 
+/// Sent to clients when the WebSocket connection requires authentication
 #[derive(Debug, Serialize)]
 pub struct AuthRequiredMessage {
     #[serde(rename = "type")]
@@ -391,6 +392,7 @@ pub struct AuthRequiredMessage {
     pub ha_version: String,
 }
 
+/// Sent to clients when authentication succeeds
 #[derive(Debug, Serialize)]
 pub struct AuthOkMessage {
     #[serde(rename = "type")]
@@ -398,6 +400,7 @@ pub struct AuthOkMessage {
     pub ha_version: String,
 }
 
+/// Sent to clients when authentication fails
 #[derive(Debug, Serialize)]
 pub struct AuthInvalidMessage {
     #[serde(rename = "type")]
@@ -405,6 +408,7 @@ pub struct AuthInvalidMessage {
     pub message: String,
 }
 
+/// Response to a client ping message
 #[derive(Debug, Serialize)]
 pub struct PongMessage {
     pub id: u64,
@@ -412,6 +416,7 @@ pub struct PongMessage {
     pub msg_type: &'static str,
 }
 
+/// Response to a client command, carrying success/failure and optional data
 #[derive(Debug, Serialize)]
 pub struct ResultMessage {
     pub id: u64,
@@ -424,12 +429,14 @@ pub struct ResultMessage {
     pub error: Option<ErrorInfo>,
 }
 
+/// Error details included in a failed result message
 #[derive(Debug, Serialize)]
 pub struct ErrorInfo {
     pub code: String,
     pub message: String,
 }
 
+/// Pushed to clients subscribed to an event type
 #[derive(Debug, Serialize)]
 pub struct EventMessage {
     pub id: u64,

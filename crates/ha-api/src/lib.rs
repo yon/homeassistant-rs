@@ -149,6 +149,7 @@ pub struct StateResponse {
     pub context: ContextResponse,
 }
 
+/// Context associated with a state change (id, parent, user)
 #[derive(Serialize)]
 pub struct ContextResponse {
     pub id: String,
@@ -171,6 +172,7 @@ pub struct ServiceResponse {
     pub services: HashMap<String, ServiceDescription>,
 }
 
+/// Metadata for a single service (name, description, fields, target)
 #[derive(Serialize)]
 pub struct ServiceDescription {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -567,6 +569,7 @@ async fn get_events(State(state): State<AppState>) -> axum::response::Response {
     Json(events).into_response()
 }
 
+/// An event type with its current listener count
 #[derive(Serialize)]
 pub struct EventTypeResponse {
     pub event: String,
