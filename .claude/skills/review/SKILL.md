@@ -4,35 +4,34 @@ description: Combined multi-agent code review (6 dimensions)
 
 # /review — Multi-Agent Code Review
 
-Run a comprehensive code review using specialized agents.
+Run a comprehensive code review using specialized subagents.
 
-## Steps
+## Execution
 
-1. Identify changed files: `git diff --name-only HEAD~1` (or staged files)
-2. Determine which agents to invoke based on change type
-3. Run each agent sequentially (or in parallel via team if enabled)
-4. Synthesize results into a single review report
+1. Identify changed files: `git diff --name-only HEAD~1` (or specified scope)
+2. Select agents based on change type (see table below)
+3. Read each selected agent definition from `.claude/agents/{name}.md`
+4. Spawn Task tool calls for selected agents — **all in the same response** for parallel execution:
+
+```
+Task(subagent_type="senior-code-reviewer",
+     prompt="<content of .claude/agents/code-reviewer.md>\n\nScope: Review these files:\n{file_list}\n\nRead each file and produce your review report.")
+```
+
+5. Collect all subagent results
+6. Synthesize into single review report by severity (Critical > Major > Minor)
 
 ## Agent Selection
 
-| Change Type | Agents Used |
-|-------------|-------------|
-| Any code change | code-reviewer |
-| API endpoints (ha-api) | + security-reviewer |
-| New crate or major refactor | + architecture-reviewer |
-| Test files | + test-reviewer |
-| Performance-sensitive code | + performance-reviewer |
-| Documentation | + doc-reviewer |
+| Change Type | Agents | subagent_type |
+|-------------|--------|---------------|
+| Any code change | code-reviewer | senior-code-reviewer |
+| API endpoints (ha-api) | + security-reviewer | security-code-auditor |
+| New crate / major refactor | + architecture-reviewer | senior-code-reviewer |
+| Test files | + test-reviewer | senior-code-reviewer |
+| Performance-sensitive | + performance-reviewer | senior-code-reviewer |
 
-## Output
-
-Combined review report with:
-- Issues by severity (Critical → Minor)
-- Engineering principles compliance matrix
-- Positive highlights
-- Overall quality assessment
-
-## Variants
+## Arguments
 
 - `/review` — review uncommitted changes
 - `/review HEAD~3` — review last 3 commits

@@ -2,42 +2,46 @@
 description: General-purpose agent team orchestration
 ---
 
-# /swarm — General-Purpose Agent Team
+# /swarm — General-Purpose Parallel Subagents
 
-Spawn a team of agents for any parallelizable task.
+Spawn a team of subagents for any parallelizable task.
 
-## Steps
+## Execution
 
 1. Analyze the task and identify parallelizable subtasks
-2. Determine team composition and file ownership
-3. Write detailed prompts for each teammate
-4. Spawn team
-5. Monitor progress
-6. Synthesize results
-7. Verify combined output: `make dev`
+2. Choose subagent_type for each:
+   - Research: `"Explore"` — fast codebase search
+   - Planning: `"Plan"` — design implementation approach
+   - Implementation: `"production-code-engineer"` — write code
+   - Review: `"senior-code-reviewer"` — review code
+   - Security: `"security-code-auditor"` — security analysis
+   - Shell/infra: `"code-shell-expert"` — system tasks
+3. Spawn all Task calls **in the same response** for parallel execution
+4. Collect results and synthesize
+5. If implementation was involved, run `make dev` to verify
 
 ## Common Patterns
 
 ### Research Swarm
-Multiple agents investigate different angles simultaneously:
-- Teammate A: trace data flow through crates
-- Teammate B: search git history for related changes
-- Teammate C: analyze Python HA behavior in vendor/ha-core
-- Teammate D: review test coverage for the area
+```
+Task 1: Explore — "trace data flow through crates/ha-api"
+Task 2: Explore — "search git history for changes to state machine"
+Task 3: Explore — "analyze Python HA behavior in vendor/ha-core for {feature}"
+```
 
 ### Module-Parallel Implementation
-Each teammate implements in a different crate:
-- Teammate A: crates/ha-config/ changes
-- Teammate B: crates/ha-api/ changes
-- Teammate C: crates/ha-components/ changes
-- All: coordinated via shared task list
+```
+Task 1: production-code-engineer — "implement X in crates/ha-config/"
+Task 2: production-code-engineer — "implement Y in crates/ha-api/"
+Task 3: production-code-engineer — "implement Z in crates/ha-components/"
+```
 
 ### Debugging Swarm
-Competing hypotheses investigated simultaneously:
-- Teammate A: check for race condition
-- Teammate B: check for data corruption
-- Teammate C: check for Python bridge issue
-- Lead: synthesize findings into diagnosis
+```
+Task 1: Explore — "check for race condition in event bus"
+Task 2: Explore — "check for data corruption in state store"
+Task 3: Explore — "check Python bridge for GIL deadlock"
+```
 
 ## Arguments
 
@@ -45,8 +49,9 @@ Competing hypotheses investigated simultaneously:
 - `/swarm implement: add new input_select component across crates`
 - `/swarm debug: entity state updates are intermittently lost`
 
-## Requirements
+## Guidelines
 
-- Agent teams must be enabled
-- 2-4 teammates for most tasks (sweet spot)
-- Clear file ownership per teammate
+- 2-4 subagents is the sweet spot
+- Each subagent should have clear, non-overlapping scope
+- For implementation: assign file ownership explicitly
+- Always verify combined output with `make dev` when code was changed

@@ -2,32 +2,48 @@
 description: Parallel agent team code review (each reviewer in own session)
 ---
 
-# /team-review — Parallel Agent Team Review
+# /team-review — Parallel Subagent Code Review
 
-Spawn multiple review agents simultaneously, each with full context.
+Spawn 4 review subagents simultaneously, each with its own context window.
 
-## Steps
+## Execution
 
-1. Identify scope (changed files or specified scope)
-2. Spawn review team:
-   - Teammate A: security-reviewer (auth, input handling, secrets)
-   - Teammate B: architecture-reviewer (module boundaries, SOLID)
-   - Teammate C: code-reviewer (correctness, readability, principles)
-   - Teammate D: test-reviewer (coverage, quality, TDD compliance)
-3. Wait for all teammates to complete
-4. Synthesize into unified review report
-5. Present merged findings by severity
+1. Identify scope: `git diff --name-only HEAD~1` (or specified scope)
+2. Read each agent definition from `.claude/agents/`
+3. Spawn 4 Task tool calls **in the same response** for parallel execution:
+
+**Task 1 — Security:**
+```
+Task(subagent_type="security-code-auditor",
+     prompt="<content of .claude/agents/security-reviewer.md>\n\nReview these files:\n{file_list}")
+```
+
+**Task 2 — Architecture:**
+```
+Task(subagent_type="senior-code-reviewer",
+     prompt="<content of .claude/agents/architecture-reviewer.md>\n\nReview these files:\n{file_list}")
+```
+
+**Task 3 — Code Quality:**
+```
+Task(subagent_type="senior-code-reviewer",
+     prompt="<content of .claude/agents/code-reviewer.md>\n\nReview these files:\n{file_list}")
+```
+
+**Task 4 — Test Quality:**
+```
+Task(subagent_type="senior-code-reviewer",
+     prompt="<content of .claude/agents/test-reviewer.md>\n\nReview these files:\n{file_list}")
+```
+
+4. Collect all 4 results
+5. Synthesize into unified report sorted by severity (Critical > Major > Minor)
 
 ## Arguments
 
 - `/team-review` — review uncommitted changes
 - `/team-review crates/ha-api` — review specific crate
 
-## Requirements
+## Why Parallel?
 
-- Agent teams must be enabled: `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=true`
-- All agents are READ-ONLY — they cannot modify files
-
-## Why Use Team Review?
-
-Each reviewer has its own context window, allowing deeper analysis than sequential review. No context dilution between review dimensions.
+Each reviewer has its own context window — no context dilution between dimensions. All 4 run simultaneously via Task tool.
