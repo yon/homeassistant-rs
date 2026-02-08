@@ -3,10 +3,10 @@ requires = ["maturin>=1.4,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "ha-py-bridge"
+name = "ha-py-ext"
 # Version matches Python Home Assistant version being tracked
 version = "2026.1.1"
-description = "Home Assistant Python bridge - Rust core with Python shim layer"
+description = "Home Assistant Python extension - Rust core exposed as Python module"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 classifiers = [
@@ -31,7 +31,6 @@ Repository = "https://github.com/yon/homeassistant-rs"
 manifest-path = "Cargo.toml"
 # Export as ha_core_rs - this is the native module name that Python imports
 module-name = "ha_core_rs"
-features = ["extension"]
 strip = true
 # Include the Python shim package in the wheel
 python-source = "python"

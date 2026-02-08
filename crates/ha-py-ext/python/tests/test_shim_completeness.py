@@ -234,11 +234,11 @@ class TestShimHasFileAttribute:
         ],
     )
     def test_shim_from_shim_directory(self, module_path):
-        """Shims should be loaded from ha-py-bridge/python directory."""
+        """Shims should be loaded from ha-py-ext/python directory."""
         import importlib
 
         module = importlib.import_module(module_path)
 
-        assert "ha-py-bridge/python" in module.__file__, (
+        assert "ha-py-ext/python" in module.__file__, (
             f"{module_path} loaded from wrong location: {module.__file__}"
         )

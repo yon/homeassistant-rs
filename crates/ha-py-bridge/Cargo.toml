@@ -1,6 +1,6 @@
 [package]
 name = "ha-py-bridge"
-description = "Home Assistant Python bridge - PyO3 bindings and Python shim layer"
+description = "Home Assistant Python bridge - embeds Python interpreter for running integrations"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,30 +8,22 @@ license.workspace = true
 
 [lib]
 name = "ha_py_bridge"
-# Use only rlib by default. For Python extension (cdylib), use `maturin build`.
 crate-type = ["rlib"]
 
 [features]
-default = ["extension"]
-# Mode 1: Build as Python extension module (Rust → Python)
-extension = ["dep:pyo3", "pyo3/extension-module"]
-# Mode 2: Embed Python interpreter for running Python integrations (Rust → Python)
+# Embed Python interpreter for running Python integrations (Rust → Python)
 py_bridge = ["dep:pyo3", "pyo3/auto-initialize"]
 
 [dependencies]
 async-trait = { workspace = true }
-chrono = { workspace = true }
 dashmap = { workspace = true }
 ha-api = { workspace = true }
-ha-automation = { workspace = true }
 ha-config-entries = { workspace = true }
 ha-core = { workspace = true }
 ha-event-bus = { workspace = true }
 ha-registries = { workspace = true }
 ha-service-registry = { workspace = true }
 ha-state-store = { workspace = true }
-ha-template = { workspace = true }
-minijinja = { workspace = true }
 pyo3 = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
