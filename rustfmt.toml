@@ -4,9 +4,6 @@
 # Edition (affects parsing)
 edition = "2021"
 
-# Group imports by crate origin: std, external, local (nightly-only)
-group_imports = "StdExternalCrate"
-
 # Use spaces, not tabs
 hard_tabs = false
 
