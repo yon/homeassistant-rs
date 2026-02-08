@@ -23,6 +23,7 @@ use ha_state_store::StateStore;
 
 use super::async_bridge::AsyncBridge;
 use super::hass_wrapper::create_hass_wrapper_for_config_flow;
+use super::py_utils;
 use super::requirements::RequirementsManager;
 
 /// Active flow state
@@ -61,7 +62,7 @@ fn run_flow_step_blocking(
 
         // Convert user_input to Python dict
         let py_input = match user_input {
-            Some(input) => json_to_pyobject(py, &input),
+            Some(input) => py_utils::json_to_pyobject(py, &input).ok(),
             None => None,
         };
 
@@ -203,7 +204,7 @@ fn convert_flow_result_standalone(
                 let mut map = serde_json::Map::new();
                 for (k, v) in dict.iter() {
                     if let Ok(key) = k.extract::<String>() {
-                        let val = pyobject_to_json(py, &v);
+                        let val = py_utils::pyobject_to_json(&v).unwrap_or(serde_json::Value::Null);
                         map.insert(key, val);
                     }
                 }
@@ -499,7 +500,7 @@ impl ConfigFlowManager {
 
         // Convert user_input to Python dict
         let py_input = match user_input {
-            Some(input) => json_to_pyobject(py, &input),
+            Some(input) => py_utils::json_to_pyobject(py, &input).ok(),
             None => None,
         };
 
@@ -646,7 +647,8 @@ impl ConfigFlowManager {
                     let mut map = serde_json::Map::new();
                     for (k, v) in dict.iter() {
                         if let Ok(key) = k.extract::<String>() {
-                            let val = pyobject_to_json(py, &v);
+                            let val =
+                                py_utils::pyobject_to_json(&v).unwrap_or(serde_json::Value::Null);
                             map.insert(key, val);
                         }
                     }
@@ -865,49 +867,4 @@ impl ConfigFlowHandler for ConfigFlowManager {
             })
             .collect()
     }
-}
-
-/// Convert JSON value to Python object
-fn json_to_pyobject(py: Python<'_>, value: &serde_json::Value) -> Option<PyObject> {
-    match value {
-        serde_json::Value::Null => Some(py.None()),
-        serde_json::Value::Bool(b) => Some(b.into_py(py)),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Some(i.into_py(py))
-            } else if let Some(f) = n.as_f64() {
-                Some(f.into_py(py))
-            } else {
-                None
-            }
-        }
-        serde_json::Value::String(s) => Some(s.into_py(py)),
-        serde_json::Value::Array(arr) => {
-            let list = pyo3::types::PyList::empty_bound(py);
-            for item in arr {
-                if let Some(py_item) = json_to_pyobject(py, item) {
-                    list.append(py_item).ok()?;
-                }
-            }
-            Some(list.into())
-        }
-        serde_json::Value::Object(obj) => {
-            let dict = PyDict::new_bound(py);
-            for (k, v) in obj {
-                if let Some(py_val) = json_to_pyobject(py, v) {
-                    dict.set_item(k, py_val).ok()?;
-                }
-            }
-            Some(dict.into())
-        }
-    }
-}
-
-// Use shared pyobject_to_json from py_utils module (handles UNDEFINED filtering)
-use super::py_utils::pyobject_to_json as py_utils_to_json;
-
-/// Convert Python object to JSON value
-fn pyobject_to_json(_py: Python<'_>, obj: &pyo3::Bound<'_, pyo3::PyAny>) -> serde_json::Value {
-    // Delegate to the shared implementation that handles UNDEFINED
-    py_utils_to_json(obj).unwrap_or(serde_json::Value::Null)
 }

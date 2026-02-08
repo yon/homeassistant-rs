@@ -13,6 +13,7 @@ use pyo3::types::PyDict;
 use std::sync::{Arc, OnceLock};
 
 use super::errors::PyBridgeResult;
+use super::py_utils::{json_to_pyobject, pyobject_to_json};
 use super::pyclass_wrappers::{
     BusWrapper, ConfigWrapper, HassWrapper, RegistriesWrapper, ServicesWrapper, StatesWrapper,
 };
@@ -111,41 +112,6 @@ pub fn get_python_entities() -> Result<Vec<String>, pyo3::PyErr> {
         Ok(result)
     })
 }
-
-/// Convert JSON value to Python object
-fn json_to_pyobject(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
-    match value {
-        serde_json::Value::Null => Ok(py.None()),
-        serde_json::Value::Bool(b) => Ok(b.into_py(py)),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Ok(i.into_py(py))
-            } else if let Some(f) = n.as_f64() {
-                Ok(f.into_py(py))
-            } else {
-                Ok(py.None())
-            }
-        }
-        serde_json::Value::String(s) => Ok(s.into_py(py)),
-        serde_json::Value::Array(arr) => {
-            let list = pyo3::types::PyList::empty_bound(py);
-            for item in arr {
-                list.append(json_to_pyobject(py, item)?)?;
-            }
-            Ok(list.into())
-        }
-        serde_json::Value::Object(obj) => {
-            let dict = PyDict::new_bound(py);
-            for (k, v) in obj {
-                dict.set_item(k, json_to_pyobject(py, v)?)?;
-            }
-            Ok(dict.into())
-        }
-    }
-}
-
-// Use shared pyobject_to_json from py_utils module
-use super::py_utils::pyobject_to_json;
 
 /// Create a Python HomeAssistant-like object
 ///

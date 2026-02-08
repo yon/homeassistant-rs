@@ -4,6 +4,7 @@
 
 use super::async_bridge::AsyncBridge;
 use super::errors::{PyBridgeError, PyBridgeResult};
+use super::py_utils::{json_to_pyobject, pyobject_to_json};
 use ha_core::Context;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -74,7 +75,7 @@ impl ServiceBridge {
             if result.bind(py).is_none() {
                 Ok(None)
             } else {
-                let json_result = pyobject_to_json(py, result.bind(py))?;
+                let json_result = pyobject_to_json(result.bind(py))?;
                 Ok(Some(json_result))
             }
         })
@@ -140,48 +141,6 @@ fn json_to_pydict<'py>(py: Python<'py>, value: &serde_json::Value) -> PyResult<B
     }
 
     Ok(dict)
-}
-
-/// Convert a serde_json::Value to a Python object
-fn json_to_pyobject(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
-    use pyo3::IntoPy;
-
-    match value {
-        serde_json::Value::Null => Ok(py.None()),
-        serde_json::Value::Bool(b) => Ok(b.into_py(py)),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Ok(i.into_py(py))
-            } else if let Some(f) = n.as_f64() {
-                Ok(f.into_py(py))
-            } else {
-                Ok(py.None())
-            }
-        }
-        serde_json::Value::String(s) => Ok(s.into_py(py)),
-        serde_json::Value::Array(arr) => {
-            let list: Vec<PyObject> = arr
-                .iter()
-                .map(|item| json_to_pyobject(py, item))
-                .collect::<PyResult<_>>()?;
-            Ok(list.into_py(py))
-        }
-        serde_json::Value::Object(_) => {
-            let dict = json_to_pydict(py, value)?;
-            Ok(dict.into_any().unbind())
-        }
-    }
-}
-
-// Use shared pyobject_to_json from py_utils module (handles UNDEFINED filtering)
-use super::py_utils::pyobject_to_json as py_utils_to_json;
-
-/// Convert a Python object to serde_json::Value
-// `_py` is required by the function signature for API consistency but delegates to py_utils
-#[allow(clippy::only_used_in_recursion)]
-fn pyobject_to_json(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
-    // Delegate to the shared implementation that handles UNDEFINED
-    py_utils_to_json(obj)
 }
 
 /// Convert a Rust Context to Python object

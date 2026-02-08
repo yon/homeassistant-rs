@@ -6,6 +6,41 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+/// Convert a JSON value to a Python object.
+///
+/// This is the canonical conversion function for serde_json::Value → PyObject.
+/// Handles all JSON types: null, bool, number, string, array, object.
+pub fn json_to_pyobject(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
+    match value {
+        serde_json::Value::Null => Ok(py.None()),
+        serde_json::Value::Bool(b) => Ok(b.into_py(py)),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(i.into_py(py))
+            } else if let Some(f) = n.as_f64() {
+                Ok(f.into_py(py))
+            } else {
+                Ok(py.None())
+            }
+        }
+        serde_json::Value::String(s) => Ok(s.into_py(py)),
+        serde_json::Value::Array(arr) => {
+            let list = pyo3::types::PyList::empty_bound(py);
+            for item in arr {
+                list.append(json_to_pyobject(py, item)?)?;
+            }
+            Ok(list.into())
+        }
+        serde_json::Value::Object(obj) => {
+            let dict = PyDict::new_bound(py);
+            for (k, v) in obj {
+                dict.set_item(k, json_to_pyobject(py, v)?)?;
+            }
+            Ok(dict.into())
+        }
+    }
+}
+
 /// Check if a Python object is Home Assistant's UNDEFINED sentinel value.
 ///
 /// UNDEFINED is used by HA to indicate "no value provided" vs None/null.
