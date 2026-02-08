@@ -446,4 +446,175 @@ mod tests {
             err
         );
     }
+
+    #[test]
+    fn get_returns_label_by_id() {
+        let registry = test_registry();
+        let created = registry.create("Critical", None).unwrap();
+        let fetched = registry.get(&created.id).expect("should find label");
+        assert_eq!(fetched.name, "Critical");
+    }
+
+    #[test]
+    fn get_nonexistent_returns_none() {
+        let registry = test_registry();
+        assert!(registry.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn get_by_name_is_case_insensitive() {
+        let registry = test_registry();
+        registry.create("Urgent", None).unwrap();
+        let found = registry.get_by_name("urgent").expect("should find by name");
+        assert_eq!(found.name, "Urgent");
+        let found2 = registry
+            .get_by_name("URGENT")
+            .expect("should find by uppercase");
+        assert_eq!(found2.name, "Urgent");
+    }
+
+    #[test]
+    fn create_with_builder_succeeds() {
+        let registry = test_registry();
+        let entry = LabelEntry::new("custom_id", "Custom Label", None)
+            .with_icon("mdi:star")
+            .with_color("#ff0000")
+            .with_description("A custom label");
+        let created = registry.create_with(entry).unwrap();
+        assert_eq!(created.id, "custom_id");
+        assert_eq!(created.name, "Custom Label");
+        assert_eq!(created.icon.as_deref(), Some("mdi:star"));
+        assert_eq!(created.color.as_deref(), Some("#ff0000"));
+        assert_eq!(created.description.as_deref(), Some("A custom label"));
+    }
+
+    #[test]
+    fn update_changes_fields_and_modified_at() {
+        let registry = test_registry();
+        let created = registry.create("Info", None).unwrap();
+        let original_modified = created.modified_at;
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let updated = registry
+            .update(
+                &created.id,
+                |entry| entry.color = Some("#0000ff".to_string()),
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(updated.color.as_deref(), Some("#0000ff"));
+        assert!(
+            updated.modified_at > original_modified,
+            "modified_at should advance on change"
+        );
+    }
+
+    #[test]
+    fn update_unchanged_does_not_update_modified_at() {
+        let registry = test_registry();
+        let created = registry.create("Static", None).unwrap();
+        let original_modified = created.modified_at;
+
+        let updated = registry.update(&created.id, |_| {}, None).unwrap();
+        assert_eq!(
+            updated.modified_at, original_modified,
+            "modified_at should not change when nothing changed"
+        );
+    }
+
+    #[test]
+    fn remove_returns_entry_and_decrements_count() {
+        let registry = test_registry();
+        let created = registry.create("Temporary", None).unwrap();
+        assert_eq!(registry.len(), 1);
+
+        let removed = registry.remove(&created.id).expect("should remove");
+        assert_eq!(removed.name, "Temporary");
+        assert_eq!(registry.len(), 0);
+        assert!(registry.get(&created.id).is_none());
+    }
+
+    #[test]
+    fn remove_nonexistent_returns_none() {
+        let registry = test_registry();
+        assert!(registry.remove("nonexistent").is_none());
+    }
+
+    #[test]
+    fn len_and_is_empty() {
+        let registry = test_registry();
+        assert!(registry.is_empty());
+        assert_eq!(registry.len(), 0);
+
+        registry.create("X", None).unwrap();
+        assert!(!registry.is_empty());
+        assert_eq!(registry.len(), 1);
+    }
+
+    #[test]
+    fn sorted_by_name_returns_alphabetical() {
+        let registry = test_registry();
+        registry.create("Zebra", None).unwrap();
+        registry.create("Alpha", None).unwrap();
+        registry.create("Middle", None).unwrap();
+
+        let sorted = registry.sorted_by_name();
+        assert_eq!(sorted.len(), 3);
+        assert_eq!(sorted[0].name, "Alpha");
+        assert_eq!(sorted[1].name, "Middle");
+        assert_eq!(sorted[2].name, "Zebra");
+    }
+
+    #[test]
+    fn generate_id_handles_conflicts() {
+        let registry = test_registry();
+        let first = registry.create("My Label", None).unwrap();
+        assert_eq!(first.id, "my_label");
+
+        // Force second entry with conflicting slug
+        let entry2 = LabelEntry::new("my_label_2", "My Label 2", None);
+        registry.index_entry(Arc::new(entry2));
+
+        let id = registry.generate_id("My Label");
+        assert!(
+            id.starts_with("my_label_"),
+            "should generate suffixed id, got: {}",
+            id
+        );
+    }
+
+    #[test]
+    fn iter_yields_all_entries() {
+        let registry = test_registry();
+        registry.create("A", None).unwrap();
+        registry.create("B", None).unwrap();
+        registry.create("C", None).unwrap();
+
+        let all: Vec<_> = registry.iter().collect();
+        assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn normalize_name_lowercases_and_removes_spaces() {
+        assert_eq!(normalize_name("My Label"), "mylabel");
+        assert_eq!(normalize_name("URGENT"), "urgent");
+    }
+
+    #[test]
+    fn slugify_creates_url_safe_ids() {
+        assert_eq!(slugify("My Label"), "my_label");
+        assert_eq!(slugify("Tag!@#"), "tag");
+    }
+
+    #[test]
+    fn label_entry_builder_methods() {
+        let entry = LabelEntry::new("id1", "Test", None)
+            .with_icon("mdi:tag")
+            .with_color("#aabbcc")
+            .with_description("A test label");
+        assert_eq!(entry.icon.as_deref(), Some("mdi:tag"));
+        assert_eq!(entry.color.as_deref(), Some("#aabbcc"));
+        assert_eq!(entry.description.as_deref(), Some("A test label"));
+    }
 }

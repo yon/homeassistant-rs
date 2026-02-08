@@ -516,4 +516,228 @@ mod tests {
             err
         );
     }
+
+    #[test]
+    fn get_returns_area_by_id() {
+        let registry = test_registry();
+        let created = registry.create("Kitchen", None).unwrap();
+        let fetched = registry.get(&created.id).expect("should find area");
+        assert_eq!(fetched.name, "Kitchen");
+    }
+
+    #[test]
+    fn get_nonexistent_returns_none() {
+        let registry = test_registry();
+        assert!(registry.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn get_by_name_is_case_insensitive() {
+        let registry = test_registry();
+        registry.create("Living Room", None).unwrap();
+        let found = registry
+            .get_by_name("living room")
+            .expect("should find by name");
+        assert_eq!(found.name, "Living Room");
+        let found2 = registry
+            .get_by_name("LIVING ROOM")
+            .expect("should find by uppercase name");
+        assert_eq!(found2.name, "Living Room");
+    }
+
+    #[test]
+    fn get_by_floor_id_returns_areas() {
+        let registry = test_registry();
+        registry
+            .update(
+                &registry.create("Hall", None).unwrap().id.clone(),
+                |entry| entry.floor_id = Some("floor_1".to_string()),
+                None,
+            )
+            .unwrap();
+        registry
+            .update(
+                &registry.create("Bathroom", None).unwrap().id.clone(),
+                |entry| entry.floor_id = Some("floor_1".to_string()),
+                None,
+            )
+            .unwrap();
+        registry.create("Garage", None).unwrap();
+
+        let floor_areas = registry.get_by_floor_id("floor_1");
+        assert_eq!(floor_areas.len(), 2);
+    }
+
+    #[test]
+    fn get_by_label_id_returns_areas() {
+        let registry = test_registry();
+        registry
+            .update(
+                &registry.create("Den", None).unwrap().id.clone(),
+                |entry| entry.labels = vec!["important".to_string()],
+                None,
+            )
+            .unwrap();
+        registry.create("Attic", None).unwrap();
+
+        let labeled = registry.get_by_label_id("important");
+        assert_eq!(labeled.len(), 1);
+        assert_eq!(labeled[0].name, "Den");
+    }
+
+    #[test]
+    fn update_changes_fields_and_modified_at() {
+        let registry = test_registry();
+        let created = registry.create("Study", None).unwrap();
+        let original_modified = created.modified_at;
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let updated = registry
+            .update(
+                &created.id,
+                |entry| entry.icon = Some("mdi:book".to_string()),
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(updated.icon.as_deref(), Some("mdi:book"));
+        assert!(
+            updated.modified_at > original_modified,
+            "modified_at should advance on change"
+        );
+    }
+
+    #[test]
+    fn update_unchanged_does_not_update_modified_at() {
+        let registry = test_registry();
+        let created = registry.create("Pantry", None).unwrap();
+        let original_modified = created.modified_at;
+
+        let updated = registry.update(&created.id, |_| {}, None).unwrap();
+        assert_eq!(
+            updated.modified_at, original_modified,
+            "modified_at should not change when nothing changed"
+        );
+    }
+
+    #[test]
+    fn remove_returns_entry_and_decrements_count() {
+        let registry = test_registry();
+        let created = registry.create("Patio", None).unwrap();
+        assert_eq!(registry.len(), 1);
+
+        let removed = registry.remove(&created.id).expect("should remove");
+        assert_eq!(removed.name, "Patio");
+        assert_eq!(registry.len(), 0);
+        assert!(registry.get(&created.id).is_none());
+    }
+
+    #[test]
+    fn remove_nonexistent_returns_none() {
+        let registry = test_registry();
+        assert!(registry.remove("nonexistent").is_none());
+    }
+
+    #[test]
+    fn len_and_is_empty() {
+        let registry = test_registry();
+        assert!(registry.is_empty());
+        assert_eq!(registry.len(), 0);
+
+        registry.create("Room A", None).unwrap();
+        assert!(!registry.is_empty());
+        assert_eq!(registry.len(), 1);
+    }
+
+    #[test]
+    fn generate_id_handles_conflicts() {
+        let registry = test_registry();
+        let first = registry.create("My Room", None).unwrap();
+        assert_eq!(first.id, "my_room");
+
+        // Force a second area with the same slug
+        let entry2 = AreaEntry::new("my_room_2", "My Room 2", None);
+        registry.index_entry(Arc::new(entry2));
+
+        // Third should get suffix _3
+        let id = registry.generate_id("My Room");
+        assert!(
+            id.starts_with("my_room_"),
+            "should generate suffixed id, got: {}",
+            id
+        );
+    }
+
+    #[test]
+    fn clear_floor_id_removes_floor_from_areas() {
+        let registry = test_registry();
+        let area = registry.create("Lounge", None).unwrap();
+        registry
+            .update(
+                &area.id,
+                |entry| entry.floor_id = Some("f1".to_string()),
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(registry.get_by_floor_id("f1").len(), 1);
+        registry.clear_floor_id("f1");
+        assert_eq!(registry.get_by_floor_id("f1").len(), 0);
+
+        let updated = registry.get(&area.id).unwrap();
+        assert!(
+            updated.floor_id.is_none(),
+            "floor_id should be cleared from area"
+        );
+    }
+
+    #[test]
+    fn clear_label_id_removes_label_from_areas() {
+        let registry = test_registry();
+        let area = registry.create("Workshop", None).unwrap();
+        registry
+            .update(
+                &area.id,
+                |entry| entry.labels = vec!["lbl1".to_string(), "lbl2".to_string()],
+                None,
+            )
+            .unwrap();
+
+        registry.clear_label_id("lbl1");
+        let updated = registry.get(&area.id).unwrap();
+        assert_eq!(updated.labels, vec!["lbl2".to_string()]);
+    }
+
+    #[test]
+    fn iter_yields_all_entries() {
+        let registry = test_registry();
+        registry.create("A", None).unwrap();
+        registry.create("B", None).unwrap();
+        registry.create("C", None).unwrap();
+
+        let all: Vec<_> = registry.iter().collect();
+        assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn normalize_name_lowercases_and_removes_spaces() {
+        assert_eq!(normalize_name("Living Room"), "livingroom");
+        assert_eq!(normalize_name("GARAGE"), "garage");
+        assert_eq!(normalize_name("a b c"), "abc");
+    }
+
+    #[test]
+    fn slugify_creates_url_safe_ids() {
+        assert_eq!(slugify("Living Room"), "living_room");
+        assert_eq!(slugify("My Area!"), "my_area");
+        assert_eq!(slugify("  Leading  "), "leading");
+    }
+
+    #[test]
+    fn area_entry_new_sets_normalized_name() {
+        let entry = AreaEntry::new("test_id", "Test Area", None);
+        assert_eq!(entry.normalized_name.as_deref(), Some("testarea"));
+        assert_eq!(entry.id, "test_id");
+        assert_eq!(entry.name, "Test Area");
+    }
 }
