@@ -4,9 +4,10 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-use crate::error::{WebSocketError, WsResult};
+use super::send_result;
+use crate::error::WsResult;
 use crate::websocket::connection::ActiveConnection;
-use crate::websocket::types::{OutgoingMessage, ResultMessage};
+use crate::websocket::types::OutgoingMessage;
 
 /// Handle integration/descriptions command
 ///
@@ -21,16 +22,7 @@ pub async fn handle_integration_descriptions(
     // Load integration descriptions from manifest files
     let integrations = crate::manifest::build_integration_descriptions();
 
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(integrations),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, integrations, tx).await
 }
 
 /// Handle manifest/list command
@@ -41,16 +33,7 @@ pub async fn handle_manifest_list(
 ) -> WsResult<()> {
     let manifests = crate::manifest::build_manifest_list();
 
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(manifests),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, manifests, tx).await
 }
 
 /// Handle manifest/get command
@@ -76,16 +59,7 @@ pub async fn handle_manifest_get(
         })
     });
 
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(manifest),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, manifest, tx).await
 }
 
 /// Handle sensor/numeric_device_classes command
@@ -154,18 +128,14 @@ pub async fn handle_sensor_numeric_device_classes(
         "wind_speed",
     ];
 
-    let result = OutgoingMessage::Result(ResultMessage {
+    send_result(
         id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::json!({
+        serde_json::json!({
             "numeric_device_classes": numeric_device_classes
-        })),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+        }),
+        tx,
+    )
+    .await
 }
 
 /// Capitalize first letter of a string

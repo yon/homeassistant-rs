@@ -7,7 +7,9 @@ use tracing::{info, warn};
 
 use crate::error::{WebSocketError, WsResult};
 use crate::websocket::connection::ActiveConnection;
-use crate::websocket::types::{ErrorInfo, EventMessage, OutgoingMessage, ResultMessage};
+use crate::websocket::types::{EventMessage, OutgoingMessage};
+
+use super::{send_error, send_result};
 
 /// Convert ConfigEntryState to HA-compatible string
 fn config_entry_state_to_string(state: &ha_config_entries::ConfigEntryState) -> &'static str {
@@ -98,16 +100,7 @@ pub async fn handle_config_entries_get(
         }
     }; // Lock released here
 
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(result_json),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, result_json, tx).await
 }
 
 /// Handle config_entries/subscribe command
@@ -147,16 +140,7 @@ pub async fn handle_config_entries_subscribe(
     }; // Lock released here
 
     // Native HA sends result FIRST, then event
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::Value::Null),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))?;
+    send_result(id, serde_json::Value::Null, tx).await?;
 
     // Then send the event with all config entries
     let event = OutgoingMessage::Event(EventMessage {
@@ -216,19 +200,15 @@ pub async fn handle_application_credentials_config(
         (domains, integrations)
     };
 
-    let result = OutgoingMessage::Result(ResultMessage {
+    send_result(
         id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::json!({
+        serde_json::json!({
             "domains": domains,
             "integrations": serde_json::Value::Object(integrations)
-        })),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+        }),
+        tx,
+    )
+    .await
 }
 
 /// Handle application_credentials/config_entry command
@@ -240,16 +220,7 @@ pub async fn handle_application_credentials_config_entry(
 ) -> WsResult<()> {
     // Most integrations don't use application credentials
     // Return null to indicate no credentials
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::Value::Null),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::Value::Null, tx).await
 }
 
 /// Handle application_credentials/list command
@@ -283,16 +254,7 @@ pub async fn handle_application_credentials_list(
         })
         .collect();
 
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::json!(credentials)),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::json!(credentials), tx).await
 }
 
 /// Handle application_credentials/create command
@@ -352,16 +314,7 @@ pub async fn handle_application_credentials_create(
         result_obj["auth_domain"] = serde_json::Value::String(ad.to_string());
     }
 
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(result_obj),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, result_obj, tx).await
 }
 
 /// Handle application_credentials/delete command
@@ -381,33 +334,18 @@ pub async fn handle_application_credentials_delete(
         .remove(credential_id)
         .is_some()
     {
-        let result = OutgoingMessage::Result(ResultMessage {
-            id,
-            msg_type: "result",
-            success: true,
-            result: Some(serde_json::Value::Null),
-            error: None,
-        });
-        tx.send(result)
-            .await
-            .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+        send_result(id, serde_json::Value::Null, tx).await
     } else {
-        let result = OutgoingMessage::Result(ResultMessage {
+        send_error(
             id,
-            msg_type: "result",
-            success: false,
-            result: None,
-            error: Some(ErrorInfo {
-                code: "not_found".to_string(),
-                message: format!(
-                    "Unable to find application_credentials_id {}",
-                    credential_id
-                ),
-            }),
-        });
-        tx.send(result)
-            .await
-            .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+            "not_found",
+            format!(
+                "Unable to find application_credentials_id {}",
+                credential_id
+            ),
+            tx,
+        )
+        .await
     }
 }
 
@@ -429,34 +367,24 @@ pub async fn handle_config_entries_delete(
     match remove_result {
         Ok(_entry) => {
             info!("Config entry {} deleted successfully", entry_id);
-            let result = OutgoingMessage::Result(ResultMessage {
+            send_result(
                 id,
-                msg_type: "result",
-                success: true,
-                result: Some(serde_json::json!({
+                serde_json::json!({
                     "require_restart": false
-                })),
-                error: None,
-            });
-            tx.send(result)
-                .await
-                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+                }),
+                tx,
+            )
+            .await
         }
         Err(e) => {
             warn!("Failed to delete config entry {}: {}", entry_id, e);
-            let result = OutgoingMessage::Result(ResultMessage {
+            send_error(
                 id,
-                msg_type: "result",
-                success: false,
-                result: None,
-                error: Some(ErrorInfo {
-                    code: "not_found".to_string(),
-                    message: format!("Config entry {} not found", entry_id),
-                }),
-            });
-            tx.send(result)
-                .await
-                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+                "not_found",
+                format!("Config entry {} not found", entry_id),
+                tx,
+            )
+            .await
         }
     }
 }
@@ -473,14 +401,5 @@ pub async fn handle_config_entries_subentries_list(
 ) -> WsResult<()> {
     // Most integrations don't have subentries, return empty array
     // Per HA format: [{"subentry_id": "...", "subentry_type": "...", "title": "...", "unique_id": "..."}]
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::json!([])),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::json!([]), tx).await
 }

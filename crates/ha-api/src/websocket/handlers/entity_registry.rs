@@ -6,9 +6,10 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::warn;
 
-use crate::error::{WebSocketError, WsResult};
+use super::{send_error, send_result};
+use crate::error::WsResult;
 use crate::websocket::connection::ActiveConnection;
-use crate::websocket::types::{ErrorInfo, OutgoingMessage, ResultMessage};
+use crate::websocket::types::OutgoingMessage;
 
 /// Handle config/entity_registry/get command
 pub async fn handle_entity_registry_get(
@@ -18,32 +19,15 @@ pub async fn handle_entity_registry_get(
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> WsResult<()> {
     match conn.state.registries.entities.get(entity_id) {
-        Some(entry) => {
-            let result = OutgoingMessage::Result(ResultMessage {
-                id,
-                msg_type: "result",
-                success: true,
-                result: Some(entity_entry_to_json(&entry)),
-                error: None,
-            });
-            tx.send(result)
-                .await
-                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
-        }
+        Some(entry) => send_result(id, entity_entry_to_json(&entry), tx).await,
         None => {
-            let result = OutgoingMessage::Result(ResultMessage {
+            send_error(
                 id,
-                msg_type: "result",
-                success: false,
-                result: None,
-                error: Some(ErrorInfo {
-                    code: "not_found".to_string(),
-                    message: format!("Entity not found: {}", entity_id),
-                }),
-            });
-            tx.send(result)
-                .await
-                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+                "not_found",
+                format!("Entity not found: {}", entity_id),
+                tx,
+            )
+            .await
         }
     }
 }
@@ -63,16 +47,7 @@ pub async fn handle_entity_registry_list(
         .map(|entry| entity_entry_to_json(&entry))
         .collect();
 
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::Value::Array(entries)),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::Value::Array(entries), tx).await
 }
 
 /// Handle config/entity_registry/remove command
@@ -89,31 +64,16 @@ pub async fn handle_entity_registry_remove(
                 warn!("Failed to save entity registry after removal: {}", e);
             }
 
-            let result = OutgoingMessage::Result(ResultMessage {
-                id,
-                msg_type: "result",
-                success: true,
-                result: Some(serde_json::Value::Null),
-                error: None,
-            });
-            tx.send(result)
-                .await
-                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+            send_result(id, serde_json::Value::Null, tx).await
         }
         None => {
-            let result = OutgoingMessage::Result(ResultMessage {
+            send_error(
                 id,
-                msg_type: "result",
-                success: false,
-                result: None,
-                error: Some(ErrorInfo {
-                    code: "not_found".to_string(),
-                    message: format!("Entity not found: {}", entity_id),
-                }),
-            });
-            tx.send(result)
-                .await
-                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+                "not_found",
+                format!("Entity not found: {}", entity_id),
+                tx,
+            )
+            .await
         }
     }
 }
@@ -137,20 +97,13 @@ pub async fn handle_entity_registry_update(
 ) -> WsResult<()> {
     // Check if entity exists
     if conn.state.registries.entities.get(entity_id).is_none() {
-        let result = OutgoingMessage::Result(ResultMessage {
+        return send_error(
             id,
-            msg_type: "result",
-            success: false,
-            result: None,
-            error: Some(ErrorInfo {
-                code: "not_found".to_string(),
-                message: format!("Entity not found: {}", entity_id),
-            }),
-        });
-        return tx
-            .send(result)
-            .await
-            .map_err(|e| WebSocketError::ChannelSend(e.to_string()));
+            "not_found",
+            format!("Entity not found: {}", entity_id),
+            tx,
+        )
+        .await;
     }
 
     // Update the entity entry
@@ -213,18 +166,14 @@ pub async fn handle_entity_registry_update(
         warn!("Failed to save entity registry after update: {}", e);
     }
 
-    let result = OutgoingMessage::Result(ResultMessage {
+    send_result(
         id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::json!({
+        serde_json::json!({
             "entity_entry": entity_entry_to_json(&updated_entry)
-        })),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+        }),
+        tx,
+    )
+    .await
 }
 
 /// Handle config/entity_registry/list_for_display command
@@ -278,19 +227,15 @@ pub async fn handle_entity_registry_list_for_display(
         })
         .collect();
 
-    let result = OutgoingMessage::Result(ResultMessage {
+    send_result(
         id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::json!({
+        serde_json::json!({
             "entity_categories": { "config": 1, "diagnostic": 2 },
             "entities": entries,
-        })),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+        }),
+        tx,
+    )
+    .await
 }
 
 /// Convert an EntityEntry to the JSON format expected by the frontend

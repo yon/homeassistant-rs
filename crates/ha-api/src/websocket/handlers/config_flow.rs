@@ -5,9 +5,10 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
+use super::{send_error, send_result};
 use crate::error::{WebSocketError, WsResult};
 use crate::websocket::connection::ActiveConnection;
-use crate::websocket::types::{ErrorInfo, EventMessage, OutgoingMessage, ResultMessage};
+use crate::websocket::types::{EventMessage, OutgoingMessage};
 use crate::AppState;
 
 /// Handle config_entries/flow/progress without flow_id - lists flows in progress
@@ -18,16 +19,7 @@ pub async fn handle_config_entries_flow_progress_list(
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> WsResult<()> {
     // Return empty list since we don't have any auto-discovered flows yet
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::Value::Array(vec![])),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::Value::Array(vec![]), tx).await
 }
 
 /// Handle config_entries/flow/subscribe command
@@ -53,16 +45,7 @@ pub async fn handle_config_entries_flow_subscribe(
         .await
         .map_err(|e| WebSocketError::ChannelSend(e.to_string()))?;
 
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::Value::Null),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::Value::Null, tx).await
 }
 
 /// Handle config_entries/flow command - start a new config flow
@@ -86,32 +69,16 @@ pub async fn handle_config_entries_flow(
         .await
     {
         Ok(flow_result) => {
-            let result = OutgoingMessage::Result(ResultMessage {
+            send_result(
                 id,
-                msg_type: "result",
-                success: true,
-                result: Some(serde_json::to_value(&flow_result).unwrap_or_default()),
-                error: None,
-            });
-            tx.send(result)
-                .await
-                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+                serde_json::to_value(&flow_result).unwrap_or_default(),
+                tx,
+            )
+            .await
         }
         Err(e) => {
             error!("Failed to start config flow: {}", e);
-            let result = OutgoingMessage::Result(ResultMessage {
-                id,
-                msg_type: "result",
-                success: false,
-                result: None,
-                error: Some(ErrorInfo {
-                    code: e.error_code().to_string(),
-                    message: e.to_string(),
-                }),
-            });
-            tx.send(result)
-                .await
-                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+            send_error(id, e.error_code(), e.to_string(), tx).await
         }
     }
 }
@@ -151,32 +118,16 @@ pub async fn handle_config_entries_flow_progress(
                 }
             }
 
-            let result = OutgoingMessage::Result(ResultMessage {
+            send_result(
                 id,
-                msg_type: "result",
-                success: true,
-                result: Some(serde_json::to_value(&flow_result).unwrap_or_default()),
-                error: None,
-            });
-            tx.send(result)
-                .await
-                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+                serde_json::to_value(&flow_result).unwrap_or_default(),
+                tx,
+            )
+            .await
         }
         Err(e) => {
             error!("Failed to progress config flow: {}", e);
-            let result = OutgoingMessage::Result(ResultMessage {
-                id,
-                msg_type: "result",
-                success: false,
-                result: None,
-                error: Some(ErrorInfo {
-                    code: e.error_code().to_string(),
-                    message: e.to_string(),
-                }),
-            });
-            tx.send(result)
-                .await
-                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+            send_error(id, e.error_code(), e.to_string(), tx).await
         }
     }
 }

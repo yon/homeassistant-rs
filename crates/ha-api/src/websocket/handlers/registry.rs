@@ -4,9 +4,10 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-use crate::error::{WebSocketError, WsResult};
+use super::send_result;
+use crate::error::WsResult;
 use crate::websocket::connection::ActiveConnection;
-use crate::websocket::types::{OutgoingMessage, ResultMessage};
+use crate::websocket::types::OutgoingMessage;
 
 /// Handle config/device_registry/list command
 pub async fn handle_device_registry_list(
@@ -55,16 +56,7 @@ pub async fn handle_device_registry_list(
         })
         .collect();
 
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::Value::Array(devices)),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::Value::Array(devices), tx).await
 }
 
 /// Handle config/area_registry/list command
@@ -91,16 +83,7 @@ pub async fn handle_area_registry_list(
         })
         .collect();
 
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::Value::Array(areas)),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::Value::Array(areas), tx).await
 }
 
 /// Handle config/floor_registry/list command
@@ -125,16 +108,7 @@ pub async fn handle_floor_registry_list(
         })
         .collect();
 
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::Value::Array(floors)),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::Value::Array(floors), tx).await
 }
 
 /// Handle config/label_registry/list command
@@ -159,16 +133,7 @@ pub async fn handle_label_registry_list(
         })
         .collect();
 
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::Value::Array(labels)),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::Value::Array(labels), tx).await
 }
 
 /// Handle config/category_registry/list command
@@ -179,14 +144,5 @@ pub async fn handle_category_registry_list(
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> WsResult<()> {
     // Return empty categories list
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::Value::Array(vec![])),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::Value::Array(vec![]), tx).await
 }

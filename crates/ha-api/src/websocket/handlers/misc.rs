@@ -5,9 +5,10 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
+use super::send_result;
 use crate::error::{WebSocketError, WsResult};
 use crate::websocket::connection::ActiveConnection;
-use crate::websocket::types::{EventMessage, OutgoingMessage, PongMessage, ResultMessage};
+use crate::websocket::types::{EventMessage, OutgoingMessage, PongMessage};
 
 /// Handle system_log/list command
 pub async fn handle_system_log_list(
@@ -16,16 +17,7 @@ pub async fn handle_system_log_list(
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> WsResult<()> {
     let entries = conn.state.system_log.list();
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::json!(entries)),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::json!(entries), tx).await
 }
 
 /// Handle render_template command
@@ -58,11 +50,9 @@ pub async fn handle_render_template(
     // We would need the template engine, but for now return the template as-is
     // if it contains unresolved Jinja syntax
 
-    let result = OutgoingMessage::Result(ResultMessage {
+    send_result(
         id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::json!({
+        serde_json::json!({
             "result": result_str,
             "listeners": {
                 "all": false,
@@ -70,12 +60,10 @@ pub async fn handle_render_template(
                 "entities": [],
                 "time": false
             }
-        })),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+        }),
+        tx,
+    )
+    .await
 }
 
 /// Handle auth/current_user command - returns current user info
@@ -94,16 +82,7 @@ pub async fn handle_auth_current_user(
         "mfa_modules": [],
     });
 
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(user),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, user, tx).await
 }
 
 /// Handle recorder/info command
@@ -113,22 +92,18 @@ pub async fn handle_recorder_info(
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> WsResult<()> {
     // Return minimal recorder info (indicates recorder is not running)
-    let result = OutgoingMessage::Result(ResultMessage {
+    send_result(
         id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::json!({
+        serde_json::json!({
             "backlog": 0,
             "max_backlog": 40000,
             "migration_in_progress": false,
             "recording": false,
             "thread_running": false,
-        })),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+        }),
+        tx,
+    )
+    .await
 }
 
 /// Handle repairs/list_issues command
@@ -138,18 +113,14 @@ pub async fn handle_repairs_list_issues(
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> WsResult<()> {
     // Return empty issues list
-    let result = OutgoingMessage::Result(ResultMessage {
+    send_result(
         id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::json!({
+        serde_json::json!({
             "issues": []
-        })),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+        }),
+        tx,
+    )
+    .await
 }
 
 /// Handle ping command
@@ -178,16 +149,7 @@ pub async fn handle_persistent_notification_subscribe(
         .collect();
 
     // Send success response first (matching Python HA behavior)
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::Value::Null),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))?;
+    send_result(id, serde_json::Value::Null, tx).await?;
 
     // Send initial notifications event with "current" type
     let event = OutgoingMessage::Event(EventMessage {
@@ -219,16 +181,7 @@ pub async fn handle_labs_subscribe(
         .await
         .map_err(|e| WebSocketError::ChannelSend(e.to_string()))?;
 
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::Value::Null),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::Value::Null, tx).await
 }
 
 /// Handle logger/log_info command
@@ -240,16 +193,7 @@ pub async fn handle_logger_log_info(
     // Return empty array of logger info
     // Format: [{"domain": "integration_name", "level": 20}, ...]
     // Level values: DEBUG=10, INFO=20, WARNING=30, ERROR=40, CRITICAL=50
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::json!([])),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::json!([]), tx).await
 }
 
 /// Handle entity/source command
@@ -286,16 +230,7 @@ pub async fn handle_entity_source(
         );
     }
 
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::Value::Object(sources)),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::Value::Object(sources), tx).await
 }
 
 /// Handle supported_features command
@@ -315,14 +250,5 @@ pub async fn handle_blueprint_list(
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> WsResult<()> {
     // Return empty blueprints
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::json!({})),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::json!({}), tx).await
 }

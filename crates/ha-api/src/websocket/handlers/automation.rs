@@ -4,9 +4,10 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-use crate::error::{WebSocketError, WsResult};
+use super::{send_error, send_result};
+use crate::error::WsResult;
 use crate::websocket::connection::ActiveConnection;
-use crate::websocket::types::{ErrorInfo, OutgoingMessage, ResultMessage};
+use crate::websocket::types::OutgoingMessage;
 
 /// Handle automation/config command - returns the automation configuration
 pub async fn handle_automation_config(
@@ -17,20 +18,7 @@ pub async fn handle_automation_config(
 ) -> WsResult<()> {
     // Verify entity_id starts with "automation."
     if !entity_id.starts_with("automation.") {
-        let result = OutgoingMessage::Result(ResultMessage {
-            id,
-            msg_type: "result",
-            success: false,
-            result: None,
-            error: Some(ErrorInfo {
-                code: "not_found".to_string(),
-                message: "Entity not found".to_string(),
-            }),
-        });
-        return tx
-            .send(result)
-            .await
-            .map_err(|e| WebSocketError::ChannelSend(e.to_string()));
+        return send_error(id, "not_found", "Entity not found".to_string(), tx).await;
     }
 
     // Look up the automation entity state
@@ -48,32 +36,9 @@ pub async fn handle_automation_config(
                 "mode": state.attributes.get("mode").cloned().unwrap_or(serde_json::json!("single")),
             });
 
-            let result = OutgoingMessage::Result(ResultMessage {
-                id,
-                msg_type: "result",
-                success: true,
-                result: Some(serde_json::json!({ "config": config })),
-                error: None,
-            });
-            tx.send(result)
-                .await
-                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+            send_result(id, serde_json::json!({ "config": config }), tx).await
         }
-        None => {
-            let result = OutgoingMessage::Result(ResultMessage {
-                id,
-                msg_type: "result",
-                success: false,
-                result: None,
-                error: Some(ErrorInfo {
-                    code: "not_found".to_string(),
-                    message: "Entity not found".to_string(),
-                }),
-            });
-            tx.send(result)
-                .await
-                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
-        }
+        None => send_error(id, "not_found", "Entity not found".to_string(), tx).await,
     }
 }
 
@@ -86,20 +51,7 @@ pub async fn handle_script_config(
 ) -> WsResult<()> {
     // Verify entity_id starts with "script."
     if !entity_id.starts_with("script.") {
-        let result = OutgoingMessage::Result(ResultMessage {
-            id,
-            msg_type: "result",
-            success: false,
-            result: None,
-            error: Some(ErrorInfo {
-                code: "not_found".to_string(),
-                message: "Entity not found".to_string(),
-            }),
-        });
-        return tx
-            .send(result)
-            .await
-            .map_err(|e| WebSocketError::ChannelSend(e.to_string()));
+        return send_error(id, "not_found", "Entity not found".to_string(), tx).await;
     }
 
     // Look up the script entity state
@@ -114,31 +66,8 @@ pub async fn handle_script_config(
                 "icon": state.attributes.get("icon").cloned().unwrap_or(serde_json::Value::Null),
             });
 
-            let result = OutgoingMessage::Result(ResultMessage {
-                id,
-                msg_type: "result",
-                success: true,
-                result: Some(serde_json::json!({ "config": config })),
-                error: None,
-            });
-            tx.send(result)
-                .await
-                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+            send_result(id, serde_json::json!({ "config": config }), tx).await
         }
-        None => {
-            let result = OutgoingMessage::Result(ResultMessage {
-                id,
-                msg_type: "result",
-                success: false,
-                result: None,
-                error: Some(ErrorInfo {
-                    code: "not_found".to_string(),
-                    message: "Entity not found".to_string(),
-                }),
-            });
-            tx.send(result)
-                .await
-                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
-        }
+        None => send_error(id, "not_found", "Entity not found".to_string(), tx).await,
     }
 }

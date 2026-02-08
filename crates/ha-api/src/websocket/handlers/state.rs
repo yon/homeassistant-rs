@@ -4,9 +4,11 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-use crate::error::{WebSocketError, WsResult};
+use crate::error::WsResult;
 use crate::websocket::connection::ActiveConnection;
-use crate::websocket::types::{OutgoingMessage, ResultMessage};
+use crate::websocket::types::OutgoingMessage;
+
+use super::send_result;
 
 /// Handle get_states command
 pub async fn handle_get_states(
@@ -34,16 +36,7 @@ pub async fn handle_get_states(
         })
         .collect();
 
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::Value::Array(state_list)),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::Value::Array(state_list), tx).await
 }
 
 /// Handle get_config command
@@ -89,16 +82,7 @@ pub async fn handle_get_config(
         "debug": false,
     });
 
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(config_response),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, config_response, tx).await
 }
 
 /// Handle get_services command
@@ -126,14 +110,5 @@ pub async fn handle_get_services(
         services_map.insert(domain, serde_json::Value::Object(domain_services));
     }
 
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::Value::Object(services_map)),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::Value::Object(services_map), tx).await
 }

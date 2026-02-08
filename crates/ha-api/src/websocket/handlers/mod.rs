@@ -38,7 +38,6 @@ pub(crate) async fn send_result(
 }
 
 /// Send an error result response.
-#[allow(dead_code)] // Will be used as handlers adopt helpers
 pub(crate) async fn send_error(
     id: u64,
     code: &str,

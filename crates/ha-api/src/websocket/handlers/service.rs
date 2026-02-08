@@ -4,9 +4,10 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-use crate::error::{WebSocketError, WsResult};
+use super::{send_error, send_result};
+use crate::error::WsResult;
 use crate::websocket::connection::ActiveConnection;
-use crate::websocket::types::{ErrorInfo, OutgoingMessage, ResultMessage, ServiceTarget};
+use crate::websocket::types::{OutgoingMessage, ServiceTarget};
 
 /// Handle call_service command
 // Handler requires shared connection, message id, service params, and response channel
@@ -59,32 +60,9 @@ pub async fn handle_call_service(
                 }
             }
 
-            let result = OutgoingMessage::Result(ResultMessage {
-                id,
-                msg_type: "result",
-                success: true,
-                result: Some(result_data),
-                error: None,
-            });
-            tx.send(result)
-                .await
-                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+            send_result(id, result_data, tx).await
         }
-        Err(e) => {
-            let result = OutgoingMessage::Result(ResultMessage {
-                id,
-                msg_type: "result",
-                success: false,
-                result: None,
-                error: Some(ErrorInfo {
-                    code: "service_error".to_string(),
-                    message: e.to_string(),
-                }),
-            });
-            tx.send(result)
-                .await
-                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
-        }
+        Err(e) => send_error(id, "service_error", e.to_string(), tx).await,
     }
 }
 
@@ -103,20 +81,16 @@ pub async fn handle_fire_event(
     let event = ha_core::Event::new(event_type, data, context.clone());
     conn.state.event_bus.fire(event);
 
-    let result = OutgoingMessage::Result(ResultMessage {
+    send_result(
         id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::json!({
+        serde_json::json!({
             "context": {
                 "id": context.id.to_string(),
                 "parent_id": context.parent_id,
                 "user_id": context.user_id,
             }
-        })),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+        }),
+        tx,
+    )
+    .await
 }

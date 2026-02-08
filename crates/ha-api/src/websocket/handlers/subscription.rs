@@ -5,9 +5,10 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tracing::debug;
 
+use super::send_result;
 use crate::error::{WebSocketError, WsResult};
 use crate::websocket::connection::ActiveConnection;
-use crate::websocket::types::{EventMessage, OutgoingMessage, ResultMessage};
+use crate::websocket::types::{EventMessage, OutgoingMessage};
 
 /// Handle subscribe_events command
 pub async fn handle_subscribe_events(
@@ -85,16 +86,7 @@ pub async fn handle_subscribe_events(
     });
 
     // Send success response - explicitly include "result": null to match Python HA
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::Value::Null),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::Value::Null, tx).await
 }
 
 /// Handle unsubscribe_events command
@@ -111,16 +103,7 @@ pub async fn handle_unsubscribe_events(
     drop(subs);
 
     // Explicitly include "result": null to match Python HA
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::Value::Null),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::Value::Null, tx).await
 }
 
 /// Handle subscribe_entities command
@@ -277,14 +260,5 @@ pub async fn handle_subscribe_entities(
     });
 
     // Send success response
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::Value::Null),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::Value::Null, tx).await
 }

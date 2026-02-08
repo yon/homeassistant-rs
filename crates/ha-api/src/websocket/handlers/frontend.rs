@@ -6,10 +6,11 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::debug;
 
+use super::send_result;
 use crate::error::{WebSocketError, WsResult};
 use crate::translations;
 use crate::websocket::connection::ActiveConnection;
-use crate::websocket::types::{EventMessage, OutgoingMessage, ResultMessage};
+use crate::websocket::types::{EventMessage, OutgoingMessage};
 
 /// Handle frontend/get_themes command
 pub async fn handle_frontend_get_themes(
@@ -18,20 +19,16 @@ pub async fn handle_frontend_get_themes(
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> WsResult<()> {
     // Return default themes structure
-    let result = OutgoingMessage::Result(ResultMessage {
+    send_result(
         id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::json!({
+        serde_json::json!({
             "themes": {},
             "default_theme": "default",
             "default_dark_theme": null,
-        })),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+        }),
+        tx,
+    )
+    .await
 }
 
 /// Handle frontend/get_icons command
@@ -48,17 +45,7 @@ pub async fn handle_frontend_get_icons(
         Some(path) => path.clone(),
         None => {
             // No components path configured, return empty result
-            let result = OutgoingMessage::Result(ResultMessage {
-                id,
-                msg_type: "result",
-                success: true,
-                result: Some(serde_json::json!({})),
-                error: None,
-            });
-            return tx
-                .send(result)
-                .await
-                .map_err(|e| WebSocketError::ChannelSend(e.to_string()));
+            return send_result(id, serde_json::json!({}), tx).await;
         }
     };
 
@@ -90,16 +77,12 @@ pub async fn handle_frontend_get_icons(
         }
     }
 
-    let result = OutgoingMessage::Result(ResultMessage {
+    send_result(
         id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::to_value(icons_result).unwrap_or_default()),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+        serde_json::to_value(icons_result).unwrap_or_default(),
+        tx,
+    )
+    .await
 }
 
 /// Handle frontend/get_translations command
@@ -121,16 +104,7 @@ pub async fn handle_frontend_get_translations(
     let translations =
         translations::get_translations(cat, integration.as_deref(), is_config_flow, lang);
 
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(translations),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, translations, tx).await
 }
 
 /// Handle frontend/subscribe_user_data command
@@ -154,16 +128,7 @@ pub async fn handle_frontend_subscribe_user_data(
         .map_err(|e| WebSocketError::ChannelSend(e.to_string()))?;
 
     // Send success response
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::Value::Null),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::Value::Null, tx).await
 }
 
 /// Handle frontend/subscribe_system_data command
@@ -187,16 +152,7 @@ pub async fn handle_frontend_subscribe_system_data(
         .map_err(|e| WebSocketError::ChannelSend(e.to_string()))?;
 
     // Send success response
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::Value::Null),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::Value::Null, tx).await
 }
 
 /// Handle get_panels command
@@ -290,16 +246,7 @@ pub async fn handle_get_panels(
         },
     });
 
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(panels),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, panels, tx).await
 }
 
 /// Handle lovelace/config command
@@ -321,16 +268,7 @@ pub async fn handle_lovelace_config(
         ],
     });
 
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(config),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, config, tx).await
 }
 
 /// Handle lovelace/resources command
@@ -340,14 +278,5 @@ pub async fn handle_lovelace_resources(
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> WsResult<()> {
     // Return empty resources list
-    let result = OutgoingMessage::Result(ResultMessage {
-        id,
-        msg_type: "result",
-        success: true,
-        result: Some(serde_json::Value::Array(vec![])),
-        error: None,
-    });
-    tx.send(result)
-        .await
-        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
+    send_result(id, serde_json::Value::Array(vec![]), tx).await
 }
