@@ -16,6 +16,7 @@ ha-event-bus = { workspace = true }
 ha-registries = { workspace = true }
 ha-service-registry = { workspace = true }
 ha-state-store = { workspace = true }
+thiserror = { workspace = true }
 
 # Web framework
 axum = { workspace = true, features = ["ws"] }

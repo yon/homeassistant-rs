@@ -6,6 +6,7 @@
 
 pub mod auth;
 pub mod config_flow;
+pub mod error;
 pub mod frontend;
 pub mod manifest;
 pub mod persistent_notification;

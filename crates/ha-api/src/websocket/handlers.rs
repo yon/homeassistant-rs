@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, info, warn};
 
+use crate::error::{WebSocketError, WsResult};
 use crate::translations;
 use crate::AppState;
 
@@ -23,7 +24,7 @@ pub async fn handle_get_states(
     conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     let states = conn.state.state_machine.all();
     let state_list: Vec<serde_json::Value> = states
         .iter()
@@ -51,7 +52,9 @@ pub async fn handle_get_states(
         result: Some(serde_json::Value::Array(state_list)),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle get_config command
@@ -59,7 +62,7 @@ pub async fn handle_get_config(
     conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     let config = &conn.state.config;
     let unit_system = config.unit_system();
 
@@ -104,7 +107,9 @@ pub async fn handle_get_config(
         result: Some(config_response),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle get_services command
@@ -112,7 +117,7 @@ pub async fn handle_get_services(
     conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     let all_services = conn.state.service_registry.all_services();
 
     let mut services_map = serde_json::Map::new();
@@ -139,7 +144,9 @@ pub async fn handle_get_services(
         result: Some(serde_json::Value::Object(services_map)),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 // =============================================================================
@@ -152,7 +159,7 @@ pub async fn handle_subscribe_events(
     id: u64,
     event_type: Option<String>,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Create cancellation channel
     let (cancel_tx, mut cancel_rx) = broadcast::channel::<()>(1);
 
@@ -229,7 +236,9 @@ pub async fn handle_subscribe_events(
         result: Some(serde_json::Value::Null),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle unsubscribe_events command
@@ -238,7 +247,7 @@ pub async fn handle_unsubscribe_events(
     id: u64,
     subscription: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     let mut subs = conn.subscriptions.write().await;
     if let Some(cancel_tx) = subs.remove(&subscription) {
         let _ = cancel_tx.send(());
@@ -253,7 +262,9 @@ pub async fn handle_unsubscribe_events(
         result: Some(serde_json::Value::Null),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle subscribe_entities command
@@ -262,7 +273,7 @@ pub async fn handle_subscribe_entities(
     id: u64,
     entity_ids: Option<Vec<String>>,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Create cancellation channel
     let (cancel_tx, mut cancel_rx) = broadcast::channel::<()>(1);
 
@@ -319,7 +330,9 @@ pub async fn handle_subscribe_entities(
             "a": additions,
         }),
     });
-    tx.send(initial_event).await.map_err(|e| e.to_string())?;
+    tx.send(initial_event)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))?;
 
     // Subscribe to state changes
     let entity_ids_filter = entity_ids.clone();
@@ -415,7 +428,9 @@ pub async fn handle_subscribe_entities(
         result: Some(serde_json::Value::Null),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 // =============================================================================
@@ -433,7 +448,7 @@ pub async fn handle_call_service(
     service_data: Option<serde_json::Value>,
     return_response: bool,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Merge target into service_data
     let mut data = service_data.unwrap_or(serde_json::json!({}));
     if let Some(target) = target {
@@ -479,7 +494,9 @@ pub async fn handle_call_service(
                 result: Some(result_data),
                 error: None,
             });
-            tx.send(result).await.map_err(|e| e.to_string())
+            tx.send(result)
+                .await
+                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
         }
         Err(e) => {
             let result = OutgoingMessage::Result(ResultMessage {
@@ -492,7 +509,9 @@ pub async fn handle_call_service(
                     message: e.to_string(),
                 }),
             });
-            tx.send(result).await.map_err(|e| e.to_string())
+            tx.send(result)
+                .await
+                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
         }
     }
 }
@@ -504,7 +523,7 @@ pub async fn handle_fire_event(
     event_type: String,
     event_data: Option<serde_json::Value>,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     let data = event_data.unwrap_or(serde_json::json!({}));
     // Create a new context with user_id for this event
     let context = conn.new_context();
@@ -525,7 +544,9 @@ pub async fn handle_fire_event(
         })),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 // =============================================================================
@@ -538,7 +559,7 @@ pub async fn handle_entity_registry_get(
     id: u64,
     entity_id: &str,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     match conn.state.registries.entities.get(entity_id) {
         Some(entry) => {
             let result = OutgoingMessage::Result(ResultMessage {
@@ -548,7 +569,9 @@ pub async fn handle_entity_registry_get(
                 result: Some(entity_entry_to_json(&entry)),
                 error: None,
             });
-            tx.send(result).await.map_err(|e| e.to_string())
+            tx.send(result)
+                .await
+                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
         }
         None => {
             let result = OutgoingMessage::Result(ResultMessage {
@@ -561,7 +584,9 @@ pub async fn handle_entity_registry_get(
                     message: format!("Entity not found: {}", entity_id),
                 }),
             });
-            tx.send(result).await.map_err(|e| e.to_string())
+            tx.send(result)
+                .await
+                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
         }
     }
 }
@@ -571,7 +596,7 @@ pub async fn handle_entity_registry_list(
     conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     let entries: Vec<serde_json::Value> = conn
         .state
         .registries
@@ -588,7 +613,9 @@ pub async fn handle_entity_registry_list(
         result: Some(serde_json::Value::Array(entries)),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle config/entity_registry/remove command
@@ -597,7 +624,7 @@ pub async fn handle_entity_registry_remove(
     id: u64,
     entity_id: &str,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     match conn.state.registries.entities.remove(entity_id) {
         Some(_) => {
             // Save changes to storage
@@ -612,7 +639,9 @@ pub async fn handle_entity_registry_remove(
                 result: Some(serde_json::Value::Null),
                 error: None,
             });
-            tx.send(result).await.map_err(|e| e.to_string())
+            tx.send(result)
+                .await
+                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
         }
         None => {
             let result = OutgoingMessage::Result(ResultMessage {
@@ -625,7 +654,9 @@ pub async fn handle_entity_registry_remove(
                     message: format!("Entity not found: {}", entity_id),
                 }),
             });
-            tx.send(result).await.map_err(|e| e.to_string())
+            tx.send(result)
+                .await
+                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
         }
     }
 }
@@ -645,7 +676,7 @@ pub async fn handle_entity_registry_update(
     aliases: Option<HashSet<String>>,
     labels: Option<HashSet<String>>,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Check if entity exists
     if conn.state.registries.entities.get(entity_id).is_none() {
         let result = OutgoingMessage::Result(ResultMessage {
@@ -658,7 +689,10 @@ pub async fn handle_entity_registry_update(
                 message: format!("Entity not found: {}", entity_id),
             }),
         });
-        return tx.send(result).await.map_err(|e| e.to_string());
+        return tx
+            .send(result)
+            .await
+            .map_err(|e| WebSocketError::ChannelSend(e.to_string()));
     }
 
     // Update the entity entry
@@ -730,7 +764,9 @@ pub async fn handle_entity_registry_update(
         })),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle config/entity_registry/list_for_display command
@@ -738,7 +774,7 @@ pub async fn handle_entity_registry_list_for_display(
     conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Return a simplified entity list for display purposes
     // Uses short keys matching HA's entity_registry.py display format
     let entries: Vec<serde_json::Value> = conn
@@ -794,7 +830,9 @@ pub async fn handle_entity_registry_list_for_display(
         })),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Convert an EntityEntry to the JSON format expected by the frontend
@@ -849,7 +887,7 @@ pub async fn handle_device_registry_list(
     conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     let devices: Vec<serde_json::Value> = conn
         .state
         .registries
@@ -898,7 +936,9 @@ pub async fn handle_device_registry_list(
         result: Some(serde_json::Value::Array(devices)),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 // =============================================================================
@@ -910,7 +950,7 @@ pub async fn handle_area_registry_list(
     conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     let areas: Vec<serde_json::Value> = conn
         .state
         .registries
@@ -936,7 +976,9 @@ pub async fn handle_area_registry_list(
         result: Some(serde_json::Value::Array(areas)),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle config/floor_registry/list command
@@ -944,7 +986,7 @@ pub async fn handle_floor_registry_list(
     conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     let floors: Vec<serde_json::Value> = conn
         .state
         .registries
@@ -968,7 +1010,9 @@ pub async fn handle_floor_registry_list(
         result: Some(serde_json::Value::Array(floors)),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle config/label_registry/list command
@@ -976,7 +1020,7 @@ pub async fn handle_label_registry_list(
     conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     let labels: Vec<serde_json::Value> = conn
         .state
         .registries
@@ -1000,7 +1044,9 @@ pub async fn handle_label_registry_list(
         result: Some(serde_json::Value::Array(labels)),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle config/category_registry/list command
@@ -1009,7 +1055,7 @@ pub async fn handle_category_registry_list(
     id: u64,
     _scope: Option<String>,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Return empty categories list
     let result = OutgoingMessage::Result(ResultMessage {
         id,
@@ -1018,7 +1064,9 @@ pub async fn handle_category_registry_list(
         result: Some(serde_json::Value::Array(vec![])),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 // =============================================================================
@@ -1030,7 +1078,7 @@ pub async fn handle_frontend_get_themes(
     _conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Return default themes structure
     let result = OutgoingMessage::Result(ResultMessage {
         id,
@@ -1043,7 +1091,9 @@ pub async fn handle_frontend_get_themes(
         })),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle frontend/get_icons command
@@ -1054,7 +1104,7 @@ pub async fn handle_frontend_get_icons(
     category: &str,
     integration: Option<Vec<String>>,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Get components path from state
     let components_path = match &conn.state.components_path {
         Some(path) => path.clone(),
@@ -1067,7 +1117,10 @@ pub async fn handle_frontend_get_icons(
                 result: Some(serde_json::json!({})),
                 error: None,
             });
-            return tx.send(result).await.map_err(|e| e.to_string());
+            return tx
+                .send(result)
+                .await
+                .map_err(|e| WebSocketError::ChannelSend(e.to_string()));
         }
     };
 
@@ -1106,7 +1159,9 @@ pub async fn handle_frontend_get_icons(
         result: Some(serde_json::to_value(icons_result).unwrap_or_default()),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle frontend/get_translations command
@@ -1119,7 +1174,7 @@ pub async fn handle_frontend_get_translations(
     integration: Option<Vec<String>>,
     config_flow: Option<bool>,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     let lang = language.as_deref().unwrap_or("en");
     let cat = category.as_deref();
     let is_config_flow = config_flow.unwrap_or(false);
@@ -1134,7 +1189,9 @@ pub async fn handle_frontend_get_translations(
         result: Some(translations),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle frontend/subscribe_user_data command
@@ -1143,7 +1200,7 @@ pub async fn handle_frontend_subscribe_user_data(
     id: u64,
     key: Option<String>,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Send initial user data event
     let event = OutgoingMessage::Event(EventMessage {
         id,
@@ -1153,7 +1210,9 @@ pub async fn handle_frontend_subscribe_user_data(
             "data": {}
         }),
     });
-    tx.send(event).await.map_err(|e| e.to_string())?;
+    tx.send(event)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))?;
 
     // Send success response
     let result = OutgoingMessage::Result(ResultMessage {
@@ -1163,7 +1222,9 @@ pub async fn handle_frontend_subscribe_user_data(
         result: Some(serde_json::Value::Null),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle frontend/subscribe_system_data command
@@ -1172,7 +1233,7 @@ pub async fn handle_frontend_subscribe_system_data(
     id: u64,
     key: Option<String>,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Send initial system data event
     let event = OutgoingMessage::Event(EventMessage {
         id,
@@ -1182,7 +1243,9 @@ pub async fn handle_frontend_subscribe_system_data(
             "data": {}
         }),
     });
-    tx.send(event).await.map_err(|e| e.to_string())?;
+    tx.send(event)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))?;
 
     // Send success response
     let result = OutgoingMessage::Result(ResultMessage {
@@ -1192,7 +1255,9 @@ pub async fn handle_frontend_subscribe_system_data(
         result: Some(serde_json::Value::Null),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle get_panels command
@@ -1200,7 +1265,7 @@ pub async fn handle_get_panels(
     _conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Return default panels structure
     let panels = serde_json::json!({
         "lovelace": {
@@ -1293,7 +1358,9 @@ pub async fn handle_get_panels(
         result: Some(panels),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle lovelace/config command
@@ -1302,7 +1369,7 @@ pub async fn handle_lovelace_config(
     id: u64,
     _url_path: Option<String>,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Return a basic auto-generated lovelace config
     let config = serde_json::json!({
         "title": "Home",
@@ -1322,7 +1389,9 @@ pub async fn handle_lovelace_config(
         result: Some(config),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle lovelace/resources command
@@ -1330,7 +1399,7 @@ pub async fn handle_lovelace_resources(
     _conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Return empty resources list
     let result = OutgoingMessage::Result(ResultMessage {
         id,
@@ -1339,7 +1408,9 @@ pub async fn handle_lovelace_resources(
         result: Some(serde_json::Value::Array(vec![])),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 // =============================================================================
@@ -1352,7 +1423,7 @@ pub async fn handle_automation_config(
     id: u64,
     entity_id: &str,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Verify entity_id starts with "automation."
     if !entity_id.starts_with("automation.") {
         let result = OutgoingMessage::Result(ResultMessage {
@@ -1365,7 +1436,10 @@ pub async fn handle_automation_config(
                 message: "Entity not found".to_string(),
             }),
         });
-        return tx.send(result).await.map_err(|e| e.to_string());
+        return tx
+            .send(result)
+            .await
+            .map_err(|e| WebSocketError::ChannelSend(e.to_string()));
     }
 
     // Look up the automation entity state
@@ -1390,7 +1464,9 @@ pub async fn handle_automation_config(
                 result: Some(serde_json::json!({ "config": config })),
                 error: None,
             });
-            tx.send(result).await.map_err(|e| e.to_string())
+            tx.send(result)
+                .await
+                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
         }
         None => {
             let result = OutgoingMessage::Result(ResultMessage {
@@ -1403,7 +1479,9 @@ pub async fn handle_automation_config(
                     message: "Entity not found".to_string(),
                 }),
             });
-            tx.send(result).await.map_err(|e| e.to_string())
+            tx.send(result)
+                .await
+                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
         }
     }
 }
@@ -1414,7 +1492,7 @@ pub async fn handle_script_config(
     id: u64,
     entity_id: &str,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Verify entity_id starts with "script."
     if !entity_id.starts_with("script.") {
         let result = OutgoingMessage::Result(ResultMessage {
@@ -1427,7 +1505,10 @@ pub async fn handle_script_config(
                 message: "Entity not found".to_string(),
             }),
         });
-        return tx.send(result).await.map_err(|e| e.to_string());
+        return tx
+            .send(result)
+            .await
+            .map_err(|e| WebSocketError::ChannelSend(e.to_string()));
     }
 
     // Look up the script entity state
@@ -1449,7 +1530,9 @@ pub async fn handle_script_config(
                 result: Some(serde_json::json!({ "config": config })),
                 error: None,
             });
-            tx.send(result).await.map_err(|e| e.to_string())
+            tx.send(result)
+                .await
+                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
         }
         None => {
             let result = OutgoingMessage::Result(ResultMessage {
@@ -1462,7 +1545,9 @@ pub async fn handle_script_config(
                     message: "Entity not found".to_string(),
                 }),
             });
-            tx.send(result).await.map_err(|e| e.to_string())
+            tx.send(result)
+                .await
+                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
         }
     }
 }
@@ -1476,7 +1561,7 @@ pub async fn handle_system_log_list(
     conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     let entries = conn.state.system_log.list();
     let result = OutgoingMessage::Result(ResultMessage {
         id,
@@ -1485,7 +1570,9 @@ pub async fn handle_system_log_list(
         result: Some(serde_json::json!(entries)),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle render_template command
@@ -1495,7 +1582,7 @@ pub async fn handle_render_template(
     template: &str,
     variables: Option<HashMap<String, serde_json::Value>>,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // For now, we'll do a simple template rendering
     // In a full implementation, this would use the TemplateEngine
 
@@ -1533,7 +1620,9 @@ pub async fn handle_render_template(
         })),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle auth/current_user command - returns current user info
@@ -1541,7 +1630,7 @@ pub async fn handle_auth_current_user(
     conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Return a default user for now
     let user = serde_json::json!({
         "id": conn.user_id.clone().unwrap_or_else(|| "default-user-id".to_string()),
@@ -1559,7 +1648,9 @@ pub async fn handle_auth_current_user(
         result: Some(user),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle recorder/info command
@@ -1567,7 +1658,7 @@ pub async fn handle_recorder_info(
     _conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Return minimal recorder info (indicates recorder is not running)
     let result = OutgoingMessage::Result(ResultMessage {
         id,
@@ -1582,7 +1673,9 @@ pub async fn handle_recorder_info(
         })),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle repairs/list_issues command
@@ -1590,7 +1683,7 @@ pub async fn handle_repairs_list_issues(
     _conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Return empty issues list
     let result = OutgoingMessage::Result(ResultMessage {
         id,
@@ -1601,7 +1694,9 @@ pub async fn handle_repairs_list_issues(
         })),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle persistent_notification/subscribe command
@@ -1609,7 +1704,7 @@ pub async fn handle_persistent_notification_subscribe(
     conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Get current notifications
     let notifications = conn.state.notifications.get_all_map();
 
@@ -1627,7 +1722,9 @@ pub async fn handle_persistent_notification_subscribe(
         result: Some(serde_json::Value::Null),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())?;
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))?;
 
     // Send initial notifications event with "current" type
     let event = OutgoingMessage::Event(EventMessage {
@@ -1638,7 +1735,9 @@ pub async fn handle_persistent_notification_subscribe(
             "notifications": notifications_json
         }),
     });
-    tx.send(event).await.map_err(|e| e.to_string())
+    tx.send(event)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle labs/subscribe command
@@ -1646,14 +1745,16 @@ pub async fn handle_labs_subscribe(
     _conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Send initial labs state event (empty)
     let event = OutgoingMessage::Event(EventMessage {
         id,
         msg_type: "event",
         event: serde_json::json!({}),
     });
-    tx.send(event).await.map_err(|e| e.to_string())?;
+    tx.send(event)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))?;
 
     let result = OutgoingMessage::Result(ResultMessage {
         id,
@@ -1662,7 +1763,9 @@ pub async fn handle_labs_subscribe(
         result: Some(serde_json::Value::Null),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle logger/log_info command
@@ -1670,7 +1773,7 @@ pub async fn handle_logger_log_info(
     _conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Return empty array of logger info
     // Format: [{"domain": "integration_name", "level": 20}, ...]
     // Level values: DEBUG=10, INFO=20, WARNING=30, ERROR=40, CRITICAL=50
@@ -1681,7 +1784,9 @@ pub async fn handle_logger_log_info(
         result: Some(serde_json::json!([])),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle entity/source command
@@ -1690,7 +1795,7 @@ pub async fn handle_entity_source(
     id: u64,
     entity_ids: Option<Vec<String>>,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     let mut sources = serde_json::Map::new();
 
     // Get all states
@@ -1725,7 +1830,9 @@ pub async fn handle_entity_source(
         result: Some(serde_json::Value::Object(sources)),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle blueprint/list command
@@ -1734,7 +1841,7 @@ pub async fn handle_blueprint_list(
     id: u64,
     _domain: &str,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Return empty blueprints
     let result = OutgoingMessage::Result(ResultMessage {
         id,
@@ -1743,7 +1850,9 @@ pub async fn handle_blueprint_list(
         result: Some(serde_json::json!({})),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 // =============================================================================
@@ -1793,7 +1902,7 @@ pub async fn handle_config_entries_get(
     entry_id: Option<&str>,
     domain: Option<&str>,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Extract data from lock, then release before awaiting channel send
     let result_json = {
         let config_entries = conn.state.config_entries.read().await;
@@ -1846,7 +1955,9 @@ pub async fn handle_config_entries_get(
         result: Some(result_json),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle config_entries/subscribe command
@@ -1855,7 +1966,7 @@ pub async fn handle_config_entries_subscribe(
     id: u64,
     type_filter: Option<Vec<String>>,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Filter entries by integration type if type_filter is provided
     // For now, we only have device integrations (like "demo"), not helpers
     // If type_filter is ["helper"], return empty since we have no helpers
@@ -1893,7 +2004,9 @@ pub async fn handle_config_entries_subscribe(
         result: Some(serde_json::Value::Null),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())?;
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))?;
 
     // Then send the event with all config entries
     let event = OutgoingMessage::Event(EventMessage {
@@ -1901,7 +2014,9 @@ pub async fn handle_config_entries_subscribe(
         msg_type: "event",
         event: serde_json::json!(entries),
     });
-    tx.send(event).await.map_err(|e| e.to_string())
+    tx.send(event)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle application_credentials/config command
@@ -1909,7 +2024,7 @@ pub async fn handle_config_entries_subscribe(
 pub async fn handle_application_credentials_config(
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Get domains that support application credentials from Python
     #[cfg(feature = "python")]
     let (domains, integrations) = {
@@ -1961,7 +2076,9 @@ pub async fn handle_application_credentials_config(
         })),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle application_credentials/config_entry command
@@ -1970,7 +2087,7 @@ pub async fn handle_application_credentials_config_entry(
     id: u64,
     _entry_id: &str,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Most integrations don't use application credentials
     // Return null to indicate no credentials
     let result = OutgoingMessage::Result(ResultMessage {
@@ -1980,7 +2097,9 @@ pub async fn handle_application_credentials_config_entry(
         result: Some(serde_json::Value::Null),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle application_credentials/list command
@@ -1989,7 +2108,7 @@ pub async fn handle_application_credentials_list(
     conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Get all credentials from storage
     let credentials: Vec<serde_json::Value> = conn
         .state
@@ -2021,7 +2140,9 @@ pub async fn handle_application_credentials_list(
         result: Some(serde_json::json!(credentials)),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle application_credentials/create command
@@ -2036,7 +2157,7 @@ pub async fn handle_application_credentials_create(
     auth_domain: Option<&str>,
     name: Option<&str>,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     use crate::ApplicationCredential;
 
     // Strip whitespace from credentials (HA does this)
@@ -2087,7 +2208,9 @@ pub async fn handle_application_credentials_create(
         result: Some(result_obj),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle application_credentials/delete command
@@ -2097,7 +2220,7 @@ pub async fn handle_application_credentials_delete(
     id: u64,
     credential_id: &str,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     info!("Deleting application credential: {}", credential_id);
 
     // Try to remove the credential
@@ -2114,7 +2237,9 @@ pub async fn handle_application_credentials_delete(
             result: Some(serde_json::Value::Null),
             error: None,
         });
-        tx.send(result).await.map_err(|e| e.to_string())
+        tx.send(result)
+            .await
+            .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
     } else {
         let result = OutgoingMessage::Result(ResultMessage {
             id,
@@ -2129,7 +2254,9 @@ pub async fn handle_application_credentials_delete(
                 ),
             }),
         });
-        tx.send(result).await.map_err(|e| e.to_string())
+        tx.send(result)
+            .await
+            .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
     }
 }
 
@@ -2139,7 +2266,7 @@ pub async fn handle_config_entries_delete(
     id: u64,
     entry_id: &str,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     info!("Deleting config entry: {}", entry_id);
 
     // Remove the config entry, then release lock before sending response
@@ -2160,7 +2287,9 @@ pub async fn handle_config_entries_delete(
                 })),
                 error: None,
             });
-            tx.send(result).await.map_err(|e| e.to_string())
+            tx.send(result)
+                .await
+                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
         }
         Err(e) => {
             warn!("Failed to delete config entry {}: {}", entry_id, e);
@@ -2174,7 +2303,9 @@ pub async fn handle_config_entries_delete(
                     message: format!("Config entry {} not found", entry_id),
                 }),
             });
-            tx.send(result).await.map_err(|e| e.to_string())
+            tx.send(result)
+                .await
+                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
         }
     }
 }
@@ -2188,7 +2319,7 @@ pub async fn handle_config_entries_subentries_list(
     id: u64,
     _entry_id: &str,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Most integrations don't have subentries, return empty array
     // Per HA format: [{"subentry_id": "...", "subentry_type": "...", "title": "...", "unique_id": "..."}]
     let result = OutgoingMessage::Result(ResultMessage {
@@ -2198,7 +2329,9 @@ pub async fn handle_config_entries_subentries_list(
         result: Some(serde_json::json!([])),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 // =============================================================================
@@ -2211,7 +2344,7 @@ pub async fn handle_config_entries_subentries_list(
 pub async fn handle_config_entries_flow_progress_list(
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Return empty list since we don't have any auto-discovered flows yet
     let result = OutgoingMessage::Result(ResultMessage {
         id,
@@ -2220,7 +2353,9 @@ pub async fn handle_config_entries_flow_progress_list(
         result: Some(serde_json::Value::Array(vec![])),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle config_entries/flow/subscribe command
@@ -2228,7 +2363,7 @@ pub async fn handle_config_entries_flow_subscribe(
     conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Get list of active flows if config flow manager is available
     let flows = if let Some(cfm) = &conn.state.config_flow_handler {
         cfm.list_flows().await
@@ -2242,7 +2377,9 @@ pub async fn handle_config_entries_flow_subscribe(
         msg_type: "event",
         event: serde_json::json!(flows),
     });
-    tx.send(event).await.map_err(|e| e.to_string())?;
+    tx.send(event)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))?;
 
     let result = OutgoingMessage::Result(ResultMessage {
         id,
@@ -2251,7 +2388,9 @@ pub async fn handle_config_entries_flow_subscribe(
         result: Some(serde_json::Value::Null),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle config_entries/flow command - start a new config flow
@@ -2261,14 +2400,14 @@ pub async fn handle_config_entries_flow(
     handler: &str,
     show_advanced_options: bool,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     info!("Starting config flow for handler: {}", handler);
 
     let config_flow_handler = conn
         .state
         .config_flow_handler
         .as_ref()
-        .ok_or_else(|| "Config flow manager not available".to_string())?;
+        .ok_or(WebSocketError::ConfigFlowUnavailable)?;
 
     match config_flow_handler
         .start_flow(handler, show_advanced_options)
@@ -2282,7 +2421,9 @@ pub async fn handle_config_entries_flow(
                 result: Some(serde_json::to_value(&flow_result).unwrap_or_default()),
                 error: None,
             });
-            tx.send(result).await.map_err(|e| e.to_string())
+            tx.send(result)
+                .await
+                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
         }
         Err(e) => {
             error!("Failed to start config flow: {}", e);
@@ -2296,7 +2437,9 @@ pub async fn handle_config_entries_flow(
                     message: e,
                 }),
             });
-            tx.send(result).await.map_err(|e| e.to_string())
+            tx.send(result)
+                .await
+                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
         }
     }
 }
@@ -2308,14 +2451,14 @@ pub async fn handle_config_entries_flow_progress(
     flow_id: &str,
     user_input: Option<serde_json::Value>,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     info!("Progressing config flow: {}", flow_id);
 
     let config_flow_handler = conn
         .state
         .config_flow_handler
         .as_ref()
-        .ok_or_else(|| "Config flow manager not available".to_string())?;
+        .ok_or(WebSocketError::ConfigFlowUnavailable)?;
 
     match config_flow_handler.progress_flow(flow_id, user_input).await {
         Ok(flow_result) => {
@@ -2343,7 +2486,9 @@ pub async fn handle_config_entries_flow_progress(
                 result: Some(serde_json::to_value(&flow_result).unwrap_or_default()),
                 error: None,
             });
-            tx.send(result).await.map_err(|e| e.to_string())
+            tx.send(result)
+                .await
+                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
         }
         Err(e) => {
             error!("Failed to progress config flow: {}", e);
@@ -2357,7 +2502,9 @@ pub async fn handle_config_entries_flow_progress(
                     message: e,
                 }),
             });
-            tx.send(result).await.map_err(|e| e.to_string())
+            tx.send(result)
+                .await
+                .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
         }
     }
 }
@@ -2368,7 +2515,7 @@ async fn save_config_entry_from_flow(
     domain: &str,
     title: &str,
     data: &serde_json::Value,
-) -> Result<(), String> {
+) -> WsResult<()> {
     use ha_config_entries::ConfigEntry;
 
     // Create entry using the constructor which handles all defaults
@@ -2392,10 +2539,9 @@ async fn save_config_entry_from_flow(
     // Save to disk
     {
         let config_entries = state.config_entries.read().await;
-        config_entries
-            .save()
-            .await
-            .map_err(|e| format!("Failed to save config entries: {}", e))?;
+        config_entries.save().await.map_err(|e| {
+            WebSocketError::ChannelSend(format!("Failed to save config entries: {}", e))
+        })?;
     }
 
     info!("Created config entry {} for {}", entry_id, domain);
@@ -2415,7 +2561,7 @@ pub async fn handle_integration_descriptions(
     id: u64,
     _integrations: Option<Vec<String>>,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Load integration descriptions from manifest files
     let integrations = crate::manifest::build_integration_descriptions();
 
@@ -2426,7 +2572,9 @@ pub async fn handle_integration_descriptions(
         result: Some(integrations),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle manifest/list command
@@ -2434,7 +2582,7 @@ pub async fn handle_manifest_list(
     _conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     let manifests = crate::manifest::build_manifest_list();
 
     let result = OutgoingMessage::Result(ResultMessage {
@@ -2444,7 +2592,9 @@ pub async fn handle_manifest_list(
         result: Some(manifests),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle manifest/get command
@@ -2453,7 +2603,7 @@ pub async fn handle_manifest_get(
     id: u64,
     integration: &str,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     let manifest = crate::manifest::build_manifest_response(integration).unwrap_or_else(|| {
         // Fallback for unknown integrations
         serde_json::json!({
@@ -2477,7 +2627,9 @@ pub async fn handle_manifest_get(
         result: Some(manifest),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Handle sensor/numeric_device_classes command
@@ -2488,7 +2640,7 @@ pub async fn handle_sensor_numeric_device_classes(
     _conn: &Arc<ActiveConnection>,
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // All sensor device classes except date, enum, and timestamp are numeric
     // This list matches homeassistant/components/sensor/const.py
     let numeric_device_classes = vec![
@@ -2555,7 +2707,9 @@ pub async fn handle_sensor_numeric_device_classes(
         })),
         error: None,
     });
-    tx.send(result).await.map_err(|e| e.to_string())
+    tx.send(result)
+        .await
+        .map_err(|e| WebSocketError::ChannelSend(e.to_string()))
 }
 
 /// Capitalize first letter of a string

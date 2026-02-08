@@ -12,6 +12,7 @@ use ha_core::Context;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 
+use crate::error::{WebSocketError, WsResult};
 use crate::AppState;
 
 use super::dispatch::handle_message;
@@ -57,10 +58,10 @@ impl ActiveConnection {
     }
 
     /// Validate that the message ID is increasing
-    pub fn validate_id(&self, id: u64) -> Result<(), &'static str> {
+    pub fn validate_id(&self, id: u64) -> WsResult<()> {
         let last = self.last_id.load(Ordering::SeqCst);
         if id <= last {
-            return Err("id_reuse");
+            return Err(WebSocketError::InvalidId(id));
         }
         self.last_id.store(id, Ordering::SeqCst);
         Ok(())
@@ -206,7 +207,7 @@ pub struct AuthResult {
 /// Wait for authentication message
 async fn wait_for_auth(
     receiver: &mut futures::stream::SplitStream<WebSocket>,
-) -> Result<AuthResult, String> {
+) -> WsResult<AuthResult> {
     while let Some(result) = receiver.next().await {
         match result {
             Ok(Message::Text(text)) => {
@@ -232,21 +233,21 @@ async fn wait_for_auth(
                         }
                         _ => {
                             // Non-auth message during auth phase
-                            return Err("Expected auth message".to_string());
+                            return Err(WebSocketError::NotAuthenticated);
                         }
                     }
                 }
             }
             Ok(Message::Close(_)) => {
-                return Err("Connection closed".to_string());
+                return Err(WebSocketError::ConnectionClosed);
             }
             Err(e) => {
-                return Err(format!("WebSocket error: {}", e));
+                return Err(WebSocketError::Transport(e.to_string()));
             }
             _ => {}
         }
     }
-    Err("Connection closed".to_string())
+    Err(WebSocketError::ConnectionClosed)
 }
 
 /// Look up user_id from access token
@@ -277,11 +278,11 @@ fn lookup_user_id(access_token: Option<&str>) -> Option<String> {
 pub async fn send_message(
     sender: &mut futures::stream::SplitSink<WebSocket, Message>,
     msg: &OutgoingMessage,
-) -> Result<(), String> {
-    let json = serde_json::to_string(msg).map_err(|e| e.to_string())?;
+) -> WsResult<()> {
+    let json = serde_json::to_string(msg)?;
     debug!("Sending: {}", json);
     sender
         .send(Message::Text(json))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| WebSocketError::Transport(e.to_string()))
 }
