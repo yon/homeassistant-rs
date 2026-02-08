@@ -12,6 +12,9 @@ PYTHON := $(VENV_BIN)/python
 MATURIN := $(VENV_BIN)/maturin
 VENV_STAMP := $(VENV)/.stamp
 
+# Ensure PyO3 uses the venv Python (not system Python which may be too new)
+export PYO3_PYTHON := $(CURDIR)/$(PYTHON)
+
 # Configuration directory (optional, uses server default if not set)
 CONFIG_DIR ?=
 
@@ -20,7 +23,6 @@ SITE_PACKAGES = $(shell $(PYTHON) -c "import site; print(site.getsitepackages()[
 RUN_ENV = PYTHONPATH=$(CURDIR)/crates/ha-py-bridge/python:$(SITE_PACKAGES) \
 	HA_FRONTEND_PATH=$(SITE_PACKAGES)/hass_frontend \
 	HA_COMPONENTS_PATH=$(CURDIR)/vendor/ha-core/homeassistant/components \
-	PYO3_PYTHON=$(CURDIR)/$(PYTHON) \
 	$(if $(CONFIG_DIR),HA_CONFIG_DIR=$(CONFIG_DIR))
 
 # Default target
