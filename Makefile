@@ -50,6 +50,10 @@ build-wheel-debug: $(VENV_STAMP) ## Build Python wheel in debug mode
 check: ## Check all crates for errors without building
 	cargo check --workspace
 
+.PHONY: check-all
+check-all: build test-rust lint ## Run ALL checks (build + test + lint)
+	@echo "All checks passed."
+
 .PHONY: clippy
 clippy: ## Run clippy linter on all crates
 	cargo clippy --workspace --all-targets -- -D warnings
@@ -192,6 +196,10 @@ audit: ## Run security audit (requires cargo-audit)
 .PHONY: deps
 deps: ## Check for outdated dependencies (requires cargo-outdated)
 	cargo outdated --workspace
+
+.PHONY: quality-score
+quality-score: ## Run quality score (0-100) against quality gates
+	@python3 scripts/quality_score.py --summary
 
 .PHONY: tree
 tree: ## Display dependency tree
