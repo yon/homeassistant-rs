@@ -442,6 +442,7 @@ impl PyEntityRegistry {
     }
 
     /// Get or create an entity
+    // PyO3 method mirrors Python HA EntityRegistry.async_get_or_create which takes many optional parameters
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         domain,
@@ -659,6 +660,7 @@ impl PyEntityRegistry {
     /// Includes business logic:
     /// - Unique ID conflict detection (raises ValueError if new_unique_id conflicts)
     /// - Config entry disabled_by propagation (when config_entry_id changes)
+    // PyO3 method mirrors Python HA EntityRegistry.async_update_entity which takes many optional fields
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         entity_id,

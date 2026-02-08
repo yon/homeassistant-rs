@@ -197,7 +197,7 @@ impl PyBridge {
     ///
     /// Uses the manifest from ha-api to get the requirements list, then
     /// installs any missing packages via pip.
-    pub fn ensure_requirements(&self, domain: &str) -> Result<(), String> {
+    pub fn ensure_requirements(&self, domain: &str) -> PyBridgeResult<()> {
         // Get manifest from ha-api
         if let Some(manifest) = ha_api::manifest::get_manifest(domain) {
             if !manifest.requirements.is_empty() {

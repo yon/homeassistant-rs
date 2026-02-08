@@ -438,6 +438,7 @@ pub async fn handle_subscribe_entities(
 // =============================================================================
 
 /// Handle call_service command
+// Handler requires shared connection, message id, service params, and response channel
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_call_service(
     conn: &Arc<ActiveConnection>,
@@ -662,6 +663,7 @@ pub async fn handle_entity_registry_remove(
 }
 
 /// Handle config/entity_registry/update command
+// Mirrors Python HA entity registry update which accepts many optional fields
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_entity_registry_update(
     conn: &Arc<ActiveConnection>,
@@ -1165,6 +1167,7 @@ pub async fn handle_frontend_get_icons(
 }
 
 /// Handle frontend/get_translations command
+// Handler requires shared connection, message id, translation filter params, and response channel
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_frontend_get_translations(
     _conn: &Arc<ActiveConnection>,
@@ -2147,6 +2150,7 @@ pub async fn handle_application_credentials_list(
 
 /// Handle application_credentials/create command
 /// Creates a new application credential (OAuth2 client credentials)
+// Handler requires shared connection, message id, credential fields, and response channel
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_application_credentials_create(
     conn: &Arc<ActiveConnection>,

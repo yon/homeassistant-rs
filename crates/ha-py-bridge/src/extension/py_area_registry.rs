@@ -325,6 +325,7 @@ impl PyAreaRegistry {
 
     /// Create a new area
     #[pyo3(signature = (name, *, aliases=None, floor_id=None, humidity_entity_id=None, icon=None, labels=None, picture=None, temperature_entity_id=None))]
+    // PyO3 method mirrors Python HA AreaRegistry.async_create which takes many optional parameters
     #[allow(clippy::too_many_arguments)]
     fn async_create(
         &self,
@@ -342,7 +343,7 @@ impl PyAreaRegistry {
         let entry = self
             .inner
             .create(name, Some(now))
-            .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?;
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
 
         // Update with optional fields if provided
         if aliases.is_some()
@@ -388,6 +389,7 @@ impl PyAreaRegistry {
     }
 
     /// Update an area
+    // PyO3 method mirrors Python HA AreaRegistry.async_update which takes many optional fields
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (area_id, *, name=None, aliases=None, floor_id=None, humidity_entity_id=None, icon=None, labels=None, picture=None, temperature_entity_id=None))]
     fn async_update(
@@ -457,7 +459,7 @@ impl PyAreaRegistry {
                 Some(now),
             )
             .map(PyAreaEntry::from_inner)
-            .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
     }
 
     /// Clear floor_id from all areas that reference this floor (cascade on floor delete)
@@ -482,7 +484,7 @@ impl PyAreaRegistry {
                 Some(now),
             )
             .map(PyAreaEntry::from_inner)
-            .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
     }
 
     /// Delete an area

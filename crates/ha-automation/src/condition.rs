@@ -79,6 +79,7 @@ impl Condition {
     }
 
     /// Create a NOT condition
+    // `not()` is a named constructor, not the bitwise `Not` trait from std::ops
     #[allow(clippy::should_implement_trait)]
     pub fn not(condition: Condition) -> Self {
         Condition::Not(NotCondition {

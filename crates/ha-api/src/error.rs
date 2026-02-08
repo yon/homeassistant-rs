@@ -40,3 +40,16 @@ pub enum WebSocketError {
 
 /// Result type alias for WebSocket operations.
 pub type WsResult<T> = Result<T, WebSocketError>;
+
+/// Errors for authentication and token operations.
+#[derive(Debug, Error)]
+pub enum AuthError {
+    #[error("empty body")]
+    EmptyBody,
+
+    #[error("missing required field: {0}")]
+    MissingField(&'static str),
+}
+
+/// Result type alias for auth operations.
+pub type AuthResult<T> = Result<T, AuthError>;

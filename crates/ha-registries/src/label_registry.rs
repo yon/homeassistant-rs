@@ -9,6 +9,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
+use crate::error::{RegistryError, RegistryResult};
 use crate::storage::{Storable, Storage, StorageFile, StorageResult};
 
 /// Storage key for label registry
@@ -218,13 +219,13 @@ impl LabelRegistry {
         &self,
         name: &str,
         now: Option<DateTime<Utc>>,
-    ) -> Result<Arc<LabelEntry>, String> {
+    ) -> RegistryResult<Arc<LabelEntry>> {
         let normalized = normalize_name(name);
         if self.by_name.contains_key(&normalized) {
-            return Err(format!(
-                "The name {} ({}) is already in use",
-                name, normalized
-            ));
+            return Err(RegistryError::DuplicateName {
+                name: name.to_owned(),
+                normalized,
+            });
         }
 
         let id = self.generate_id(name);
@@ -255,13 +256,13 @@ impl LabelRegistry {
     ///
     /// Returns an `Arc<LabelEntry>` - cheap to clone.
     /// Returns `Err` if a label with the same name already exists.
-    pub fn create_with(&self, entry: LabelEntry) -> Result<Arc<LabelEntry>, String> {
+    pub fn create_with(&self, entry: LabelEntry) -> RegistryResult<Arc<LabelEntry>> {
         let normalized = normalize_name(&entry.name);
         if self.by_name.contains_key(&normalized) {
-            return Err(format!(
-                "The name {} ({}) is already in use",
-                entry.name, normalized
-            ));
+            return Err(RegistryError::DuplicateName {
+                name: entry.name.clone(),
+                normalized,
+            });
         }
 
         let arc_entry = Arc::new(entry);
@@ -281,7 +282,7 @@ impl LabelRegistry {
         label_id: &str,
         f: F,
         now: Option<DateTime<Utc>>,
-    ) -> Result<Arc<LabelEntry>, String>
+    ) -> RegistryResult<Arc<LabelEntry>>
     where
         F: FnOnce(&mut LabelEntry),
     {
@@ -306,10 +307,10 @@ impl LabelRegistry {
                 if self.by_name.contains_key(&new_normalized) {
                     // Name conflict - re-index the old entry and return error
                     self.index_entry(arc_entry);
-                    return Err(format!(
-                        "The name {} ({}) is already in use",
-                        entry.name, new_normalized
-                    ));
+                    return Err(RegistryError::DuplicateName {
+                        name: entry.name.clone(),
+                        normalized: new_normalized,
+                    });
                 }
             }
 
@@ -328,7 +329,10 @@ impl LabelRegistry {
 
             Ok(new_arc)
         } else {
-            Err(format!("Label not found: {}", label_id))
+            Err(RegistryError::NotFound {
+                kind: "Label",
+                id: label_id.to_owned(),
+            })
         }
     }
 
@@ -372,5 +376,74 @@ impl LabelRegistry {
     }
 }
 
-// Unit tests removed - covered by HA native tests via `make ha-compat-test`
-// See tests/ha_compat/ for comprehensive LabelRegistry testing through Python bindings
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::RegistryError;
+    use crate::storage::Storage;
+
+    fn test_registry() -> LabelRegistry {
+        let storage = Arc::new(Storage::new("/tmp/ha-test-label"));
+        LabelRegistry::new(storage)
+    }
+
+    #[test]
+    fn create_label_returns_entry() {
+        let registry = test_registry();
+        let result = registry.create("Important", None);
+        assert!(result.is_ok(), "create should succeed: {:?}", result.err());
+        let entry = result.unwrap();
+        assert_eq!(entry.name, "Important");
+    }
+
+    #[test]
+    fn create_duplicate_name_returns_duplicate_error() {
+        let registry = test_registry();
+        registry.create("Outdoor", None).unwrap();
+        let err = registry.create("Outdoor", None).unwrap_err();
+        assert!(
+            matches!(err, RegistryError::DuplicateName { ref name, .. } if name == "Outdoor"),
+            "Expected DuplicateName(Outdoor), got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn create_with_duplicate_name_returns_duplicate_error() {
+        let registry = test_registry();
+        registry.create("Indoor", None).unwrap();
+        let entry = LabelEntry::new("custom_id".to_string(), "Indoor", None);
+        let err = registry.create_with(entry).unwrap_err();
+        assert!(
+            matches!(err, RegistryError::DuplicateName { ref name, .. } if name == "Indoor"),
+            "Expected DuplicateName(Indoor), got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn update_nonexistent_label_returns_not_found() {
+        let registry = test_registry();
+        let err = registry.update("nonexistent", |_| {}, None).unwrap_err();
+        assert!(
+            matches!(err, RegistryError::NotFound { kind: "Label", ref id } if id == "nonexistent"),
+            "Expected NotFound(Label, nonexistent), got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn update_with_conflicting_name_returns_duplicate_error() {
+        let registry = test_registry();
+        registry.create("Tag A", None).unwrap();
+        registry.create("Tag B", None).unwrap();
+        let err = registry
+            .update("tag_b", |entry| entry.name = "Tag A".to_string(), None)
+            .unwrap_err();
+        assert!(
+            matches!(err, RegistryError::DuplicateName { ref name, .. } if name == "Tag A"),
+            "Expected DuplicateName(Tag A), got: {:?}",
+            err
+        );
+    }
+}

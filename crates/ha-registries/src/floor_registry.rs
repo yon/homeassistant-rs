@@ -9,6 +9,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
+use crate::error::{RegistryError, RegistryResult};
 use crate::storage::{Storable, Storage, StorageFile, StorageResult};
 
 /// Storage key for floor registry
@@ -223,13 +224,13 @@ impl FloorRegistry {
         name: &str,
         level: Option<i32>,
         now: Option<DateTime<Utc>>,
-    ) -> Result<Arc<FloorEntry>, String> {
+    ) -> RegistryResult<Arc<FloorEntry>> {
         let normalized = normalize_name(name);
         if self.by_name.contains_key(&normalized) {
-            return Err(format!(
-                "The name {} ({}) is already in use",
-                name, normalized
-            ));
+            return Err(RegistryError::DuplicateName {
+                name: name.to_owned(),
+                normalized,
+            });
         }
 
         let id = self.generate_id(name);
@@ -270,7 +271,7 @@ impl FloorRegistry {
         floor_id: &str,
         f: F,
         now: Option<DateTime<Utc>>,
-    ) -> Result<Arc<FloorEntry>, String>
+    ) -> RegistryResult<Arc<FloorEntry>>
     where
         F: FnOnce(&mut FloorEntry),
     {
@@ -298,10 +299,10 @@ impl FloorRegistry {
                 if self.by_name.contains_key(&new_normalized) {
                     // Name conflict - re-index the old entry and return error
                     self.index_entry(arc_entry);
-                    return Err(format!(
-                        "The name {} ({}) is already in use",
-                        entry.name, new_normalized
-                    ));
+                    return Err(RegistryError::DuplicateName {
+                        name: entry.name.clone(),
+                        normalized: new_normalized,
+                    });
                 }
             }
 
@@ -320,7 +321,10 @@ impl FloorRegistry {
 
             Ok(new_arc)
         } else {
-            Err(format!("Floor not found: {}", floor_id))
+            Err(RegistryError::NotFound {
+                kind: "Floor",
+                id: floor_id.to_owned(),
+            })
         }
     }
 
@@ -364,5 +368,66 @@ impl FloorRegistry {
     }
 }
 
-// Unit tests removed - covered by HA native tests via `make ha-compat-test`
-// See tests/ha_compat/ for comprehensive FloorRegistry testing through Python bindings
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::RegistryError;
+    use crate::storage::Storage;
+
+    fn test_registry() -> FloorRegistry {
+        let storage = Arc::new(Storage::new("/tmp/ha-test-floor"));
+        FloorRegistry::new(storage)
+    }
+
+    #[test]
+    fn create_floor_returns_entry() {
+        let registry = test_registry();
+        let result = registry.create("Ground Floor", Some(0), None);
+        assert!(result.is_ok(), "create should succeed: {:?}", result.err());
+        let entry = result.unwrap();
+        assert_eq!(entry.name, "Ground Floor");
+        assert_eq!(entry.level, Some(0));
+    }
+
+    #[test]
+    fn create_duplicate_name_returns_duplicate_error() {
+        let registry = test_registry();
+        registry.create("Basement", None, None).unwrap();
+        let err = registry.create("Basement", None, None).unwrap_err();
+        assert!(
+            matches!(err, RegistryError::DuplicateName { ref name, .. } if name == "Basement"),
+            "Expected DuplicateName(Basement), got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn update_nonexistent_floor_returns_not_found() {
+        let registry = test_registry();
+        let err = registry.update("nonexistent", |_| {}, None).unwrap_err();
+        assert!(
+            matches!(err, RegistryError::NotFound { kind: "Floor", ref id } if id == "nonexistent"),
+            "Expected NotFound(Floor, nonexistent), got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn update_with_conflicting_name_returns_duplicate_error() {
+        let registry = test_registry();
+        registry.create("First Floor", Some(1), None).unwrap();
+        registry.create("Second Floor", Some(2), None).unwrap();
+        let err = registry
+            .update(
+                "second_floor",
+                |entry| entry.name = "First Floor".to_string(),
+                None,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, RegistryError::DuplicateName { ref name, .. } if name == "First Floor"),
+            "Expected DuplicateName(First Floor), got: {:?}",
+            err
+        );
+    }
+}

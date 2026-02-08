@@ -212,7 +212,7 @@ impl PyFloorRegistry {
         let entry = self
             .inner
             .create(name, level, Some(now))
-            .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?;
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
 
         // Update with optional fields if provided
         if aliases.is_some() || icon.is_some() {
@@ -267,7 +267,7 @@ impl PyFloorRegistry {
                 Some(now),
             )
             .map(PyFloorEntry::from_inner)
-            .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
     }
 
     /// Update a floor, always setting all fields (None means "clear the field")
@@ -295,7 +295,7 @@ impl PyFloorRegistry {
                 Some(now),
             )
             .map(PyFloorEntry::from_inner)
-            .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
     }
 
     /// Delete a floor

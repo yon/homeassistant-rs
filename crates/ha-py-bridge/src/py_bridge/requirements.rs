@@ -8,6 +8,8 @@ use pyo3::prelude::*;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Command;
+
+use super::errors::PyBridgeError;
 use std::sync::Mutex;
 use tracing::{debug, info, warn};
 
@@ -42,7 +44,11 @@ impl RequirementsManager {
     ///
     /// Returns Ok(()) if all requirements are satisfied, or an error describing
     /// which packages failed to install.
-    pub fn ensure_requirements(&self, domain: &str, requirements: &[String]) -> Result<(), String> {
+    pub fn ensure_requirements(
+        &self,
+        domain: &str,
+        requirements: &[String],
+    ) -> Result<(), PyBridgeError> {
         if requirements.is_empty() {
             return Ok(());
         }
@@ -69,10 +75,10 @@ impl RequirementsManager {
             {
                 let failed = self.failed_packages.lock().unwrap();
                 if failed.contains(req) {
-                    return Err(format!(
-                        "Package '{}' previously failed to install for integration '{}'",
-                        req, domain
-                    ));
+                    return Err(PyBridgeError::RequirementPreviouslyFailed {
+                        domain: domain.to_owned(),
+                        package: req.clone(),
+                    });
                 }
             }
 
@@ -97,10 +103,10 @@ impl RequirementsManager {
         }
 
         if self.skip_pip {
-            return Err(format!(
-                "Missing packages for integration '{}': {:?} (pip installation disabled via HA_SKIP_PIP)",
-                domain, missing
-            ));
+            return Err(PyBridgeError::RequirementsMissing {
+                domain: domain.to_owned(),
+                packages: missing,
+            });
         }
 
         // Install missing packages
@@ -121,10 +127,11 @@ impl RequirementsManager {
                     warn!("Failed to install package '{}': {}", req, e);
                     let mut failed = self.failed_packages.lock().unwrap();
                     failed.insert(req.clone());
-                    return Err(format!(
-                        "Failed to install package '{}' for integration '{}': {}",
-                        req, domain, e
-                    ));
+                    return Err(PyBridgeError::RequirementInstallFailed {
+                        domain: domain.to_owned(),
+                        package: req.clone(),
+                        reason: e,
+                    });
                 }
             }
         }

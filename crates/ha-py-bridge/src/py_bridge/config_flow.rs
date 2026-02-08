@@ -348,7 +348,8 @@ impl ConfigFlowManager {
                     handler
                 );
                 self.requirements
-                    .ensure_requirements(handler, &manifest.requirements)?;
+                    .ensure_requirements(handler, &manifest.requirements)
+                    .map_err(|e| e.to_string())?;
             }
         }
         Ok(())

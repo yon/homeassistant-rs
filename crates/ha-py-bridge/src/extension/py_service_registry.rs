@@ -293,6 +293,7 @@ impl PyServiceRegistry {
     ///
     /// Returns:
     ///     The service response if return_response is True and the service supports it
+    // PyO3 method mirrors Python HA ServiceRegistry.async_call which takes many optional parameters
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (domain, service, service_data=None, context=None, _blocking=true, return_response=false))]
     fn async_call(

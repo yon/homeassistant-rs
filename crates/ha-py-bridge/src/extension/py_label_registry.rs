@@ -220,7 +220,7 @@ impl PyLabelRegistry {
         let created = self
             .inner
             .create_with(entry)
-            .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?;
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         Ok(PyLabelEntry::from_inner(created))
     }
 
@@ -256,7 +256,7 @@ impl PyLabelRegistry {
                 Some(now),
             )
             .map(PyLabelEntry::from_inner)
-            .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
     }
 
     /// Update a label, always setting all fields (None means "clear the field")
@@ -284,7 +284,7 @@ impl PyLabelRegistry {
                 Some(now),
             )
             .map(PyLabelEntry::from_inner)
-            .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
     }
 
     /// Delete a label

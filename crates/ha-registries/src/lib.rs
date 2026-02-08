@@ -10,6 +10,7 @@
 //! All registries use JSON persistence in the `.storage/` directory
 //! with versioning for migrations.
 
+pub mod error;
 pub mod storage;
 
 pub mod area_registry;
@@ -32,7 +33,7 @@ pub use device_registry::{
 };
 
 pub use area_registry::{AreaEntry, AreaRegistry, AreaRegistryData};
-
+pub use error::{RegistryError, RegistryResult};
 pub use floor_registry::{FloorEntry, FloorRegistry, FloorRegistryData};
 
 pub use label_registry::{LabelEntry, LabelRegistry, LabelRegistryData};

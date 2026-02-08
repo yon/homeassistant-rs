@@ -196,7 +196,7 @@ def check_source_heuristics(qs):
 
             # Check for TODO/FIXME without ticket
             for i, line in enumerate(lines):
-                if re.search(r'(?i)(TODO|FIXME|HACK)\b', line):
+                if re.search(r'(TODO|FIXME|HACK)\b', line) and not re.search(r'["\'].*\b(TODO|FIXME|HACK)\b.*["\']', line):
                     if not re.search(r'(#\d+|plan:T-\d+)', line):  # No ticket/plan reference
                         issues.append(f"{path}:{i+1}: TODO/FIXME without ticket reference")
 

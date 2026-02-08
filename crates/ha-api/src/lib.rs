@@ -874,7 +874,7 @@ async fn save_config_entry_from_flow(
     domain: &str,
     title: &str,
     data: &serde_json::Value,
-) -> Result<(), String> {
+) -> Result<(), ha_config_entries::ConfigEntriesError> {
     use ha_config_entries::ConfigEntry;
 
     let entry = ConfigEntry::new(domain, title).with_data(
@@ -884,10 +884,7 @@ async fn save_config_entry_from_flow(
     );
 
     let config_entries = state.config_entries.write().await;
-    config_entries
-        .add(entry)
-        .await
-        .map_err(|e| format!("Failed to add config entry: {}", e))?;
+    config_entries.add(entry).await?;
 
     info!("Saved config entry for {} ({})", domain, title);
     Ok(())

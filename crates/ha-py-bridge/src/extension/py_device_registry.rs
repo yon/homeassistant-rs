@@ -552,6 +552,7 @@ impl PyDeviceRegistry {
     ///
     /// Handles field updates, primary_config_entry promotion, disabled_by on
     /// creation, and suggested_area storage.
+    // PyO3 method mirrors Python HA DeviceRegistry.async_get_or_create which takes many optional parameters
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         *,
@@ -821,6 +822,7 @@ impl PyDeviceRegistry {
     /// via_device_id cleanup on device removal.
     ///
     /// Returns None if the device was removed (last config entry removed).
+    // PyO3 method mirrors Python HA DeviceRegistry.async_update_device which takes many optional fields
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         device_id,

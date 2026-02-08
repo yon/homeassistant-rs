@@ -177,6 +177,7 @@ fn json_to_pyobject(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObj
 use super::py_utils::pyobject_to_json as py_utils_to_json;
 
 /// Convert a Python object to serde_json::Value
+// `_py` is required by the function signature for API consistency but delegates to py_utils
 #[allow(clippy::only_used_in_recursion)]
 fn pyobject_to_json(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
     // Delegate to the shared implementation that handles UNDEFINED

@@ -10,6 +10,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
+use crate::error::{RegistryError, RegistryResult};
 use crate::storage::{Storable, Storage, StorageFile, StorageResult};
 
 /// Storage key for area registry
@@ -267,13 +268,13 @@ impl AreaRegistry {
     /// Returns an `Arc<AreaEntry>` - cheap to clone.
     /// Returns an error if an area with the same name already exists.
     /// If `now` is None, uses the current system time.
-    pub fn create(&self, name: &str, now: Option<DateTime<Utc>>) -> Result<Arc<AreaEntry>, String> {
+    pub fn create(&self, name: &str, now: Option<DateTime<Utc>>) -> RegistryResult<Arc<AreaEntry>> {
         let normalized = normalize_name(name);
         if self.by_name.contains_key(&normalized) {
-            return Err(format!(
-                "The name {} ({}) is already in use",
-                name, normalized
-            ));
+            return Err(RegistryError::DuplicateName {
+                name: name.to_owned(),
+                normalized,
+            });
         }
 
         let id = self.generate_id(name);
@@ -311,7 +312,7 @@ impl AreaRegistry {
         area_id: &str,
         f: F,
         now: Option<DateTime<Utc>>,
-    ) -> Result<Arc<AreaEntry>, String>
+    ) -> RegistryResult<Arc<AreaEntry>>
     where
         F: FnOnce(&mut AreaEntry),
     {
@@ -346,10 +347,10 @@ impl AreaRegistry {
                 if self.by_name.contains_key(&normalized) {
                     // Name conflict - re-index old entry and return error
                     self.index_entry(arc_entry);
-                    return Err(format!(
-                        "The name {} ({}) is already in use",
-                        entry.name, normalized
-                    ));
+                    return Err(RegistryError::DuplicateName {
+                        name: entry.name.clone(),
+                        normalized,
+                    });
                 }
             }
 
@@ -372,7 +373,10 @@ impl AreaRegistry {
 
             Ok(new_arc)
         } else {
-            Err(format!("Area not found: {}", area_id))
+            Err(RegistryError::NotFound {
+                kind: "Area",
+                id: area_id.to_owned(),
+            })
         }
     }
 
@@ -455,5 +459,61 @@ impl AreaRegistry {
     }
 }
 
-// Unit tests removed - covered by HA native tests via `make ha-compat-test`
-// See tests/ha_compat/ for comprehensive AreaRegistry testing through Python bindings
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::RegistryError;
+    use crate::storage::Storage;
+
+    fn test_registry() -> AreaRegistry {
+        let storage = Arc::new(Storage::new("/tmp/ha-test-area"));
+        AreaRegistry::new(storage)
+    }
+
+    #[test]
+    fn create_area_returns_entry() {
+        let registry = test_registry();
+        let result = registry.create("Living Room", None);
+        assert!(result.is_ok(), "create should succeed: {:?}", result.err());
+        let entry = result.unwrap();
+        assert_eq!(entry.name, "Living Room");
+    }
+
+    #[test]
+    fn create_duplicate_name_returns_duplicate_error() {
+        let registry = test_registry();
+        registry.create("Kitchen", None).unwrap();
+        let err = registry.create("Kitchen", None).unwrap_err();
+        assert!(
+            matches!(err, RegistryError::DuplicateName { ref name, .. } if name == "Kitchen"),
+            "Expected DuplicateName(Kitchen), got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn update_nonexistent_area_returns_not_found() {
+        let registry = test_registry();
+        let err = registry.update("nonexistent", |_| {}, None).unwrap_err();
+        assert!(
+            matches!(err, RegistryError::NotFound { kind: "Area", ref id } if id == "nonexistent"),
+            "Expected NotFound(Area, nonexistent), got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn update_with_conflicting_name_returns_duplicate_error() {
+        let registry = test_registry();
+        registry.create("Office", None).unwrap();
+        registry.create("Bedroom", None).unwrap();
+        let err = registry
+            .update("bedroom", |entry| entry.name = "Office".to_string(), None)
+            .unwrap_err();
+        assert!(
+            matches!(err, RegistryError::DuplicateName { ref name, .. } if name == "Office"),
+            "Expected DuplicateName(Office), got: {:?}",
+            err
+        );
+    }
+}

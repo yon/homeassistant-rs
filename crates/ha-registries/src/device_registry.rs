@@ -841,6 +841,7 @@ impl DeviceRegistry {
     }
 
     /// Apply merge operations to a device entry
+    // Mirrors Python HA DeviceRegistry._async_update_device merge logic with many context params
     #[allow(clippy::too_many_arguments)]
     fn apply_merge(
         &self,
