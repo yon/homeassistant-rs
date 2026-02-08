@@ -233,209 +233,63 @@ impl HomeAssistant {
 
     /// Register automation domain services
     fn register_automation_services(&self) {
-        let states = self.states.clone();
-        let manager = self.automation_engine.manager();
-
-        // Helper for automation entity target
-        let automation_target = || {
-            Some(json!({
-                "entity": {
-                    "domain": "automation"
-                }
-            }))
+        use services::{
+            register_automation_state_service, register_stub_service, AutomationAction,
         };
 
-        // Register automation.turn_on service - enable automation
-        let states_clone = states.clone();
-        let manager_clone = manager.clone();
-        self.services.register_with_description(
-            ServiceDescription {
-                domain: "automation".to_string(),
-                service: "turn_on".to_string(),
-                name: None,
-                description: None,
-                schema: None,
-                target: automation_target(),
-                supports_response: SupportsResponse::None,
-            },
-            move |call: ServiceCall| {
-                let states = states_clone.clone();
-                let manager = manager_clone.clone();
-                async move {
-                    if let Some(entity_id) =
-                        call.service_data.get("entity_id").and_then(|v| v.as_str())
-                    {
-                        let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
-                        if parts.len() == 2 && parts[0] == "automation" {
-                            let automation_id = parts[1];
+        let manager = self.automation_engine.manager();
 
-                            // Enable in automation manager
-                            let manager_guard = manager.read().await;
-                            if manager_guard.get(automation_id).is_some() {
-                                drop(manager_guard);
-                                let manager_guard = manager.write().await;
-                                let _ = manager_guard.enable(automation_id);
-                            }
-
-                            // Update entity state
-                            if let Some(state) = states.get(entity_id) {
-                                if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
-                                    states.set(
-                                        entity,
-                                        STATE_ON,
-                                        state.attributes.clone(),
-                                        Context::new(),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    Ok(None)
-                }
-            },
+        // State-modifying services (turn_on/turn_off/toggle)
+        register_automation_state_service(
+            &self.services,
+            &self.states,
+            &manager,
+            "turn_on",
+            AutomationAction::Enable,
         );
-
-        // Register automation.turn_off service - disable automation
-        let states_clone = states.clone();
-        let manager_clone = manager.clone();
-        self.services.register_with_description(
-            ServiceDescription {
-                domain: "automation".to_string(),
-                service: "turn_off".to_string(),
-                name: None,
-                description: None,
-                schema: None,
-                target: automation_target(),
-                supports_response: SupportsResponse::None,
-            },
-            move |call: ServiceCall| {
-                let states = states_clone.clone();
-                let manager = manager_clone.clone();
-                async move {
-                    if let Some(entity_id) =
-                        call.service_data.get("entity_id").and_then(|v| v.as_str())
-                    {
-                        let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
-                        if parts.len() == 2 && parts[0] == "automation" {
-                            let automation_id = parts[1];
-
-                            // Disable in automation manager
-                            let manager_guard = manager.read().await;
-                            if manager_guard.get(automation_id).is_some() {
-                                drop(manager_guard);
-                                let manager_guard = manager.write().await;
-                                let _ = manager_guard.disable(automation_id);
-                            }
-
-                            // Update entity state
-                            if let Some(state) = states.get(entity_id) {
-                                if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
-                                    states.set(
-                                        entity,
-                                        STATE_OFF,
-                                        state.attributes.clone(),
-                                        Context::new(),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    Ok(None)
-                }
-            },
+        register_automation_state_service(
+            &self.services,
+            &self.states,
+            &manager,
+            "turn_off",
+            AutomationAction::Disable,
         );
-
-        // Register automation.toggle service
-        let states_clone = states.clone();
-        let manager_clone = manager.clone();
-        self.services.register_with_description(
-            ServiceDescription {
-                domain: "automation".to_string(),
-                service: "toggle".to_string(),
-                name: None,
-                description: None,
-                schema: None,
-                target: automation_target(),
-                supports_response: SupportsResponse::None,
-            },
-            move |call: ServiceCall| {
-                let states = states_clone.clone();
-                let manager = manager_clone.clone();
-                async move {
-                    if let Some(entity_id) =
-                        call.service_data.get("entity_id").and_then(|v| v.as_str())
-                    {
-                        let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
-                        if parts.len() == 2 && parts[0] == "automation" {
-                            let automation_id = parts[1];
-
-                            // Toggle in automation manager and get new state
-                            let manager_guard = manager.read().await;
-                            let new_enabled = if manager_guard.get(automation_id).is_some() {
-                                drop(manager_guard);
-                                let manager_guard = manager.write().await;
-                                manager_guard.toggle(automation_id).unwrap_or(true)
-                            } else {
-                                // Automation not in manager, toggle based on entity state
-                                if let Some(state) = states.get(entity_id) {
-                                    state.state != STATE_ON
-                                } else {
-                                    true
-                                }
-                            };
-
-                            // Update entity state
-                            if let Some(state) = states.get(entity_id) {
-                                let new_state = if new_enabled { STATE_ON } else { STATE_OFF };
-                                if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
-                                    states.set(
-                                        entity,
-                                        new_state,
-                                        state.attributes.clone(),
-                                        Context::new(),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    Ok(None)
-                }
-            },
+        register_automation_state_service(
+            &self.services,
+            &self.states,
+            &manager,
+            "toggle",
+            AutomationAction::Toggle,
         );
 
         // Register automation.trigger service - manually trigger an automation
+        // (Different logic from turn_on/off/toggle: no state change, just logging)
         let manager_clone = manager.clone();
         self.services.register_with_description(
             ServiceDescription {
                 domain: "automation".to_string(),
-                service: "trigger".to_string(),
-                name: None,
                 description: None,
+                name: None,
                 schema: None,
-                target: automation_target(),
+                service: "trigger".to_string(),
                 supports_response: SupportsResponse::None,
+                target: Some(json!({"entity": {"domain": "automation"}})),
             },
             move |call: ServiceCall| {
                 let manager = manager_clone.clone();
                 async move {
-                    if let Some(entity_id) =
-                        call.service_data.get("entity_id").and_then(|v| v.as_str())
+                    if let Some(entity_id) = services::extract_entity_id(&call, Some("automation"))
                     {
-                        let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
-                        if parts.len() == 2 && parts[0] == "automation" {
-                            let automation_id = parts[1];
-                            let manager_guard = manager.read().await;
-                            if let Some(automation) = manager_guard.get(automation_id) {
-                                info!(
-                                    "Triggering automation: {} ({})",
-                                    automation.display_name(),
-                                    automation_id
-                                );
-                                // Note: Full trigger would require access to the AutomationEngine
-                                // For now, log the trigger request
-                            } else {
-                                warn!("Automation not found: {}", automation_id);
-                            }
+                        let automation_id = entity_id.object_id().to_string();
+                        let manager_guard = manager.read().await;
+                        if let Some(automation) = manager_guard.get(&automation_id) {
+                            info!(
+                                "Triggering automation: {} ({})",
+                                automation.display_name(),
+                                automation_id
+                            );
+                        } else {
+                            warn!("Automation not found: {}", automation_id);
                         }
                     }
                     Ok(None)
@@ -444,7 +298,7 @@ impl HomeAssistant {
         );
 
         // automation.reload stub
-        services::register_stub_service(
+        register_stub_service(
             &self.services,
             "automation",
             "reload",
@@ -919,6 +773,19 @@ fn load_automations(config_dir: &Path) -> Vec<AutomationConfig> {
     }
 }
 
+/// Extract a typed HashMap section from a YAML value by key.
+///
+/// Returns an empty map if the key is missing or the value cannot be
+/// deserialized into `HashMap<String, T>`.
+fn collect_yaml_section<T: serde::de::DeserializeOwned>(
+    yaml: &serde_yaml::Value,
+    key: &str,
+) -> HashMap<String, T> {
+    yaml.get(key)
+        .and_then(|v| serde_yaml::from_value::<HashMap<String, T>>(v.clone()).ok())
+        .unwrap_or_default()
+}
+
 /// Load input helpers (input_boolean, input_number) from configuration
 fn load_input_helpers(config_dir: &Path, states: &StateStore) {
     let config_file = config_dir.join("configuration.yaml");
@@ -937,53 +804,20 @@ fn load_input_helpers(config_dir: &Path, states: &StateStore) {
         }
     };
 
-    // Collect all input_boolean configs (from root and packages)
+    // Collect from root level
     let mut all_input_booleans: HashMap<String, Option<ha_components::InputBooleanConfig>> =
-        HashMap::new();
-    let mut all_input_numbers: HashMap<String, ha_components::InputNumberConfig> = HashMap::new();
+        collect_yaml_section(&yaml, "input_boolean");
+    let mut all_input_numbers: HashMap<String, ha_components::InputNumberConfig> =
+        collect_yaml_section(&yaml, "input_number");
 
-    // Load from root level
-    if let Some(input_boolean_value) = yaml.get("input_boolean") {
-        if let Ok(configs) = serde_yaml::from_value::<
-            HashMap<String, Option<ha_components::InputBooleanConfig>>,
-        >(input_boolean_value.clone())
-        {
-            all_input_booleans.extend(configs);
-        }
-    }
-
-    if let Some(input_number_value) = yaml.get("input_number") {
-        if let Ok(configs) = serde_yaml::from_value::<
-            HashMap<String, ha_components::InputNumberConfig>,
-        >(input_number_value.clone())
-        {
-            all_input_numbers.extend(configs);
-        }
-    }
-
-    // Load from packages (homeassistant.packages contains merged package content)
+    // Collect from packages (homeassistant.packages contains merged package content)
     if let Some(homeassistant) = yaml.get("homeassistant") {
         if let Some(packages) = homeassistant.get("packages") {
             if let Some(packages_map) = packages.as_mapping() {
                 for (_, package_content) in packages_map {
-                    // Each package can have input_boolean and input_number sections
-                    if let Some(input_boolean_value) = package_content.get("input_boolean") {
-                        if let Ok(configs) = serde_yaml::from_value::<
-                            HashMap<String, Option<ha_components::InputBooleanConfig>>,
-                        >(input_boolean_value.clone())
-                        {
-                            all_input_booleans.extend(configs);
-                        }
-                    }
-
-                    if let Some(input_number_value) = package_content.get("input_number") {
-                        if let Ok(configs) = serde_yaml::from_value::<
-                            HashMap<String, ha_components::InputNumberConfig>,
-                        >(input_number_value.clone())
-                        {
-                            all_input_numbers.extend(configs);
-                        }
-                    }
+                    all_input_booleans
+                        .extend(collect_yaml_section(package_content, "input_boolean"));
+                    all_input_numbers.extend(collect_yaml_section(package_content, "input_number"));
                 }
             }
         }
@@ -1245,26 +1079,11 @@ fn register_python_entity_services(_services: &ServiceRegistry) {
     // No-op when Python is not enabled
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Initialize tracing
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::INFO)
-        .with_target(true)
-        .finish();
-    tracing::subscriber::set_global_default(subscriber)?;
-
-    info!("Starting Home Assistant (Rust)");
-
-    // Load configuration
-    // Use HA_CONFIG_DIR env var or default to /config
-    let config_dir = std::env::var("HA_CONFIG_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/config"));
-
-    let config = if config_dir.join("configuration.yaml").exists() {
+/// Load CoreConfig from the configuration directory, falling back to defaults.
+fn load_config(config_dir: &Path) -> CoreConfig {
+    if config_dir.join("configuration.yaml").exists() {
         info!("Loading configuration from {:?}", config_dir);
-        match CoreConfig::load(&config_dir) {
+        match CoreConfig::load(config_dir) {
             Ok(cfg) => {
                 info!(
                     "Configuration loaded: name={}, location=({}, {})",
@@ -1280,51 +1099,22 @@ async fn main() -> Result<()> {
     } else {
         info!("No configuration.yaml found, using defaults");
         CoreConfig::default()
-    };
-
-    // Create registries before HomeAssistant so Python bridge can use them
-    let registries = Arc::new(Registries::new(&config_dir));
-    if let Err(e) = registries.load_all().await {
-        warn!("Failed to load registries: {}", e);
     }
+}
 
-    let hass = HomeAssistant::new(&config_dir, registries);
-
-    // Register core services
+/// Register all domain services (core, automation, script, input helpers).
+fn register_all_services(hass: &HomeAssistant, config_dir: &Path) {
     hass.register_core_services();
-
-    // Register automation and script services
     hass.register_automation_services();
     hass.register_script_services();
-
-    // Register input helper services
     ha_components::register_input_boolean_services(&hass.services, hass.states.clone());
     ha_components::register_input_number_services(&hass.services, hass.states.clone());
+    load_input_helpers(config_dir, &hass.states);
+}
 
-    // Load input helpers from configuration
-    load_input_helpers(&config_dir, &hass.states);
-
-    // Load entities from config or use demo entities
-    hass.load_entities(&config_dir);
-
-    // Load components list from file or use defaults
-    let components = load_components(&config_dir);
-    info!("Loaded {} components", components.len());
-
-    // Load services cache from file (for comparison testing)
-    let services_cache = load_services_cache(&config_dir);
-    if services_cache.is_some() {
-        info!("Loaded services cache from file");
-    }
-
-    // Load events cache from file (for comparison testing)
-    let events_cache = load_events_cache(&config_dir);
-    if events_cache.is_some() {
-        info!("Loaded events cache from file");
-    }
-
-    // Load automations from configuration
-    let automation_configs = load_automations(&config_dir);
+/// Load automations from config, create state entities, and start the engine.
+async fn load_and_start_automations(hass: &HomeAssistant, config_dir: &Path) {
+    let automation_configs = load_automations(config_dir);
     if !automation_configs.is_empty() {
         // Create automation entities in state machine
         for config in &automation_configs {
@@ -1358,62 +1148,52 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Start the automation engine
     hass.automation_engine.start().await;
+}
 
-    // Load and setup config entries
-    setup_config_entries(&hass).await;
-
-    // Register Python entity domain services (light.turn_on, etc.)
-    // This must happen after config entries are set up so Python entities are registered
-    register_python_entity_services(&hass.services);
-
-    info!("Home Assistant initialized");
-
-    // Configure frontend if HA_FRONTEND_PATH is set
-    let frontend_config = std::env::var("HA_FRONTEND_PATH").ok().and_then(|path| {
-        let frontend_path = PathBuf::from(&path);
-        if frontend_path.exists() {
-            info!("Frontend enabled: {:?}", frontend_path);
-            Some(FrontendConfig {
-                frontend_path,
-                theme_color: "#18BCF2".to_string(),
-            })
-        } else {
-            warn!("Frontend path does not exist: {:?}", path);
-            None
-        }
-    });
-
-    // Configure components path if HA_COMPONENTS_PATH is set
-    // This is used for loading icons.json files from integrations
-    let components_path = std::env::var("HA_COMPONENTS_PATH").ok().and_then(|path| {
-        let path = PathBuf::from(&path);
+/// Read an optional path from an environment variable.
+///
+/// Returns `None` if the variable is unset or the path does not exist.
+fn env_path_if_exists(var: &str) -> Option<PathBuf> {
+    std::env::var(var).ok().and_then(|p| {
+        let path = PathBuf::from(&p);
         if path.exists() {
-            info!("Components path enabled: {:?}", path);
+            info!("{} enabled: {:?}", var, path);
             Some(path)
         } else {
-            warn!("Components path does not exist: {:?}", path);
+            warn!("{} does not exist: {:?}", var, p);
             None
         }
-    });
+    })
+}
 
-    // Create persistent notification manager
+/// Build the API state from HomeAssistant instance and loaded data.
+fn build_api_state(
+    hass: &HomeAssistant,
+    config: CoreConfig,
+    config_dir: &Path,
+    components: Vec<String>,
+    services_cache: Option<Arc<serde_json::Value>>,
+    events_cache: Option<Arc<serde_json::Value>>,
+) -> AppState {
+    let frontend_config =
+        env_path_if_exists("HA_FRONTEND_PATH").map(|frontend_path| FrontendConfig {
+            frontend_path,
+            theme_color: "#18BCF2".to_string(),
+        });
+
+    let components_path = env_path_if_exists("HA_COMPONENTS_PATH");
+
+    // Create managers and register their services
     let notifications = persistent_notification::create_manager();
-
-    // Register persistent_notification services
     register_persistent_notification_services(&hass.services, notifications.clone());
 
-    // Create system log manager
     let system_log = Arc::new(SystemLog::with_defaults());
-
-    // Register system_log services
     register_system_log_services(&hass.services, system_log.clone());
 
-    // Create application credentials store (shared between API and config flow handler)
     let application_credentials = ha_api::new_application_credentials_store();
 
-    // Create config flow handler for Python integration setup (only with python feature)
+    // Create config flow handler (Python-only)
     #[cfg(feature = "python")]
     let config_flow_handler: Option<Arc<dyn ConfigFlowHandler>> =
         hass.python_bridge
@@ -1424,7 +1204,7 @@ async fn main() -> Result<()> {
                     hass.states.clone(),
                     hass.services.clone(),
                     hass.registries.clone(),
-                    Some(config_dir.clone()),
+                    Some(config_dir.to_path_buf()),
                     bridge.async_bridge.clone(),
                     application_credentials.clone(),
                     bridge.requirements.clone(),
@@ -1433,33 +1213,85 @@ async fn main() -> Result<()> {
     #[cfg(not(feature = "python"))]
     let config_flow_handler: Option<Arc<dyn ConfigFlowHandler>> = None;
 
-    // Create API state with auth (mark as onboarded for dev mode)
-    let api_state = AppState {
-        event_bus: hass.bus.clone(),
-        state_machine: hass.states.clone(),
-        service_registry: hass.services.clone(),
-        config: Arc::new(config),
+    // Suppress unused warning when python feature is disabled
+    #[cfg(not(feature = "python"))]
+    let _ = config_dir;
+
+    AppState {
+        application_credentials,
+        auth_state: AuthState::new_onboarded(),
         components: Arc::new(components),
+        components_path,
+        config: Arc::new(config),
         config_entries: hass.config_entries.clone(),
-        registries: hass.registries.clone(),
-        notifications,
-        system_log,
-        services_cache,
+        config_flow_handler,
+        event_bus: hass.bus.clone(),
         events_cache,
         frontend_config,
-        auth_state: AuthState::new_onboarded(),
-        config_flow_handler,
-        application_credentials,
-        components_path,
-    };
+        notifications,
+        registries: hass.registries.clone(),
+        service_registry: hass.services.clone(),
+        services_cache,
+        state_machine: hass.states.clone(),
+        system_log,
+    }
+}
 
-    // Start API server
-    // Use HA_PORT env var or default to 8123
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Initialize tracing
+    let subscriber = FmtSubscriber::builder()
+        .with_max_level(Level::INFO)
+        .with_target(true)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber)?;
+
+    info!("Starting Home Assistant (Rust)");
+
+    let config_dir = std::env::var("HA_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/config"));
+    let config = load_config(&config_dir);
+
+    // Create registries and HomeAssistant instance
+    let registries = Arc::new(Registries::new(&config_dir));
+    if let Err(e) = registries.load_all().await {
+        warn!("Failed to load registries: {}", e);
+    }
+    let hass = HomeAssistant::new(&config_dir, registries);
+
+    // Register services and load entities
+    register_all_services(&hass, &config_dir);
+    hass.load_entities(&config_dir);
+
+    // Load caches for comparison testing
+    let components = load_components(&config_dir);
+    info!("Loaded {} components", components.len());
+    let services_cache = load_services_cache(&config_dir);
+    let events_cache = load_events_cache(&config_dir);
+
+    // Load automations and start engine
+    load_and_start_automations(&hass, &config_dir).await;
+
+    // Setup config entries and Python entity services
+    setup_config_entries(&hass).await;
+    register_python_entity_services(&hass.services);
+    info!("Home Assistant initialized");
+
+    // Build API state and start server
+    let api_state = build_api_state(
+        &hass,
+        config,
+        &config_dir,
+        components,
+        services_cache,
+        events_cache,
+    );
+
     let port = std::env::var("HA_PORT").unwrap_or_else(|_| "8123".to_string());
     let addr = format!("0.0.0.0:{}", port);
     info!("Starting API server on http://{}", addr);
 
-    // Run server until shutdown signal
     tokio::select! {
         result = ha_api::start_server(api_state, &addr) => {
             if let Err(e) = result {
@@ -1471,9 +1303,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Stop the automation engine
     hass.automation_engine.stop();
-
     info!("Home Assistant stopped");
 
     Ok(())
@@ -2063,5 +1893,39 @@ script: []
         );
 
         hass.automation_engine.stop();
+    }
+
+    #[test]
+    fn collect_yaml_section_extracts_typed_map() {
+        let yaml: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+input_boolean:
+  bedroom_lamp:
+    name: Bedroom Lamp
+  garage_door: ~
+"#,
+        )
+        .unwrap();
+        let result: HashMap<String, Option<ha_components::InputBooleanConfig>> =
+            collect_yaml_section(&yaml, "input_boolean");
+        assert_eq!(result.len(), 2);
+        assert!(result.contains_key("bedroom_lamp"));
+        assert!(result.contains_key("garage_door"));
+    }
+
+    #[test]
+    fn collect_yaml_section_returns_empty_for_missing_key() {
+        let yaml: serde_yaml::Value = serde_yaml::from_str("other_key: 42").unwrap();
+        let result: HashMap<String, Option<ha_components::InputBooleanConfig>> =
+            collect_yaml_section(&yaml, "input_boolean");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn collect_yaml_section_returns_empty_for_invalid_type() {
+        let yaml: serde_yaml::Value = serde_yaml::from_str("input_boolean: not_a_map").unwrap();
+        let result: HashMap<String, Option<ha_components::InputBooleanConfig>> =
+            collect_yaml_section(&yaml, "input_boolean");
+        assert!(result.is_empty());
     }
 }
