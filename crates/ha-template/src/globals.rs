@@ -14,12 +14,6 @@ fn value_to_f64(value: &Value) -> Option<f64> {
         .or_else(|| value.as_i64().map(|i| i as f64))
 }
 
-/// Helper to convert Value to bool
-#[allow(dead_code)]
-fn value_to_bool(value: &Value) -> Option<bool> {
-    bool::try_from(value.clone()).ok()
-}
-
 // ==================== Time Functions ====================
 
 /// Get the current local time

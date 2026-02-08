@@ -85,12 +85,12 @@ impl State {
 
     /// Check if the state value represents an unavailable entity
     pub fn is_unavailable(&self) -> bool {
-        self.state == "unavailable"
+        self.state == crate::STATE_UNAVAILABLE
     }
 
     /// Check if the state value represents an unknown state
     pub fn is_unknown(&self) -> bool {
-        self.state == "unknown"
+        self.state == crate::STATE_UNKNOWN
     }
 
     /// Get an attribute value by key

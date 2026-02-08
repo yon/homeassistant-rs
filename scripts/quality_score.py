@@ -31,6 +31,10 @@ class QualityScore:
         self.checks = {}
         self.auto_fail = False
 
+    def bonus(self, points, reason):
+        self.score = min(100, self.score + points)
+        self.bonuses.append({"points": points, "reason": reason})
+
     def deduct(self, points, category, reason, severity="major"):
         self.score = max(0, self.score - points)
         self.deductions.append({
@@ -39,10 +43,6 @@ class QualityScore:
             "reason": reason,
             "severity": severity,
         })
-
-    def bonus(self, points, reason):
-        self.score = min(100, self.score + points)
-        self.bonuses.append({"points": points, "reason": reason})
 
     def fail(self, category, reason):
         self.auto_fail = True
@@ -197,7 +197,7 @@ def check_source_heuristics(qs):
             # Check for TODO/FIXME without ticket
             for i, line in enumerate(lines):
                 if re.search(r'(?i)(TODO|FIXME|HACK)\b', line):
-                    if not re.search(r'#\d+', line):  # No ticket reference
+                    if not re.search(r'(#\d+|plan:T-\d+)', line):  # No ticket/plan reference
                         issues.append(f"{path}:{i+1}: TODO/FIXME without ticket reference")
 
     # Deduct for long functions

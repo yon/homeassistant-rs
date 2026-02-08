@@ -102,7 +102,10 @@ impl StateStore {
 
         // If state and attributes are unchanged, fire STATE_REPORTED and return
         if same_state && same_attr {
-            let existing = old_state.as_ref().unwrap();
+            // safe: same_state/same_attr can only be true when old_state is Some
+            let Some(existing) = old_state.as_ref() else {
+                unreachable!("same_state && same_attr implies old_state is Some");
+            };
             let old_last_reported = existing.last_reported;
             let now = chrono::Utc::now();
 

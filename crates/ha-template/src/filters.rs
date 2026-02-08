@@ -330,12 +330,6 @@ pub fn round_filter(value: f64, precision: Option<i32>, kwargs: Kwargs) -> Resul
     Ok(rounded / multiplier)
 }
 
-/// Clamp a value between min and max
-#[allow(dead_code)]
-pub fn clamp(value: f64, min: f64, max: f64) -> f64 {
-    value.clamp(min, max)
-}
-
 /// Get the absolute value
 pub fn abs_filter(value: f64) -> f64 {
     value.abs()
@@ -653,13 +647,6 @@ mod tests {
             regex_replace("hello world", r"\s+", "-").unwrap(),
             "hello-world"
         );
-    }
-
-    #[test]
-    fn test_clamp() {
-        assert_eq!(clamp(5.0, 0.0, 10.0), 5.0);
-        assert_eq!(clamp(-5.0, 0.0, 10.0), 0.0);
-        assert_eq!(clamp(15.0, 0.0, 10.0), 10.0);
     }
 
     #[test]

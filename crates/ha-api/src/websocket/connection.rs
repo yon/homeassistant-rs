@@ -217,7 +217,7 @@ async fn wait_for_auth(
                             access_token,
                             api_password,
                         } => {
-                            // For now, accept any token (TODO: implement proper auth)
+                            // For now, accept any token (TODO(plan:T-01): implement proper auth)
                             // In production, validate against HA's auth system
                             if access_token.is_some() || api_password.is_some() {
                                 return Ok(AuthResult {

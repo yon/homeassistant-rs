@@ -254,7 +254,11 @@ impl DedupStore {
                 }
             }
             self.entries.push(updated);
-            *self.index.get_mut(&key).unwrap() = self.entries.len() - 1;
+            // Key is guaranteed to exist: we entered this branch via self.index.get(&key)
+            *self
+                .index
+                .get_mut(&key)
+                .expect("index key must exist after get") = self.entries.len() - 1;
         } else {
             // Insert new entry
             let new_idx = self.entries.len();

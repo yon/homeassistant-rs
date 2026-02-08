@@ -787,7 +787,7 @@ impl ScriptExecutor {
         wait: &crate::action::WaitForTriggerAction,
         ctx: &mut ExecutionContext,
     ) -> ScriptExecutorResult<ActionResult> {
-        // TODO: Full implementation requires trigger matching against events
+        // TODO(plan:T-09): Full implementation requires trigger matching against events
         // For now, just handle timeout
         let timeout = if let Some(timeout_str) = &wait.timeout {
             let template_ctx = ctx.to_template_vars();

@@ -1,7 +1,7 @@
 # Plan: Existing Codebase Improvements
 
 **Date:** 2026-02-08
-**Status:** DRAFT
+**Status:** APPROVED — IN PROGRESS
 **Task:** Analyze existing implementation and plan improvements before new development
 
 ## Baseline Metrics
@@ -230,27 +230,47 @@ These require focused sessions but significantly improve code quality.
 - **Effort**: 30 minutes
 - **Impact**: Documents why suppressions exist, prevents blind cargo-cult suppression
 
-### Tier 3: Major Refactors (quality score 95+, long-term)
+### Tier 3: Architectural Refactors (quality score 95+, long-term)
 
 These are significant efforts that should be planned individually.
 
-#### T3.1: Break up ha-py-bridge god functions
-- **Scope**: 38 functions, especially `create_config_entries_wrapper` (1,114 lines)
-- **Effort**: Multiple sessions
-- **Approach**: Extract embedded Python strings into template files. Break large FFI wrappers into composed helper functions. Use parameter structs for functions with >7 args.
+#### T3.1: Split ha-py-bridge into focused crates (ARCHITECTURAL)
+- **Problem**: ha-py-bridge is 11,524 lines — more than all other crates combined. It contains FFI wrappers, embedded Python source strings, config flow orchestration, entity registration, service bridging, and the shim layer. CLAUDE.md says "keep the bridge thin" but the bridge is the largest crate.
+- **Proposed split**:
+  ```
+  crates/ha-py-bridge/     → thin PyO3 #[pyclass] wrappers only (~1K lines)
+  crates/ha-py-shim/       → Python shim layer (already separate on disk)
+  crates/ha-py-codegen/    → macro/build.rs that generates FFI boilerplate
+  ```
+- **Key insight**: The 1,114-line `create_config_entries_wrapper` writes Python source as Rust string literals. This is a code generation problem solved by hand. A `build.rs` or proc macro generating Python wrappers from trait definitions would eliminate the largest class of god functions.
+- **Effort**: 3-5 sessions (plan individually before starting)
+- **Impact**: Eliminates 38 god functions, enforces thin bridge principle, makes FFI layer maintainable
 
-#### T3.2: Refactor ha-api WebSocket dispatch
-- **Scope**: `handle_message` (393 lines), plus 31 handler functions
+#### T3.2: Handler registry pattern for ha-api WebSocket dispatch (ARCHITECTURAL)
+- **Problem**: 393-line `handle_message` is a giant match — every new WebSocket command touches the dispatch function. Violates Open/Closed principle.
+- **Proposed pattern**:
+  ```rust
+  // Each handler registers itself
+  registry.register("get_states", GetStatesHandler);
+  registry.register("call_service", CallServiceHandler);
+
+  // Dispatch becomes one line
+  let handler = registry.get(msg_type)?;
+  handler.handle(context, payload).await
+  ```
+- **Benefits**: Each handler independently testable, new commands don't touch dispatch, handler metadata (auth requirements, schema) co-located with implementation.
 - **Effort**: 2-3 sessions
-- **Approach**: Extract handler registration into a dispatch table pattern. Each handler becomes a trait impl or registered function. Message types become an enum parsed once.
+- **Impact**: Eliminates ha-api's largest god function, makes WebSocket handlers independently testable
 
 #### T3.3: Refactor ha-server service registration
 - **Scope**: `register_core_services` (281 lines), `register_automation_services` (232 lines), etc.
 - **Effort**: 1-2 sessions
 - **Approach**: Extract service registration into a declarative table/macro. Each service becomes a struct with metadata + handler.
 
-#### T3.4: Add Rust unit tests for ha-registries
-- **Scope**: 2,994 lines, 5 registry types, storage layer
+#### T3.4: Add Rust unit tests for ha-registries (defense in depth)
+- **Problem**: 2,994 lines with zero Rust tests. Relies entirely on external Python HA compat tests. `cargo test` is blind to regressions in 5 registry types + storage layer.
+- **Approach**: Keep HA compat tests AND add focused Rust unit tests. They serve different purposes: HA compat verifies *behavior matches Python HA*, Rust unit tests verify *internal invariants hold*.
+- **Scope**: EntityRegistry, DeviceRegistry, AreaRegistry, FloorRegistry, LabelRegistry, Storage
 - **Effort**: 2-3 sessions
 - **Impact**: Coverage target is 95%+
 
@@ -282,8 +302,18 @@ These are significant efforts that should be planned individually.
 **Time**: 3-4 hours
 **Verification**: `cargo test -p ha-event-bus -p ha-state-store -p ha-service-registry`
 
-### Sessions 5+: Major Refactors (T3.x)
-**Goal**: Break god functions, refactor dispatch, test registries
+### Session 5: ha-py-bridge split (T3.1)
+**Goal**: Split monolith into ha-py-bridge + ha-py-shim + ha-py-codegen
+**Time**: 3-5 sessions (plan first)
+**Verification**: `make build`, `make test-python`, `make test-ha-compat`
+
+### Session 6: WebSocket handler registry (T3.2)
+**Goal**: Replace giant match dispatch with registry pattern in ha-api
+**Time**: 2-3 sessions
+**Verification**: `cargo test -p ha-api`, `make test-integration`
+
+### Sessions 7+: Remaining Refactors (T3.3-T3.5)
+**Goal**: Service registration refactor, ha-registries tests, doc comments
 **Time**: Multiple sessions, each planned individually
 
 ---

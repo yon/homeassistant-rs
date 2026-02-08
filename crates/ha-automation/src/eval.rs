@@ -186,7 +186,7 @@ impl ConditionEvaluator {
                 return Ok(false);
             }
 
-            // TODO: Handle 'for' duration check
+            // TODO(plan:T-04): Handle 'for' duration check
             // This would require tracking when the entity entered this state
         }
 

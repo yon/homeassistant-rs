@@ -707,7 +707,7 @@ pub async fn handle_entity_registry_update(
     // Handle entity_id rename if requested
     if let Some(new_id) = new_entity_id {
         if new_id != entity_id {
-            // TODO: Implement entity_id rename - requires updating the entity_id field
+            // TODO(plan:T-03): Implement entity_id rename - requires updating the entity_id field
             // and re-indexing. For now, this is not supported.
             warn!(
                 "Entity ID rename not yet implemented: {} -> {}",

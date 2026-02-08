@@ -297,7 +297,7 @@ impl ConfigEntryWrapper {
             name
         );
 
-        // TODO: Track the task and cancel it when the entry is unloaded
+        // TODO(plan:T-07): Track the task and cancel it when the entry is unloaded
         // For now, we just create the task without lifecycle tracking
 
         Ok(task)

@@ -13,7 +13,9 @@ use ha_automation::AutomationConfig;
 use ha_components::{register_system_log_services, SystemLog};
 use ha_config::CoreConfig;
 use ha_config_entries::ConfigEntries;
-use ha_core::{Context, EntityId, ServiceCall, SupportsResponse};
+use ha_core::{
+    Context, EntityId, ServiceCall, SupportsResponse, STATE_OFF, STATE_ON, STATE_UNKNOWN,
+};
 use ha_event_bus::EventBus;
 use ha_registries::{Registries, Storage};
 use ha_service_registry::{ServiceDescription, ServiceRegistry};
@@ -162,7 +164,7 @@ impl HomeAssistant {
                         let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
                         if parts.len() == 2 {
                             if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
-                                states.set(entity, "on", HashMap::new(), Context::new());
+                                states.set(entity, STATE_ON, HashMap::new(), Context::new());
                             }
                         }
                     }
@@ -192,7 +194,7 @@ impl HomeAssistant {
                         let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
                         if parts.len() == 2 {
                             if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
-                                states.set(entity, "off", HashMap::new(), Context::new());
+                                states.set(entity, STATE_OFF, HashMap::new(), Context::new());
                             }
                         }
                     }
@@ -220,7 +222,11 @@ impl HomeAssistant {
                         call.service_data.get("entity_id").and_then(|v| v.as_str())
                     {
                         if let Some(state) = states.get(entity_id) {
-                            let new_state = if state.state == "on" { "off" } else { "on" };
+                            let new_state = if state.state == STATE_ON {
+                                STATE_OFF
+                            } else {
+                                STATE_ON
+                            };
                             let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
                             if parts.len() == 2 {
                                 if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
@@ -468,7 +474,7 @@ impl HomeAssistant {
                                 if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
                                     states.set(
                                         entity,
-                                        "on",
+                                        STATE_ON,
                                         state.attributes.clone(),
                                         Context::new(),
                                     );
@@ -518,7 +524,7 @@ impl HomeAssistant {
                                 if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
                                     states.set(
                                         entity,
-                                        "off",
+                                        STATE_OFF,
                                         state.attributes.clone(),
                                         Context::new(),
                                     );
@@ -564,7 +570,7 @@ impl HomeAssistant {
                             } else {
                                 // Automation not in manager, toggle based on entity state
                                 if let Some(state) = states.get(entity_id) {
-                                    state.state != "on"
+                                    state.state != STATE_ON
                                 } else {
                                     true
                                 }
@@ -572,7 +578,7 @@ impl HomeAssistant {
 
                             // Update entity state
                             if let Some(state) = states.get(entity_id) {
-                                let new_state = if new_enabled { "on" } else { "off" };
+                                let new_state = if new_enabled { STATE_ON } else { STATE_OFF };
                                 if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
                                     states.set(
                                         entity,
@@ -689,7 +695,7 @@ impl HomeAssistant {
                                     // Set to "on" while running (scripts run once then go to off)
                                     states.set(
                                         entity,
-                                        "on",
+                                        STATE_ON,
                                         state.attributes.clone(),
                                         Context::new(),
                                     );
@@ -726,7 +732,7 @@ impl HomeAssistant {
                                 if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
                                     states.set(
                                         entity,
-                                        "off",
+                                        STATE_OFF,
                                         state.attributes.clone(),
                                         Context::new(),
                                     );
@@ -760,7 +766,11 @@ impl HomeAssistant {
                         if let Some(state) = states.get(entity_id) {
                             let parts: Vec<&str> = entity_id.splitn(2, '.').collect();
                             if parts.len() == 2 && parts[0] == "script" {
-                                let new_state = if state.state == "on" { "off" } else { "on" };
+                                let new_state = if state.state == STATE_ON {
+                                    STATE_OFF
+                                } else {
+                                    STATE_ON
+                                };
                                 if let Ok(entity) = EntityId::new(parts[0], parts[1]) {
                                     states.set(
                                         entity,
@@ -835,7 +845,7 @@ impl HomeAssistant {
             let state = entity
                 .get("state")
                 .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
+                .unwrap_or(STATE_UNKNOWN);
 
             let attributes: HashMap<String, serde_json::Value> = entity
                 .get("attributes")
@@ -866,8 +876,19 @@ impl HomeAssistant {
                           attrs: HashMap<String, serde_json::Value>,
                           device_class: Option<&str>,
                           original_name: Option<&str>| {
-            let parts: Vec<&str> = entity_id_str.split('.').collect();
-            let entity_id = EntityId::new(parts[0], parts[1]).unwrap();
+            let entity_id = match entity_id_str.split_once('.') {
+                Some((domain, object_id)) => match EntityId::new(domain, object_id) {
+                    Ok(id) => id,
+                    Err(e) => {
+                        warn!("Invalid entity ID '{}': {}", entity_id_str, e);
+                        return;
+                    }
+                },
+                None => {
+                    warn!("Invalid entity ID format (no dot): '{}'", entity_id_str);
+                    return;
+                }
+            };
 
             // Register in entity registry
             self.registries.entities.get_or_create(
@@ -898,7 +919,7 @@ impl HomeAssistant {
         add_entity(
             "light.living_room",
             "demo",
-            "on",
+            STATE_ON,
             HashMap::from([
                 ("brightness".to_string(), serde_json::json!(255)),
                 (
@@ -913,7 +934,7 @@ impl HomeAssistant {
         add_entity(
             "light.bedroom",
             "demo",
-            "off",
+            STATE_OFF,
             HashMap::from([
                 ("brightness".to_string(), serde_json::json!(0)),
                 (
@@ -959,7 +980,7 @@ impl HomeAssistant {
         add_entity(
             "switch.coffee_maker",
             "demo",
-            "off",
+            STATE_OFF,
             HashMap::from([(
                 "friendly_name".to_string(),
                 serde_json::json!("Coffee Maker"),
@@ -972,7 +993,7 @@ impl HomeAssistant {
         add_entity(
             "binary_sensor.front_door",
             "demo",
-            "off",
+            STATE_OFF,
             HashMap::from([
                 ("friendly_name".to_string(), serde_json::json!("Front Door")),
                 ("device_class".to_string(), serde_json::json!("door")),
@@ -1630,8 +1651,14 @@ async fn main() -> Result<()> {
                 .clone()
                 .unwrap_or_else(|| config.alias.clone().unwrap_or_default());
             if !automation_id.is_empty() {
-                let entity_id = EntityId::new("automation", &automation_id).unwrap();
-                let state = if config.enabled { "on" } else { "off" };
+                let entity_id = match EntityId::new("automation", &automation_id) {
+                    Ok(id) => id,
+                    Err(e) => {
+                        warn!("Invalid automation ID '{}': {}", automation_id, e);
+                        continue;
+                    }
+                };
+                let state = if config.enabled { STATE_ON } else { STATE_OFF };
                 let mut attributes = HashMap::new();
                 if let Some(alias) = &config.alias {
                     attributes.insert("friendly_name".to_string(), json!(alias));
@@ -2103,7 +2130,7 @@ script: []
         // Set up initial entity state
         hass.states.set(
             EntityId::new("sensor", "test").unwrap(),
-            "off",
+            STATE_OFF,
             HashMap::new(),
             Context::new(),
         );
@@ -2117,8 +2144,8 @@ script: []
                 id: None,
                 entity_id: EntityIdSpec::Single("sensor.test".to_string()),
                 attribute: None,
-                from: Some(StateMatch::Single("off".to_string())),
-                to: Some(StateMatch::Single("on".to_string())),
+                from: Some(StateMatch::Single(STATE_OFF.to_string())),
+                to: Some(StateMatch::Single(STATE_ON.to_string())),
                 not_from: HashSet::new(),
                 not_to: HashSet::new(),
                 r#for: None,
@@ -2148,7 +2175,7 @@ script: []
         // Change state from off to on - should trigger
         hass.states.set(
             EntityId::new("sensor", "test").unwrap(),
-            "on",
+            STATE_ON,
             HashMap::new(),
             Context::new(),
         );
@@ -2163,7 +2190,7 @@ script: []
         // Change state to something else - should not trigger (wrong transition)
         hass.states.set(
             EntityId::new("sensor", "test").unwrap(),
-            "unknown",
+            STATE_UNKNOWN,
             HashMap::new(),
             Context::new(),
         );
@@ -2281,7 +2308,7 @@ script: []
         // Set up entity for condition check
         hass.states.set(
             EntityId::new("input_boolean", "gate").unwrap(),
-            "off", // Condition will check for "on"
+            STATE_OFF, // Condition will check for "on"
             HashMap::new(),
             Context::new(),
         );
@@ -2299,7 +2326,7 @@ script: []
             })],
             conditions: vec![Condition::State(StateCondition {
                 entity_id: EntityIdSpec::Single("input_boolean.gate".to_string()),
-                state: StateMatch::Single("on".to_string()),
+                state: StateMatch::Single(STATE_ON.to_string()),
                 attribute: None,
                 r#for: None,
                 match_regex: false,
@@ -2337,7 +2364,7 @@ script: []
         // Now set the gate to on
         hass.states.set(
             EntityId::new("input_boolean", "gate").unwrap(),
-            "on",
+            STATE_ON,
             HashMap::new(),
             Context::new(),
         );

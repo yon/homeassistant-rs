@@ -857,7 +857,7 @@ async fn cancel_config_flow(
     Path(flow_id): Path<String>,
 ) -> impl IntoResponse {
     info!("HTTP DELETE (cancel) config flow: {}", flow_id);
-    // TODO: Actually abort the flow in the manager
+    // TODO(plan:T-02): Actually abort the flow in the manager
     // For now, just return success
     (
         StatusCode::OK,

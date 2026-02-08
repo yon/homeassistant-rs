@@ -4,7 +4,7 @@
 
 use super::async_bridge::AsyncBridge;
 use super::errors::{PyBridgeError, PyBridgeResult};
-use ha_core::{Context, ServiceCall};
+use ha_core::Context;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::sync::Arc;
@@ -127,20 +127,6 @@ impl ServiceBridge {
             }
         })
     }
-}
-
-/// Convert a Rust ServiceCall to Python-compatible format
-#[allow(dead_code)]
-pub fn service_call_to_python<'py>(
-    py: Python<'py>,
-    call: &ServiceCall,
-) -> PyResult<Bound<'py, PyDict>> {
-    let dict = PyDict::new_bound(py);
-    dict.set_item("domain", &call.domain)?;
-    dict.set_item("service", &call.service)?;
-    dict.set_item("service_data", json_to_pydict(py, &call.service_data)?)?;
-    dict.set_item("context", context_to_pyobject(py, &call.context)?)?;
-    Ok(dict)
 }
 
 /// Convert a serde_json::Value to a Python dict
