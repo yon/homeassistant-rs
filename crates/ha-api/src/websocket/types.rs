@@ -336,6 +336,74 @@ pub enum IncomingMessage {
     },
 }
 
+impl IncomingMessage {
+    /// Extract the message ID, if present.
+    ///
+    /// Returns `None` only for `Auth` (which has no ID).
+    /// All other message types carry an `id` field.
+    pub fn id(&self) -> Option<u64> {
+        match self {
+            Self::Auth { .. } => None,
+            Self::ApplicationCredentialsConfig { id, .. }
+            | Self::ApplicationCredentialsConfigEntry { id, .. }
+            | Self::ApplicationCredentialsCreate { id, .. }
+            | Self::ApplicationCredentialsDelete { id, .. }
+            | Self::ApplicationCredentialsList { id, .. }
+            | Self::AreaRegistryList { id, .. }
+            | Self::AuthCurrentUser { id, .. }
+            | Self::AutomationConfig { id, .. }
+            | Self::BlueprintList { id, .. }
+            | Self::CallService { id, .. }
+            | Self::CategoryRegistryList { id, .. }
+            | Self::ConfigEntriesDelete { id, .. }
+            | Self::ConfigEntriesFlow { id, .. }
+            | Self::ConfigEntriesFlowProgress { id, .. }
+            | Self::ConfigEntriesFlowSubscribe { id, .. }
+            | Self::ConfigEntriesGet { id, .. }
+            | Self::ConfigEntriesSubentriesList { id, .. }
+            | Self::ConfigEntriesSubscribe { id, .. }
+            | Self::DeviceRegistryList { id, .. }
+            | Self::EntityRegistryGet { id, .. }
+            | Self::EntityRegistryList { id, .. }
+            | Self::EntityRegistryListForDisplay { id, .. }
+            | Self::EntityRegistryRemove { id, .. }
+            | Self::EntityRegistryUpdate { id, .. }
+            | Self::EntitySource { id, .. }
+            | Self::FireEvent { id, .. }
+            | Self::FloorRegistryList { id, .. }
+            | Self::FrontendGetIcons { id, .. }
+            | Self::FrontendGetThemes { id, .. }
+            | Self::FrontendGetTranslations { id, .. }
+            | Self::FrontendSubscribeSystemData { id, .. }
+            | Self::FrontendSubscribeUserData { id, .. }
+            | Self::GetConfig { id, .. }
+            | Self::GetPanels { id, .. }
+            | Self::GetServices { id, .. }
+            | Self::GetStates { id, .. }
+            | Self::IntegrationDescriptions { id, .. }
+            | Self::LabelRegistryList { id, .. }
+            | Self::LabsSubscribe { id, .. }
+            | Self::LoggerLogInfo { id, .. }
+            | Self::LovelaceConfig { id, .. }
+            | Self::LovelaceResources { id, .. }
+            | Self::ManifestGet { id, .. }
+            | Self::ManifestList { id, .. }
+            | Self::PersistentNotificationSubscribe { id, .. }
+            | Self::Ping { id, .. }
+            | Self::RecorderInfo { id, .. }
+            | Self::RenderTemplate { id, .. }
+            | Self::RepairsListIssues { id, .. }
+            | Self::ScriptConfig { id, .. }
+            | Self::SensorNumericDeviceClasses { id, .. }
+            | Self::SubscribeEntities { id, .. }
+            | Self::SubscribeEvents { id, .. }
+            | Self::SupportedFeatures { id, .. }
+            | Self::SystemLogList { id, .. }
+            | Self::UnsubscribeEvents { id, .. } => Some(*id),
+        }
+    }
+}
+
 // =============================================================================
 // Service Target Types
 // =============================================================================

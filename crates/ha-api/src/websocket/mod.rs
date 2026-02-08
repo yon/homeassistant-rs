@@ -190,6 +190,33 @@ mod tests {
     }
 
     #[test]
+    fn id_returns_none_for_auth() {
+        let msg: IncomingMessage =
+            serde_json::from_str(r#"{"type": "auth", "access_token": "tok"}"#).unwrap();
+        assert_eq!(msg.id(), None);
+    }
+
+    #[test]
+    fn id_returns_some_for_ping() {
+        let msg: IncomingMessage = serde_json::from_str(r#"{"type": "ping", "id": 42}"#).unwrap();
+        assert_eq!(msg.id(), Some(42));
+    }
+
+    #[test]
+    fn id_returns_some_for_get_states() {
+        let msg: IncomingMessage =
+            serde_json::from_str(r#"{"type": "get_states", "id": 7}"#).unwrap();
+        assert_eq!(msg.id(), Some(7));
+    }
+
+    #[test]
+    fn id_returns_some_for_subscribe_events() {
+        let msg: IncomingMessage =
+            serde_json::from_str(r#"{"type": "subscribe_events", "id": 99}"#).unwrap();
+        assert_eq!(msg.id(), Some(99));
+    }
+
+    #[test]
     fn test_parse_manifest_list() {
         let json = r#"{"type": "manifest/list", "id": 8}"#;
         let msg: IncomingMessage = serde_json::from_str(json).unwrap();
