@@ -456,6 +456,14 @@ fn create_config_entries_wrapper(
     let call_entity_service = globals.get_item("_call_entity_service")?.unwrap();
     wrapper.setattr("call_entity_service", call_entity_service)?;
 
+    // Add async_update_entry method for updating config entries
+    let async_update_entry = globals.get_item("async_update_entry")?.unwrap();
+    wrapper.setattr("async_update_entry", async_update_entry)?;
+
+    // Add async_get_entry method for looking up config entries by ID
+    let async_get_entry = globals.get_item("async_get_entry")?.unwrap();
+    wrapper.setattr("async_get_entry", async_get_entry)?;
+
     // Add async_entries method for checking existing entries
     let async_entries = globals.get_item("async_entries")?.unwrap();
     wrapper.setattr("async_entries", async_entries)?;

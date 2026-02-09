@@ -1030,6 +1030,37 @@ def async_entries(domain=None, include_ignore=True, include_disabled=True):
     # For now, return empty list - integrations will proceed as if no entries exist
     return []
 
+def async_update_entry(entry, *, data=None, options=None, title=None,
+                        unique_id=None, minor_version=None, version=None,
+                        pref_disable_new_entities=None, pref_disable_polling=None,
+                        discovery_keys=None):
+    """Update a config entry.
+
+    Stub implementation that accepts common parameters integrations pass
+    during setup. Returns True to indicate the entry was 'updated'.
+    """
+    _LOGGER.debug(f"async_update_entry called for {getattr(entry, 'domain', '?')}")
+    # For ConfigEntryWrapper objects, update mutable fields if possible
+    if data is not None and hasattr(entry, '_data'):
+        try:
+            entry._data = data
+        except (AttributeError, TypeError):
+            pass
+    if title is not None and hasattr(entry, '_title'):
+        try:
+            entry._title = title
+        except (AttributeError, TypeError):
+            pass
+    return True
+
+def async_get_entry(entry_id):
+    """Get a config entry by ID.
+
+    Stub that returns None since we don't track entries in the wrapper.
+    """
+    _LOGGER.debug(f"async_get_entry({entry_id}) -> None")
+    return None
+
 def async_entry_for_domain_unique_id(domain, unique_id):
     """Get entry by domain and unique_id.
 

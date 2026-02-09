@@ -29,6 +29,8 @@ pub struct ConfigEntryWrapper {
     runtime_data: RwLock<PyObject>,
     // Callbacks registered via async_on_unload
     unload_callbacks: RwLock<Vec<PyObject>>,
+    // Callbacks registered via add_update_listener
+    update_listeners: RwLock<Vec<PyObject>>,
 }
 
 impl ConfigEntryWrapper {
@@ -61,6 +63,7 @@ impl ConfigEntryWrapper {
             discovery_keys: discovery_keys.clone().unbind().into(),
             runtime_data: RwLock::new(py.None()),
             unload_callbacks: RwLock::new(Vec::new()),
+            update_listeners: RwLock::new(Vec::new()),
         })
     }
 }
@@ -188,6 +191,25 @@ impl ConfigEntryWrapper {
         // Return a function that removes this callback
         // For now, return None since the callback tracking is primarily for cleanup
         Ok(py.None())
+    }
+
+    /// Register a callback for when the entry is updated (e.g., options changed)
+    ///
+    /// Returns a callable that removes the listener when called.
+    /// Pattern: `entry.async_on_unload(entry.add_update_listener(callback))`
+    fn add_update_listener(&self, py: Python<'_>, listener: PyObject) -> PyResult<PyObject> {
+        {
+            let mut listeners = self.update_listeners.write().unwrap();
+            listeners.push(listener.clone_ref(py));
+        }
+
+        // Return a no-op unsubscribe callable (lambda: None)
+        // In production HA, this removes the listener from the list.
+        // Our stub just returns a callable to satisfy the pattern.
+        let builtins = py.import_bound("builtins")?;
+        let none_func = py.eval_bound("lambda: None", None, None)?;
+        let _ = builtins; // suppress unused
+        Ok(none_func.unbind())
     }
 
     /// Get all registered unload callbacks (for internal use)

@@ -2178,7 +2178,7 @@ class RustDeviceRegistry:
                 rust_config_url = str(configuration_url)
 
         now_ts = datetime.now(timezone.utc).timestamp()
-        entry, changed_fields = self._rust_registry.async_get_or_create(
+        entry, changed_fields = self._rust_registry._async_get_or_create_with_changes(
             config_entry_id=config_entry_id,
             config_subentry_id=config_subentry_id,
             identifiers=list(identifiers) if identifiers else None,
@@ -2224,7 +2224,7 @@ class RustDeviceRegistry:
                 area = area_reg.async_get_area_by_name(suggested_area)
                 if area is None:
                     area = area_reg.async_create(suggested_area)
-                entry, area_changes = self._rust_registry.async_update_device(
+                entry, area_changes = self._rust_registry._async_update_device_with_changes(
                     entry.id, area_id=area.id, modified_at=now_ts
                 )
                 changed_fields = list(set(changed_fields) | set(area_changes))
@@ -2430,7 +2430,7 @@ class RustDeviceRegistry:
 
         if rust_kwargs:
             try:
-                entry, changed_fields = self._rust_registry.async_update_device(device_id, **rust_kwargs)
+                entry, changed_fields = self._rust_registry._async_update_device_with_changes(device_id, **rust_kwargs)
             except ValueError as e:
                 # Rust raises ValueError for validation/collision errors;
                 # convert to HomeAssistantError for HA test compatibility

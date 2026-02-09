@@ -548,7 +548,7 @@ impl PyDeviceRegistry {
             .collect()
     }
 
-    /// Get or create a device
+    /// Get or create a device (Python HA compatible — returns just DeviceEntry)
     ///
     /// Handles field updates, primary_config_entry promotion, disabled_by on
     /// creation, and suggested_area storage.
@@ -583,6 +583,93 @@ impl PyDeviceRegistry {
         initial_disabled_by=None
     ))]
     fn async_get_or_create(
+        &self,
+        config_entry_id: &str,
+        identifiers: Option<&Bound<'_, PyAny>>,
+        connections: Option<&Bound<'_, PyAny>>,
+        manufacturer: Option<&str>,
+        model: Option<&str>,
+        model_id: Option<&str>,
+        name: Option<&str>,
+        serial_number: Option<&str>,
+        suggested_area: Option<&str>,
+        sw_version: Option<&str>,
+        hw_version: Option<&str>,
+        via_device: Option<&Bound<'_, PyAny>>,
+        configuration_url: Option<&str>,
+        entry_type: Option<&str>,
+        config_subentry_id: Option<&str>,
+        default_manufacturer: Option<&str>,
+        default_model: Option<&str>,
+        default_name: Option<&str>,
+        #[allow(unused_variables)] disabled_by: Option<&Bound<'_, PyAny>>,
+        #[allow(unused_variables)] translation_key: Option<&str>,
+        #[allow(unused_variables)] translation_placeholders: Option<&Bound<'_, PyAny>>,
+        created_at: Option<f64>,
+        #[allow(unused_variables)] modified_at: Option<f64>,
+        current_primary_domain: Option<String>,
+        initial_disabled_by: Option<String>,
+    ) -> PyResult<PyDeviceEntry> {
+        let (entry, _changed) = self._async_get_or_create_with_changes(
+            config_entry_id,
+            identifiers,
+            connections,
+            manufacturer,
+            model,
+            model_id,
+            name,
+            serial_number,
+            suggested_area,
+            sw_version,
+            hw_version,
+            via_device,
+            configuration_url,
+            entry_type,
+            config_subentry_id,
+            default_manufacturer,
+            default_model,
+            default_name,
+            disabled_by,
+            translation_key,
+            translation_placeholders,
+            created_at,
+            modified_at,
+            current_primary_domain,
+            initial_disabled_by,
+        )?;
+        Ok(entry)
+    }
+
+    /// Get or create a device, returning changed fields (internal use)
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        config_entry_id,
+        identifiers=None,
+        connections=None,
+        manufacturer=None,
+        model=None,
+        model_id=None,
+        name=None,
+        serial_number=None,
+        suggested_area=None,
+        sw_version=None,
+        hw_version=None,
+        via_device=None,
+        configuration_url=None,
+        entry_type=None,
+        config_subentry_id=None,
+        default_manufacturer=None,
+        default_model=None,
+        default_name=None,
+        disabled_by=None,
+        translation_key=None,
+        translation_placeholders=None,
+        created_at=None,
+        modified_at=None,
+        current_primary_domain=None,
+        initial_disabled_by=None
+    ))]
+    fn _async_get_or_create_with_changes(
         &self,
         config_entry_id: &str,
         identifiers: Option<&Bound<'_, PyAny>>,
@@ -814,15 +901,7 @@ impl PyDeviceRegistry {
         Ok((PyDeviceEntry::from_inner(entry), changed))
     }
 
-    /// Update a device
-    ///
-    /// Supports add/remove of config entries with subentry management,
-    /// automatic disabled_by propagation based on config entry disabled status,
-    /// merge/new connections/identifiers with collision detection, and
-    /// via_device_id cleanup on device removal.
-    ///
-    /// Returns None if the device was removed (last config entry removed).
-    // PyO3 method mirrors Python HA DeviceRegistry.async_update_device which takes many optional fields
+    /// Update a device, returning changed fields (internal use)
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         device_id,
@@ -860,7 +939,7 @@ impl PyDeviceRegistry {
         merge_identifiers=None,
         new_identifiers=None
     ))]
-    fn async_update_device(
+    fn _async_update_device_with_changes(
         &self,
         device_id: &str,
         name: Option<String>,

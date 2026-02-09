@@ -1116,6 +1116,100 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_auth_full_login_flow_returns_token() {
+        let state = create_test_state();
+
+        // Step 1: Create login flow
+        let app = create_router(state.clone());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/auth/login_flow")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"client_id":"http://localhost:8123/","handler":["homeassistant",null],"redirect_uri":"/"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let flow_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let flow_id = flow_json["flow_id"].as_str().unwrap();
+
+        // Step 2: Submit credentials
+        let app = create_router(state.clone());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/auth/login_flow/{}", flow_id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"client_id":"http://localhost:8123/","username":"admin","password":"admin"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "submit_login_flow should return 200"
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let login_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(login_json["type"], "create_entry");
+        let auth_code = login_json["result"].as_str().unwrap();
+        assert!(!auth_code.is_empty(), "auth code should not be empty");
+
+        // Step 3: Exchange auth code for token
+        let app = create_router(state.clone());
+        let token_body = format!(
+            "grant_type=authorization_code&code={}&client_id=http://localhost:8123/",
+            auth_code
+        );
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/auth/token")
+                    .header("content-type", "application/x-www-form-urlencoded")
+                    .body(Body::from(token_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "token exchange should return 200"
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let token_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(
+            token_json.get("access_token").is_some(),
+            "response should contain access_token"
+        );
+        assert!(
+            token_json.get("refresh_token").is_some(),
+            "response should contain refresh_token"
+        );
+        assert_eq!(token_json["token_type"], "Bearer");
+    }
+
+    #[tokio::test]
     async fn test_oauth_metadata() {
         let state = create_test_state();
         let app = create_router(state);
