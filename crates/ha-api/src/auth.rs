@@ -386,14 +386,16 @@ pub struct Credential {
 }
 
 /// Parse multipart form data into a TokenRequest
-fn parse_multipart_form(body: &str) -> Result<TokenRequest, String> {
+fn parse_multipart_form(body: &str) -> crate::error::AuthResult<TokenRequest> {
+    use crate::error::AuthError;
+
     let mut grant_type = None;
     let mut client_id = None;
     let mut code = None;
     let mut refresh_token = None;
 
     // Find the boundary (first line)
-    let first_line = body.lines().next().ok_or("Empty body")?;
+    let first_line = body.lines().next().ok_or(AuthError::EmptyBody)?;
     let boundary = first_line.trim();
 
     // Split by boundary
@@ -438,8 +440,8 @@ fn parse_multipart_form(body: &str) -> Result<TokenRequest, String> {
     }
 
     Ok(TokenRequest {
-        grant_type: grant_type.ok_or("missing grant_type")?,
-        client_id: client_id.ok_or("missing client_id")?,
+        grant_type: grant_type.ok_or(AuthError::MissingField("grant_type"))?,
+        client_id: client_id.ok_or(AuthError::MissingField("client_id"))?,
         code,
         refresh_token,
     })
@@ -531,7 +533,7 @@ pub struct LoginFlowStepRequest {
 }
 
 /// Request for POST /auth/token
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct TokenRequest {
     pub grant_type: String,
     pub client_id: String,
@@ -846,6 +848,7 @@ pub async fn oauth_metadata() -> Json<serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::AuthError;
 
     #[tokio::test]
     async fn test_auth_state_creation() {
@@ -962,5 +965,37 @@ mod tests {
         // Invalid token should fail
         let invalid = state.validate_access_token("invalid-token").await;
         assert!(invalid.is_none());
+    }
+
+    #[test]
+    fn parse_multipart_form_empty_body_returns_auth_error() {
+        let result = parse_multipart_form("");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AuthError::EmptyBody => {}
+            other => panic!("Expected EmptyBody, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_multipart_form_missing_grant_type_returns_missing_field() {
+        let body = "---boundary\r\nContent-Disposition: form-data; name=\"client_id\"\r\n\r\nhttp://localhost:8123/\r\n---boundary--";
+        let result = parse_multipart_form(body);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AuthError::MissingField(field) => assert_eq!(field, "grant_type"),
+            other => panic!("Expected MissingField(grant_type), got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_multipart_form_valid_authorization_code() {
+        let body = "---boundary\r\nContent-Disposition: form-data; name=\"grant_type\"\r\n\r\nauthorization_code\r\n---boundary\r\nContent-Disposition: form-data; name=\"client_id\"\r\n\r\nhttp://localhost:8123/\r\n---boundary\r\nContent-Disposition: form-data; name=\"code\"\r\n\r\nabc123\r\n---boundary--";
+        let result = parse_multipart_form(body);
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result.err());
+        let req = result.unwrap();
+        assert_eq!(req.grant_type, "authorization_code");
+        assert_eq!(req.client_id, "http://localhost:8123/");
+        assert_eq!(req.code, Some("abc123".to_string()));
     }
 }

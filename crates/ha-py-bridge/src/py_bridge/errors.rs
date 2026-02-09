@@ -33,6 +33,25 @@ pub enum PyBridgeError {
     #[error("Configuration error: {0}")]
     Config(String),
 
+    /// Package installation failed
+    #[error("Failed to install package '{package}' for integration '{domain}': {reason}")]
+    RequirementInstallFailed {
+        domain: String,
+        package: String,
+        reason: String,
+    },
+
+    /// Required packages missing and pip disabled
+    #[error("Missing packages for integration '{domain}': {packages:?} (pip installation disabled via HA_SKIP_PIP)")]
+    RequirementsMissing {
+        domain: String,
+        packages: Vec<String>,
+    },
+
+    /// Package previously failed to install
+    #[error("Package '{package}' previously failed to install for integration '{domain}'")]
+    RequirementPreviouslyFailed { domain: String, package: String },
+
     /// Service call error
     #[error("Service call failed: {0}")]
     ServiceCall(String),

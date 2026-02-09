@@ -441,7 +441,7 @@ impl ConfigEntries {
             SetupResult::AuthFailed(reason) => {
                 self.set_state(entry_id, ConfigEntryState::SetupError, Some(reason.clone()))?;
                 warn!("Auth failed for entry {}: {}", entry_id, reason);
-                // TODO: Trigger reauth flow
+                // TODO(plan:T-05): Trigger reauth flow
                 Err(ConfigEntriesError::SetupFailed(reason))
             }
             SetupResult::Failed(reason) => {
@@ -463,7 +463,7 @@ impl ConfigEntries {
                 }
                 self.set_state(entry_id, ConfigEntryState::SetupRetry, Some(reason.clone()))?;
                 info!("Entry {} not ready, will retry: {}", entry_id, reason);
-                // TODO: Schedule retry with exponential backoff using calculate_retry_delay
+                // TODO(plan:T-05): Schedule retry with exponential backoff using calculate_retry_delay
                 Ok(())
             }
             SetupResult::Success => {

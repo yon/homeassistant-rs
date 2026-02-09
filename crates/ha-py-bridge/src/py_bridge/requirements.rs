@@ -8,6 +8,8 @@ use pyo3::prelude::*;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Command;
+
+use super::errors::{PyBridgeError, PyBridgeResult};
 use std::sync::Mutex;
 use tracing::{debug, info, warn};
 
@@ -42,7 +44,11 @@ impl RequirementsManager {
     ///
     /// Returns Ok(()) if all requirements are satisfied, or an error describing
     /// which packages failed to install.
-    pub fn ensure_requirements(&self, domain: &str, requirements: &[String]) -> Result<(), String> {
+    pub fn ensure_requirements(
+        &self,
+        domain: &str,
+        requirements: &[String],
+    ) -> Result<(), PyBridgeError> {
         if requirements.is_empty() {
             return Ok(());
         }
@@ -69,10 +75,10 @@ impl RequirementsManager {
             {
                 let failed = self.failed_packages.lock().unwrap();
                 if failed.contains(req) {
-                    return Err(format!(
-                        "Package '{}' previously failed to install for integration '{}'",
-                        req, domain
-                    ));
+                    return Err(PyBridgeError::RequirementPreviouslyFailed {
+                        domain: domain.to_owned(),
+                        package: req.clone(),
+                    });
                 }
             }
 
@@ -97,10 +103,10 @@ impl RequirementsManager {
         }
 
         if self.skip_pip {
-            return Err(format!(
-                "Missing packages for integration '{}': {:?} (pip installation disabled via HA_SKIP_PIP)",
-                domain, missing
-            ));
+            return Err(PyBridgeError::RequirementsMissing {
+                domain: domain.to_owned(),
+                packages: missing,
+            });
         }
 
         // Install missing packages
@@ -121,10 +127,11 @@ impl RequirementsManager {
                     warn!("Failed to install package '{}': {}", req, e);
                     let mut failed = self.failed_packages.lock().unwrap();
                     failed.insert(req.clone());
-                    return Err(format!(
-                        "Failed to install package '{}' for integration '{}': {}",
-                        req, domain, e
-                    ));
+                    return Err(PyBridgeError::RequirementInstallFailed {
+                        domain: domain.to_owned(),
+                        package: req.clone(),
+                        reason: e.to_string(),
+                    });
                 }
             }
         }
@@ -169,7 +176,7 @@ impl RequirementsManager {
     }
 
     /// Install a package using pip
-    fn install_package(&self, requirement: &str) -> Result<(), String> {
+    fn install_package(&self, requirement: &str) -> PyBridgeResult<()> {
         info!("Installing package: {}", requirement);
 
         // Try uv pip first (faster), fall back to pip
@@ -207,38 +214,44 @@ impl RequirementsManager {
     }
 
     /// Install using uv pip (faster)
-    fn install_with_uv(&self, requirement: &str) -> Result<(), String> {
+    fn install_with_uv(&self, requirement: &str) -> PyBridgeResult<()> {
         debug!("Installing {} with uv", requirement);
 
         let output = Command::new("uv")
             .args(["pip", "install", "--quiet", requirement])
             .output()
-            .map_err(|e| format!("Failed to run uv: {}", e))?;
+            .map_err(|e| PyBridgeError::Python(format!("Failed to run uv: {}", e)))?;
 
         if output.status.success() {
             info!("Successfully installed {} with uv", requirement);
             Ok(())
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(format!("uv pip install failed: {}", stderr))
+            Err(PyBridgeError::Python(format!(
+                "uv pip install failed: {}",
+                stderr
+            )))
         }
     }
 
     /// Install using pip
-    fn install_with_pip(&self, requirement: &str) -> Result<(), String> {
+    fn install_with_pip(&self, requirement: &str) -> PyBridgeResult<()> {
         debug!("Installing {} with pip", requirement);
 
         let output = Command::new(&self.python_path)
             .args(["-m", "pip", "install", "--quiet", requirement])
             .output()
-            .map_err(|e| format!("Failed to run pip: {}", e))?;
+            .map_err(|e| PyBridgeError::Python(format!("Failed to run pip: {}", e)))?;
 
         if output.status.success() {
             info!("Successfully installed {} with pip", requirement);
             Ok(())
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(format!("pip install failed: {}", stderr))
+            Err(PyBridgeError::Python(format!(
+                "pip install failed: {}",
+                stderr
+            )))
         }
     }
 }

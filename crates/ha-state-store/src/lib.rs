@@ -102,7 +102,10 @@ impl StateStore {
 
         // If state and attributes are unchanged, fire STATE_REPORTED and return
         if same_state && same_attr {
-            let existing = old_state.as_ref().unwrap();
+            // safe: same_state/same_attr can only be true when old_state is Some
+            let Some(existing) = old_state.as_ref() else {
+                unreachable!("same_state && same_attr implies old_state is Some");
+            };
             let old_last_reported = existing.last_reported;
             let now = chrono::Utc::now();
 
@@ -265,5 +268,216 @@ impl StateStore {
 /// Thread-safe wrapper for StateStore
 pub type SharedStateStore = Arc<StateStore>;
 
-// Unit tests removed - covered by HA native tests via `make ha-compat-test`
-// See tests/ha_compat/ for comprehensive StateStore testing through Python bindings
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn test_store() -> StateStore {
+        let event_bus = Arc::new(EventBus::new());
+        StateStore::new(event_bus)
+    }
+
+    fn entity_id(id: &str) -> EntityId {
+        let parts: Vec<&str> = id.splitn(2, '.').collect();
+        EntityId::new(parts[0], parts[1]).expect("valid entity id")
+    }
+
+    #[test]
+    fn set_and_get_entity_state() {
+        let store = test_store();
+        let id = entity_id("light.living_room");
+        store.set(id, "on", HashMap::new(), Context::default());
+        let state = store.get("light.living_room").expect("should exist");
+        assert_eq!(state.state, "on");
+    }
+
+    #[test]
+    fn get_nonexistent_returns_none() {
+        let store = test_store();
+        assert!(store.get("light.nonexistent").is_none());
+    }
+
+    #[test]
+    fn get_state_returns_string() {
+        let store = test_store();
+        let id = entity_id("sensor.temperature");
+        store.set(id, "22.5", HashMap::new(), Context::default());
+        assert_eq!(
+            store.get_state("sensor.temperature").as_deref(),
+            Some("22.5")
+        );
+    }
+
+    #[test]
+    fn is_state_matches_correctly() {
+        let store = test_store();
+        let id = entity_id("switch.fan");
+        store.set(id, "off", HashMap::new(), Context::default());
+        assert!(store.is_state("switch.fan", "off"));
+        assert!(!store.is_state("switch.fan", "on"));
+        assert!(!store.is_state("switch.nonexistent", "off"));
+    }
+
+    #[test]
+    fn domain_index_tracks_entities() {
+        let store = test_store();
+        store.set(
+            entity_id("light.a"),
+            "on",
+            HashMap::new(),
+            Context::default(),
+        );
+        store.set(
+            entity_id("light.b"),
+            "off",
+            HashMap::new(),
+            Context::default(),
+        );
+        store.set(
+            entity_id("sensor.c"),
+            "42",
+            HashMap::new(),
+            Context::default(),
+        );
+
+        let light_ids = store.entity_ids("light");
+        assert_eq!(light_ids.len(), 2);
+        assert!(light_ids.contains(&"light.a".to_string()));
+        assert!(light_ids.contains(&"light.b".to_string()));
+
+        let sensor_ids = store.entity_ids("sensor");
+        assert_eq!(sensor_ids.len(), 1);
+    }
+
+    #[test]
+    fn domain_states_returns_states_for_domain() {
+        let store = test_store();
+        store.set(
+            entity_id("light.a"),
+            "on",
+            HashMap::new(),
+            Context::default(),
+        );
+        store.set(
+            entity_id("light.b"),
+            "off",
+            HashMap::new(),
+            Context::default(),
+        );
+
+        let states = store.domain_states("light");
+        assert_eq!(states.len(), 2);
+    }
+
+    #[test]
+    fn all_entity_ids_returns_all() {
+        let store = test_store();
+        store.set(
+            entity_id("light.a"),
+            "on",
+            HashMap::new(),
+            Context::default(),
+        );
+        store.set(
+            entity_id("sensor.b"),
+            "42",
+            HashMap::new(),
+            Context::default(),
+        );
+        assert_eq!(store.all_entity_ids().len(), 2);
+    }
+
+    #[test]
+    fn entity_count_tracks_entities() {
+        let store = test_store();
+        assert_eq!(store.entity_count(), 0);
+        store.set(
+            entity_id("light.a"),
+            "on",
+            HashMap::new(),
+            Context::default(),
+        );
+        assert_eq!(store.entity_count(), 1);
+    }
+
+    #[test]
+    fn remove_entity_removes_state() {
+        let store = test_store();
+        let id = entity_id("light.a");
+        store.set(id.clone(), "on", HashMap::new(), Context::default());
+        assert_eq!(store.entity_count(), 1);
+
+        let removed = store.remove(&id, Context::default());
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap().state, "on");
+        assert_eq!(store.entity_count(), 0);
+        assert!(store.get("light.a").is_none());
+    }
+
+    #[test]
+    fn remove_nonexistent_returns_none() {
+        let store = test_store();
+        let id = entity_id("light.nonexistent");
+        assert!(store.remove(&id, Context::default()).is_none());
+    }
+
+    #[test]
+    fn state_exceeding_max_length_replaced_with_unknown() {
+        let store = test_store();
+        let id = entity_id("sensor.long");
+        let long_state = "x".repeat(MAX_STATE_LENGTH + 1);
+        store.set(id, long_state, HashMap::new(), Context::default());
+        let state = store.get("sensor.long").expect("should exist");
+        assert_eq!(state.state, STATE_UNKNOWN);
+    }
+
+    #[test]
+    fn unchanged_state_and_attrs_updates_last_reported() {
+        let store = test_store();
+        let id = entity_id("sensor.temp");
+        let attrs = HashMap::new();
+
+        // First set
+        let first = store.set(id.clone(), "22", attrs.clone(), Context::default());
+        let first_reported = first.last_reported;
+
+        // Set again with same state+attrs
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let second = store.set(id, "22", attrs, Context::default());
+
+        // last_reported should be updated
+        assert!(
+            second.last_reported > first_reported,
+            "last_reported should advance on unchanged state"
+        );
+        // last_changed should NOT change
+        assert_eq!(first.last_changed, second.last_changed);
+    }
+
+    #[test]
+    fn domains_returns_unique_domains() {
+        let store = test_store();
+        store.set(
+            entity_id("light.a"),
+            "on",
+            HashMap::new(),
+            Context::default(),
+        );
+        store.set(
+            entity_id("light.b"),
+            "off",
+            HashMap::new(),
+            Context::default(),
+        );
+        store.set(
+            entity_id("sensor.c"),
+            "42",
+            HashMap::new(),
+            Context::default(),
+        );
+
+        let domains = store.domains();
+        assert_eq!(domains.len(), 2);
+    }
+}

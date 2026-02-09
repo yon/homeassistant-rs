@@ -290,5 +290,277 @@ where
     Ok(Some(storage_file.data))
 }
 
-// Unit tests removed - covered by HA native tests via `make ha-compat-test`
-// See tests/ha_compat/ for comprehensive Storage testing through Python bindings
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// Test data type for storage round-trips
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    struct TestData {
+        items: Vec<String>,
+        count: usize,
+    }
+
+    impl Storable for TestData {
+        const KEY: &'static str = "test.data";
+        const VERSION: u32 = 1;
+        const MINOR_VERSION: u32 = 1;
+    }
+
+    fn test_storage() -> (Storage, TempDir) {
+        let tmp = TempDir::new().expect("create temp dir");
+        let storage = Storage::new(tmp.path());
+        (storage, tmp)
+    }
+
+    #[test]
+    fn storage_file_new_sets_fields() {
+        let sf: StorageFile<TestData> = StorageFile::new(
+            "test.key",
+            TestData {
+                items: vec!["a".into()],
+                count: 1,
+            },
+            2,
+            3,
+        );
+        assert_eq!(sf.key, "test.key");
+        assert_eq!(sf.version, 2);
+        assert_eq!(sf.minor_version, 3);
+        assert_eq!(sf.data.count, 1);
+    }
+
+    #[test]
+    fn storage_new_sets_storage_dir() {
+        let (storage, _tmp) = test_storage();
+        assert!(
+            storage.storage_dir().ends_with(".storage"),
+            "storage_dir should end with .storage, got: {:?}",
+            storage.storage_dir()
+        );
+    }
+
+    #[test]
+    fn file_path_appends_key() {
+        let (storage, _tmp) = test_storage();
+        let path = storage.file_path("core.entity_registry");
+        assert!(
+            path.ends_with("core.entity_registry"),
+            "file_path should end with key, got: {:?}",
+            path
+        );
+    }
+
+    #[tokio::test]
+    async fn save_and_load_round_trip() {
+        let (storage, _tmp) = test_storage();
+        let data = TestData {
+            items: vec!["hello".into(), "world".into()],
+            count: 2,
+        };
+        let sf = StorageFile::new("test.data", data.clone(), 1, 1);
+
+        storage.save(&sf).await.expect("save should succeed");
+
+        let loaded: StorageFile<TestData> = storage
+            .load("test.data")
+            .await
+            .expect("load should not error")
+            .expect("should find file");
+
+        assert_eq!(loaded.data, data);
+        assert_eq!(loaded.version, 1);
+        assert_eq!(loaded.minor_version, 1);
+        assert_eq!(loaded.key, "test.data");
+    }
+
+    #[tokio::test]
+    async fn load_nonexistent_returns_none() {
+        let (storage, _tmp) = test_storage();
+        let result: Option<StorageFile<TestData>> = storage
+            .load("nonexistent")
+            .await
+            .expect("load should not error");
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn load_required_nonexistent_returns_error() {
+        let (storage, _tmp) = test_storage();
+        let result = storage.load_required::<TestData>("missing").await;
+        assert!(
+            matches!(result, Err(StorageError::NotFound { ref key }) if key == "missing"),
+            "Expected NotFound, got: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn exists_returns_correct_state() {
+        let (storage, _tmp) = test_storage();
+        assert!(!storage.exists("test.data").await);
+
+        let sf = StorageFile::new(
+            "test.data",
+            TestData {
+                items: vec![],
+                count: 0,
+            },
+            1,
+            1,
+        );
+        storage.save(&sf).await.unwrap();
+
+        assert!(storage.exists("test.data").await);
+    }
+
+    #[tokio::test]
+    async fn delete_removes_file() {
+        let (storage, _tmp) = test_storage();
+        let sf = StorageFile::new(
+            "test.data",
+            TestData {
+                items: vec![],
+                count: 0,
+            },
+            1,
+            1,
+        );
+        storage.save(&sf).await.unwrap();
+        assert!(storage.exists("test.data").await);
+
+        storage
+            .delete("test.data")
+            .await
+            .expect("delete should succeed");
+        assert!(!storage.exists("test.data").await);
+    }
+
+    #[tokio::test]
+    async fn delete_nonexistent_succeeds() {
+        let (storage, _tmp) = test_storage();
+        storage
+            .delete("nonexistent")
+            .await
+            .expect("delete nonexistent should succeed");
+    }
+
+    #[tokio::test]
+    async fn list_keys_returns_saved_keys() {
+        let (storage, _tmp) = test_storage();
+
+        // Empty initially
+        let keys = storage.list_keys().await.unwrap();
+        assert!(keys.is_empty());
+
+        // Save two files
+        let sf1 = StorageFile::new(
+            "key.one",
+            TestData {
+                items: vec![],
+                count: 0,
+            },
+            1,
+            1,
+        );
+        let sf2 = StorageFile::new(
+            "key.two",
+            TestData {
+                items: vec![],
+                count: 0,
+            },
+            1,
+            1,
+        );
+        storage.save(&sf1).await.unwrap();
+        storage.save(&sf2).await.unwrap();
+
+        let mut keys = storage.list_keys().await.unwrap();
+        keys.sort();
+        assert_eq!(keys, vec!["key.one", "key.two"]);
+    }
+
+    #[tokio::test]
+    async fn list_keys_skips_tmp_files() {
+        let (storage, _tmp) = test_storage();
+        storage.ensure_dir().await.unwrap();
+
+        // Save a real file
+        let sf = StorageFile::new(
+            "real.key",
+            TestData {
+                items: vec![],
+                count: 0,
+            },
+            1,
+            1,
+        );
+        storage.save(&sf).await.unwrap();
+
+        // Create a .tmp file manually
+        let tmp_path = storage.file_path("real.key.tmp");
+        fs::write(&tmp_path, "temp").await.unwrap();
+
+        let keys = storage.list_keys().await.unwrap();
+        assert_eq!(keys, vec!["real.key"]);
+    }
+
+    #[test]
+    fn storable_to_storage_file() {
+        let data = TestData {
+            items: vec!["x".into()],
+            count: 1,
+        };
+        let sf = data.to_storage_file();
+        assert_eq!(sf.key, "test.data");
+        assert_eq!(sf.version, 1);
+        assert_eq!(sf.minor_version, 1);
+        assert_eq!(sf.data, data);
+    }
+
+    #[tokio::test]
+    async fn load_with_migration_returns_none_for_missing() {
+        let (storage, _tmp) = test_storage();
+        let result = load_with_migration::<TestData>(&storage, None)
+            .await
+            .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn load_with_migration_version_mismatch_no_migrate_fn_errors() {
+        let (storage, _tmp) = test_storage();
+
+        // Save with version 2 (but TestData expects version 1)
+        let sf = StorageFile::new(
+            "test.data",
+            TestData {
+                items: vec![],
+                count: 0,
+            },
+            2,
+            1,
+        );
+        storage.save(&sf).await.unwrap();
+
+        let result = load_with_migration::<TestData>(&storage, None).await;
+        assert!(
+            matches!(result, Err(StorageError::MigrationRequired { ref key, from: 2, to: 1 }) if key == "test.data"),
+            "Expected MigrationRequired, got: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn ensure_dir_creates_directory() {
+        let (storage, _tmp) = test_storage();
+        assert!(!storage.storage_dir().exists());
+
+        storage.ensure_dir().await.expect("should create dir");
+        assert!(storage.storage_dir().exists());
+
+        // Calling again should be idempotent
+        storage.ensure_dir().await.expect("idempotent create");
+    }
+}

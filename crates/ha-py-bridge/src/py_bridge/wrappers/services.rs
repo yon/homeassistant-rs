@@ -58,7 +58,7 @@ impl ServicesWrapper {
         };
 
         let ctx = match context {
-            Some(_) => Context::new(), // TODO: Extract context from PyObject
+            Some(_) => Context::new(), // TODO(plan:T-06): Extract context from PyObject
             None => Context::new(),
         };
 

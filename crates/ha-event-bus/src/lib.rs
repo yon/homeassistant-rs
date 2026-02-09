@@ -281,5 +281,121 @@ impl<T: EventData + serde::de::DeserializeOwned> TypedEventReceiver<T> {
 /// Thread-safe wrapper for EventBus
 pub type SharedEventBus = Arc<EventBus>;
 
-// Unit tests removed - covered by HA native tests via `make ha-compat-test`
-// See tests/ha_compat/ for comprehensive EventBus testing through Python bindings
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ha_core::events::HOMEASSISTANT_CLOSE;
+    use ha_core::{Context, Event};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn make_event(event_type: &str) -> Event<serde_json::Value> {
+        Event::new(event_type, serde_json::Value::Null, Context::default())
+    }
+
+    #[tokio::test]
+    async fn subscribe_receives_fired_event() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe("test_event");
+        bus.fire(make_event("test_event"));
+        let event = rx.recv().await.expect("should receive event");
+        assert_eq!(event.event_type.as_str(), "test_event");
+    }
+
+    #[tokio::test]
+    async fn subscribe_does_not_receive_other_event_types() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe("type_a");
+        bus.fire(make_event("type_b"));
+        // Channel should have no messages for type_a
+        let result = rx.try_recv();
+        assert!(
+            result.is_err(),
+            "should not receive event of different type"
+        );
+    }
+
+    #[tokio::test]
+    async fn subscribe_all_receives_events() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe_all();
+        bus.fire(make_event("any_event"));
+        let event = rx.recv().await.expect("should receive event");
+        assert_eq!(event.event_type.as_str(), "any_event");
+    }
+
+    #[tokio::test]
+    async fn subscribe_all_excludes_homeassistant_close() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe_all();
+        bus.fire(make_event(HOMEASSISTANT_CLOSE));
+        let result = rx.try_recv();
+        assert!(
+            result.is_err(),
+            "HOMEASSISTANT_CLOSE should be excluded from match_all"
+        );
+    }
+
+    #[test]
+    fn sync_listener_fires_inline() {
+        let bus = EventBus::new();
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_clone = Arc::clone(&counter);
+        bus.listen_sync(
+            "sync_test",
+            Arc::new(move |_| {
+                counter_clone.fetch_add(1, Ordering::SeqCst);
+            }),
+        );
+        bus.fire(make_event("sync_test"));
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn remove_sync_listener_stops_delivery() {
+        let bus = EventBus::new();
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_clone = Arc::clone(&counter);
+        let id = bus.listen_sync(
+            "sync_test",
+            Arc::new(move |_| {
+                counter_clone.fetch_add(1, Ordering::SeqCst);
+            }),
+        );
+        bus.fire(make_event("sync_test"));
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+
+        bus.remove_sync_listener(id);
+        bus.fire(make_event("sync_test"));
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1,
+            "should not fire after removal"
+        );
+    }
+
+    #[test]
+    fn listener_count_tracks_subscriptions() {
+        let bus = EventBus::new();
+        assert_eq!(bus.listener_count(), 0);
+        let _rx = bus.subscribe("event_a");
+        assert_eq!(bus.listener_count(), 1);
+        let _rx2 = bus.subscribe("event_b");
+        assert_eq!(bus.listener_count(), 2);
+    }
+
+    #[test]
+    fn sync_listener_count_tracks_sync_listeners() {
+        let bus = EventBus::new();
+        assert_eq!(bus.sync_listener_count(), 0);
+        bus.listen_sync("event_a", Arc::new(|_| {}));
+        assert_eq!(bus.sync_listener_count(), 1);
+        bus.listen_sync("event_b", Arc::new(|_| {}));
+        assert_eq!(bus.sync_listener_count(), 2);
+    }
+
+    #[test]
+    fn default_creates_event_bus() {
+        let bus = EventBus::default();
+        assert_eq!(bus.listener_count(), 0);
+    }
+}

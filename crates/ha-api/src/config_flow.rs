@@ -3,9 +3,11 @@
 //! Defines the interface for config flow handlers. The implementation
 //! (e.g., Python-based via ha-py-bridge) is provided externally.
 
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use thiserror::Error;
 
 /// Result type for a config flow step
 #[derive(Debug, Clone, Serialize)]
@@ -60,6 +62,33 @@ pub struct FormField {
     pub default: Option<serde_json::Value>,
 }
 
+/// Errors that can occur during config flow operations
+#[derive(Debug, Error)]
+pub enum ConfigFlowError {
+    /// The requested flow was not found
+    #[error("Flow not found: {flow_id}")]
+    FlowNotFound { flow_id: String },
+
+    /// The requested handler/integration was not found
+    #[error("Handler not found: {handler}")]
+    HandlerNotFound { handler: String },
+
+    /// Internal error (Python exceptions, async failures, etc.)
+    #[error("{0}")]
+    Internal(String),
+}
+
+impl ConfigFlowError {
+    /// Returns the WebSocket error code for this error variant
+    pub fn error_code(&self) -> &str {
+        match self {
+            ConfigFlowError::FlowNotFound { .. } => "flow_not_found",
+            ConfigFlowError::HandlerNotFound { .. } => "handler_not_found",
+            ConfigFlowError::Internal(_) => "flow_error",
+        }
+    }
+}
+
 /// Trait for handling configuration flows
 ///
 /// This trait defines the interface for config flow operations.
@@ -78,7 +107,7 @@ pub trait ConfigFlowHandler: Send + Sync {
         &self,
         handler: &str,
         show_advanced_options: bool,
-    ) -> Result<FlowResult, String>;
+    ) -> Result<FlowResult, ConfigFlowError>;
 
     /// Continue a flow with user input
     ///
@@ -92,11 +121,60 @@ pub trait ConfigFlowHandler: Send + Sync {
         &self,
         flow_id: &str,
         user_input: Option<serde_json::Value>,
-    ) -> Result<FlowResult, String>;
+    ) -> Result<FlowResult, ConfigFlowError>;
 
     /// Get list of active flows
     ///
     /// # Returns
     /// A list of active flow information as JSON values
     async fn list_flows(&self) -> Vec<serde_json::Value>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_flow_error_flow_not_found_display() {
+        let err = ConfigFlowError::FlowNotFound {
+            flow_id: "abc123".to_string(),
+        };
+        assert_eq!(err.to_string(), "Flow not found: abc123");
+    }
+
+    #[test]
+    fn config_flow_error_handler_not_found_display() {
+        let err = ConfigFlowError::HandlerNotFound {
+            handler: "hue".to_string(),
+        };
+        assert_eq!(err.to_string(), "Handler not found: hue");
+    }
+
+    #[test]
+    fn config_flow_error_internal_display() {
+        let err = ConfigFlowError::Internal("something broke".to_string());
+        assert_eq!(err.to_string(), "something broke");
+    }
+
+    #[test]
+    fn config_flow_error_codes_match_variants() {
+        let flow_err = ConfigFlowError::FlowNotFound {
+            flow_id: "x".to_string(),
+        };
+        assert_eq!(flow_err.error_code(), "flow_not_found");
+
+        let handler_err = ConfigFlowError::HandlerNotFound {
+            handler: "y".to_string(),
+        };
+        assert_eq!(handler_err.error_code(), "handler_not_found");
+
+        let internal_err = ConfigFlowError::Internal("oops".to_string());
+        assert_eq!(internal_err.error_code(), "flow_error");
+    }
+
+    #[test]
+    fn config_flow_error_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<ConfigFlowError>();
+    }
 }

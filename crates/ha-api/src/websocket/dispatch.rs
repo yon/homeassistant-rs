@@ -7,125 +7,56 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::warn;
 
+use crate::error::WsResult;
+
 use super::connection::ActiveConnection;
 use super::handlers;
-use super::types::{IncomingMessage, OutgoingMessage, PongMessage, ResultMessage};
+use super::types::{IncomingMessage, OutgoingMessage};
 
 /// Handle an incoming message
 pub async fn handle_message(
     conn: &Arc<ActiveConnection>,
     text: &str,
     tx: &mpsc::Sender<OutgoingMessage>,
-) -> Result<(), String> {
+) -> WsResult<()> {
     // Parse the message
     let msg: IncomingMessage = match serde_json::from_str(text) {
         Ok(msg) => msg,
         Err(e) => {
-            // Log unhandled message types for debugging
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(text) {
-                if let Some(msg_type) = json.get("type").and_then(|t| t.as_str()) {
-                    warn!("Unhandled WebSocket message type: {}", msg_type);
-                }
-            }
-            return Err(format!("Invalid message format: {}", e));
+            // Extract id from raw JSON so we can send an error response.
+            // Python HA sends "unknown_command" for unrecognized message types.
+            let id = serde_json::from_str::<serde_json::Value>(text)
+                .ok()
+                .and_then(|json| {
+                    if let Some(msg_type) = json.get("type").and_then(|t| t.as_str()) {
+                        warn!("Unhandled WebSocket message type: {}", msg_type);
+                    }
+                    json.get("id").and_then(|v| v.as_u64())
+                })
+                .unwrap_or(0);
+            return handlers::send_error(
+                id,
+                "unknown_command",
+                format!("Unknown command: {e}"),
+                tx,
+            )
+            .await;
         }
     };
 
+    // Validate message ID once (all messages except Auth carry an ID)
+    if let Some(id) = msg.id() {
+        conn.validate_id(id)?;
+    }
+
     match msg {
-        IncomingMessage::AreaRegistryList { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handlers::handle_area_registry_list(conn, id, tx).await
-        }
-        IncomingMessage::Auth { .. } => {
-            // Already authenticated, ignore
-            Ok(())
-        }
-        IncomingMessage::AuthCurrentUser { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handlers::handle_auth_current_user(conn, id, tx).await
-        }
-        IncomingMessage::AutomationConfig { id, entity_id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handlers::handle_automation_config(conn, id, &entity_id, tx).await
-        }
-        IncomingMessage::BlueprintList { id, domain } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handlers::handle_blueprint_list(conn, id, &domain, tx).await
-        }
-        IncomingMessage::CallService {
-            id,
-            domain,
-            service,
-            target,
-            service_data,
-            return_response,
-        } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handlers::handle_call_service(
-                conn,
-                id,
-                domain,
-                service,
-                target,
-                service_data,
-                return_response,
-                tx,
-            )
-            .await
-        }
-        IncomingMessage::CategoryRegistryList { id, scope } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handlers::handle_category_registry_list(conn, id, scope, tx).await
-        }
-        IncomingMessage::ConfigEntriesFlow {
-            id,
-            handler,
-            show_advanced_options,
-        } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handlers::handle_config_entries_flow(conn, id, &handler, show_advanced_options, tx)
-                .await
-        }
-        IncomingMessage::ConfigEntriesFlowProgress {
-            id,
-            flow_id,
-            user_input,
-        } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            match flow_id {
-                Some(ref fid) => {
-                    handlers::handle_config_entries_flow_progress(conn, id, fid, user_input, tx)
-                        .await
-                }
-                None => {
-                    // List all flows in progress (non-user initiated)
-                    handlers::handle_config_entries_flow_progress_list(id, tx).await
-                }
-            }
-        }
-        IncomingMessage::ConfigEntriesFlowSubscribe { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handlers::handle_config_entries_flow_subscribe(conn, id, tx).await
-        }
-        IncomingMessage::ConfigEntriesDelete { id, entry_id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handlers::handle_config_entries_delete(conn, id, &entry_id, tx).await
-        }
         IncomingMessage::ApplicationCredentialsConfig { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_application_credentials_config(id, tx).await
         }
         IncomingMessage::ApplicationCredentialsConfigEntry {
             id,
             config_entry_id,
-        } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handlers::handle_application_credentials_config_entry(id, &config_entry_id, tx).await
-        }
-        IncomingMessage::ApplicationCredentialsList { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handlers::handle_application_credentials_list(conn, id, tx).await
-        }
+        } => handlers::handle_application_credentials_config_entry(id, &config_entry_id, tx).await,
         IncomingMessage::ApplicationCredentialsCreate {
             id,
             domain,
@@ -134,7 +65,6 @@ pub async fn handle_message(
             auth_domain,
             name,
         } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_application_credentials_create(
                 conn,
                 id,
@@ -151,7 +81,6 @@ pub async fn handle_message(
             id,
             application_credentials_id,
         } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_application_credentials_delete(
                 conn,
                 id,
@@ -160,12 +89,74 @@ pub async fn handle_message(
             )
             .await
         }
+        IncomingMessage::ApplicationCredentialsList { id } => {
+            handlers::handle_application_credentials_list(conn, id, tx).await
+        }
+        IncomingMessage::AreaRegistryList { id } => {
+            handlers::handle_area_registry_list(conn, id, tx).await
+        }
+        IncomingMessage::Auth { .. } => Ok(()),
+        IncomingMessage::AuthCurrentUser { id } => {
+            handlers::handle_auth_current_user(conn, id, tx).await
+        }
+        IncomingMessage::AutomationConfig { id, entity_id } => {
+            handlers::handle_automation_config(conn, id, &entity_id, tx).await
+        }
+        IncomingMessage::BlueprintList { id, domain } => {
+            handlers::handle_blueprint_list(conn, id, &domain, tx).await
+        }
+        IncomingMessage::CallService {
+            id,
+            domain,
+            service,
+            target,
+            service_data,
+            return_response,
+        } => {
+            handlers::handle_call_service(
+                conn,
+                id,
+                domain,
+                service,
+                target,
+                service_data,
+                return_response,
+                tx,
+            )
+            .await
+        }
+        IncomingMessage::CategoryRegistryList { id, scope } => {
+            handlers::handle_category_registry_list(conn, id, scope, tx).await
+        }
+        IncomingMessage::ConfigEntriesDelete { id, entry_id } => {
+            handlers::handle_config_entries_delete(conn, id, &entry_id, tx).await
+        }
+        IncomingMessage::ConfigEntriesFlow {
+            id,
+            handler,
+            show_advanced_options,
+        } => {
+            handlers::handle_config_entries_flow(conn, id, &handler, show_advanced_options, tx)
+                .await
+        }
+        IncomingMessage::ConfigEntriesFlowProgress {
+            id,
+            flow_id,
+            user_input,
+        } => match flow_id {
+            Some(ref fid) => {
+                handlers::handle_config_entries_flow_progress(conn, id, fid, user_input, tx).await
+            }
+            None => handlers::handle_config_entries_flow_progress_list(id, tx).await,
+        },
+        IncomingMessage::ConfigEntriesFlowSubscribe { id } => {
+            handlers::handle_config_entries_flow_subscribe(conn, id, tx).await
+        }
         IncomingMessage::ConfigEntriesGet {
             id,
             entry_id,
             domain,
         } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_config_entries_get(
                 conn,
                 id,
@@ -176,31 +167,24 @@ pub async fn handle_message(
             .await
         }
         IncomingMessage::ConfigEntriesSubentriesList { id, entry_id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_config_entries_subentries_list(conn, id, &entry_id, tx).await
         }
         IncomingMessage::ConfigEntriesSubscribe { id, type_filter } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_config_entries_subscribe(conn, id, type_filter, tx).await
         }
         IncomingMessage::DeviceRegistryList { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_device_registry_list(conn, id, tx).await
         }
         IncomingMessage::EntityRegistryGet { id, entity_id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_entity_registry_get(conn, id, &entity_id, tx).await
         }
         IncomingMessage::EntityRegistryList { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_entity_registry_list(conn, id, tx).await
         }
         IncomingMessage::EntityRegistryListForDisplay { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_entity_registry_list_for_display(conn, id, tx).await
         }
         IncomingMessage::EntityRegistryRemove { id, entity_id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_entity_registry_remove(conn, id, &entity_id, tx).await
         }
         IncomingMessage::EntityRegistryUpdate {
@@ -215,7 +199,6 @@ pub async fn handle_message(
             aliases,
             labels,
         } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_entity_registry_update(
                 conn,
                 id,
@@ -233,31 +216,28 @@ pub async fn handle_message(
             .await
         }
         IncomingMessage::EntitySource { id, entity_id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_entity_source(conn, id, entity_id, tx).await
         }
         IncomingMessage::FireEvent {
             id,
             event_type,
             event_data,
-        } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handlers::handle_fire_event(conn, id, event_type, event_data, tx).await
-        }
+        } => handlers::handle_fire_event(conn, id, event_type, event_data, tx).await,
         IncomingMessage::FloorRegistryList { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_floor_registry_list(conn, id, tx).await
+        }
+        IncomingMessage::FrontendGetUserData { id, key } => {
+            handlers::handle_frontend_get_user_data(id, key, tx).await
+        }
+        IncomingMessage::FrontendSetUserData { id, key, value } => {
+            handlers::handle_frontend_set_user_data(id, &key, value, tx).await
         }
         IncomingMessage::FrontendGetIcons {
             id,
             category,
             integration,
-        } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handlers::handle_frontend_get_icons(conn, id, &category, integration, tx).await
-        }
+        } => handlers::handle_frontend_get_icons(conn, id, &category, integration, tx).await,
         IncomingMessage::FrontendGetThemes { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_frontend_get_themes(conn, id, tx).await
         }
         IncomingMessage::FrontendGetTranslations {
@@ -267,7 +247,6 @@ pub async fn handle_message(
             integration,
             config_flow,
         } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_frontend_get_translations(
                 conn,
                 id,
@@ -280,128 +259,230 @@ pub async fn handle_message(
             .await
         }
         IncomingMessage::FrontendSubscribeSystemData { id, key } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_frontend_subscribe_system_data(conn, id, key, tx).await
         }
         IncomingMessage::FrontendSubscribeUserData { id, key } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_frontend_subscribe_user_data(conn, id, key, tx).await
         }
-        IncomingMessage::GetConfig { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handlers::handle_get_config(conn, id, tx).await
-        }
-        IncomingMessage::GetPanels { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handlers::handle_get_panels(conn, id, tx).await
-        }
-        IncomingMessage::GetServices { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handlers::handle_get_services(conn, id, tx).await
-        }
-        IncomingMessage::GetStates { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handlers::handle_get_states(conn, id, tx).await
+        IncomingMessage::GetConfig { id } => handlers::handle_get_config(conn, id, tx).await,
+        IncomingMessage::GetPanels { id } => handlers::handle_get_panels(conn, id, tx).await,
+        IncomingMessage::GetServices { id } => handlers::handle_get_services(conn, id, tx).await,
+        IncomingMessage::GetStates { id } => handlers::handle_get_states(conn, id, tx).await,
+        IncomingMessage::IntegrationDescriptions { id, integrations } => {
+            handlers::handle_integration_descriptions(conn, id, integrations, tx).await
         }
         IncomingMessage::LabelRegistryList { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_label_registry_list(conn, id, tx).await
         }
         IncomingMessage::LabsSubscribe { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_labs_subscribe(conn, id, tx).await
         }
-        IncomingMessage::IntegrationDescriptions { id, integrations } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handlers::handle_integration_descriptions(conn, id, integrations, tx).await
-        }
         IncomingMessage::LoggerLogInfo { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_logger_log_info(conn, id, tx).await
         }
         IncomingMessage::LovelaceConfig { id, url_path } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_lovelace_config(conn, id, url_path, tx).await
         }
         IncomingMessage::LovelaceResources { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_lovelace_resources(conn, id, tx).await
         }
         IncomingMessage::ManifestGet { id, integration } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_manifest_get(conn, id, &integration, tx).await
         }
-        IncomingMessage::ManifestList { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handlers::handle_manifest_list(conn, id, tx).await
-        }
+        IncomingMessage::ManifestList { id } => handlers::handle_manifest_list(conn, id, tx).await,
         IncomingMessage::PersistentNotificationSubscribe { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_persistent_notification_subscribe(conn, id, tx).await
         }
-        IncomingMessage::Ping { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            let pong = OutgoingMessage::Pong(PongMessage {
-                id,
-                msg_type: "pong",
-            });
-            tx.send(pong).await.map_err(|e| e.to_string())?;
-            Ok(())
-        }
-        IncomingMessage::RecorderInfo { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handlers::handle_recorder_info(conn, id, tx).await
-        }
+        IncomingMessage::Ping { id } => handlers::handle_ping(id, tx).await,
+        IncomingMessage::RecorderInfo { id } => handlers::handle_recorder_info(conn, id, tx).await,
         IncomingMessage::RenderTemplate {
             id,
             template,
             variables,
-            timeout: _,
-            report_errors: _,
-        } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            handlers::handle_render_template(conn, id, &template, variables, tx).await
-        }
+            ..
+        } => handlers::handle_render_template(conn, id, &template, variables, tx).await,
         IncomingMessage::RepairsListIssues { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_repairs_list_issues(conn, id, tx).await
         }
         IncomingMessage::ScriptConfig { id, entity_id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_script_config(conn, id, &entity_id, tx).await
         }
         IncomingMessage::SensorNumericDeviceClasses { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_sensor_numeric_device_classes(conn, id, tx).await
         }
         IncomingMessage::SubscribeEntities { id, entity_ids } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_subscribe_entities(conn, id, entity_ids, tx).await
         }
         IncomingMessage::SubscribeEvents { id, event_type } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_subscribe_events(conn, id, event_type, tx).await
         }
-        IncomingMessage::SupportedFeatures { id, features: _ } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
-            // Acknowledge supported features (we don't use coalescing yet)
-            let result = OutgoingMessage::Result(ResultMessage {
-                id,
-                msg_type: "result",
-                success: true,
-                result: Some(serde_json::Value::Null),
-                error: None,
-            });
-            tx.send(result).await.map_err(|e| e.to_string())?;
-            Ok(())
+        IncomingMessage::SupportedFeatures { id, .. } => {
+            handlers::handle_supported_features(id, tx).await
         }
         IncomingMessage::SystemLogList { id } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_system_log_list(conn, id, tx).await
         }
         IncomingMessage::UnsubscribeEvents { id, subscription } => {
-            conn.validate_id(id).map_err(|e| e.to_string())?;
             handlers::handle_unsubscribe_events(conn, id, subscription, tx).await
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use ha_components::system_log::SystemLog;
+    use ha_config::CoreConfig;
+    use ha_config_entries::ConfigEntries;
+    use ha_event_bus::EventBus;
+    use ha_registries::{Registries, Storage};
+    use ha_service_registry::ServiceRegistry;
+    use ha_state_store::StateStore;
+    use tokio::sync::RwLock;
+
+    use crate::websocket::types::ResultMessage;
+    use crate::{auth, new_application_credentials_store, persistent_notification, AppState};
+
+    fn make_test_conn() -> Arc<ActiveConnection> {
+        let event_bus = Arc::new(EventBus::new());
+        let state_machine = Arc::new(StateStore::new(event_bus.clone()));
+        let service_registry = Arc::new(ServiceRegistry::new());
+        let temp_dir = std::env::temp_dir().join("ha-api-dispatch-test");
+        let registries = Arc::new(Registries::new(&temp_dir));
+        let storage = Arc::new(Storage::new(&temp_dir));
+        let config_entries = Arc::new(RwLock::new(ConfigEntries::new(storage)));
+        let notifications = persistent_notification::create_manager();
+        let system_log = Arc::new(SystemLog::with_defaults());
+        let state = AppState {
+            application_credentials: new_application_credentials_store(),
+            auth_state: auth::AuthState::new_onboarded(),
+            components: Arc::new(vec![]),
+            components_path: None,
+            config: Arc::new(CoreConfig::default()),
+            config_entries,
+            config_flow_handler: None,
+            event_bus,
+            events_cache: None,
+            frontend_config: None,
+            notifications,
+            registries,
+            service_registry,
+            services_cache: None,
+            state_machine,
+            system_log,
+        };
+        Arc::new(ActiveConnection::new(state, None))
+    }
+
+    /// Extract ResultMessage from OutgoingMessage, panicking if it's a different variant.
+    fn expect_result(msg: OutgoingMessage) -> ResultMessage {
+        if let OutgoingMessage::Result(rm) = msg {
+            rm
+        } else {
+            panic!("Expected Result message, got {:?}", msg)
+        }
+    }
+
+    #[tokio::test]
+    async fn unknown_message_type_returns_error_response() {
+        let conn = make_test_conn();
+        let (tx, mut rx) = mpsc::channel(16);
+
+        let text = r#"{"id": 99, "type": "totally/unknown"}"#;
+        let result = handle_message(&conn, text, &tx).await;
+        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+
+        let rm = expect_result(rx.try_recv().expect("Should have received a response"));
+        assert_eq!(rm.id, 99);
+        assert!(!rm.success);
+        assert_eq!(
+            rm.error.expect("Should have error info").code,
+            "unknown_command"
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_message_preserves_id() {
+        let conn = make_test_conn();
+        let (tx, mut rx) = mpsc::channel(16);
+
+        let text = r#"{"id": 42, "type": "nonexistent/command"}"#;
+        let result = handle_message(&conn, text, &tx).await;
+        assert!(result.is_ok());
+
+        let rm = expect_result(rx.try_recv().expect("Should have received a response"));
+        assert_eq!(rm.id, 42, "Response ID should match request ID");
+    }
+
+    #[tokio::test]
+    async fn frontend_get_user_data_returns_result() {
+        let conn = make_test_conn();
+        let (tx, mut rx) = mpsc::channel(16);
+
+        let text = r#"{"id": 10, "type": "frontend/get_user_data"}"#;
+        let result = handle_message(&conn, text, &tx).await;
+        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+
+        let rm = expect_result(rx.try_recv().expect("Should have received a response"));
+        assert_eq!(rm.id, 10);
+        assert!(rm.success, "Should be a success response");
+        let value = rm.result.expect("Should have result data");
+        assert!(
+            value.get("value").is_some(),
+            "Result should contain 'value' key, got: {value}"
+        );
+    }
+
+    #[tokio::test]
+    async fn frontend_get_user_data_with_key_returns_null_value() {
+        let conn = make_test_conn();
+        let (tx, mut rx) = mpsc::channel(16);
+
+        let text = r#"{"id": 11, "type": "frontend/get_user_data", "key": "sidebar"}"#;
+        let result = handle_message(&conn, text, &tx).await;
+        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+
+        let rm = expect_result(rx.try_recv().expect("Should have received a response"));
+        assert_eq!(rm.id, 11);
+        assert!(rm.success);
+        let value = rm.result.expect("Should have result data");
+        assert_eq!(
+            value.get("value"),
+            Some(&serde_json::Value::Null),
+            "Should return null for unknown key"
+        );
+    }
+
+    #[tokio::test]
+    async fn frontend_set_user_data_returns_success() {
+        let conn = make_test_conn();
+        let (tx, mut rx) = mpsc::channel(16);
+
+        let text = r#"{"id": 12, "type": "frontend/set_user_data", "key": "sidebar", "value": {"order": ["config"]}}"#;
+        let result = handle_message(&conn, text, &tx).await;
+        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+
+        let rm = expect_result(rx.try_recv().expect("Should have received a response"));
+        assert_eq!(rm.id, 12);
+        assert!(rm.success, "Should be a success response");
+    }
+
+    #[tokio::test]
+    async fn malformed_json_returns_error_response() {
+        let conn = make_test_conn();
+        let (tx, mut rx) = mpsc::channel(16);
+
+        let text = "not json at all";
+        let result = handle_message(&conn, text, &tx).await;
+        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+
+        let rm = expect_result(rx.try_recv().expect("Should have received a response"));
+        assert_eq!(rm.id, 0, "Malformed JSON should use id 0");
+        assert!(!rm.success);
+        assert_eq!(
+            rm.error.expect("Should have error info").code,
+            "unknown_command"
+        );
     }
 }

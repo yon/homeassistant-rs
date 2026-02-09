@@ -214,7 +214,7 @@ impl TriggerEvaluator {
             }
         }
 
-        // TODO: Handle 'for' duration constraint
+        // TODO(plan:T-04): Handle 'for' duration constraint
         // This requires tracking when the state changed and waiting
 
         // Build trigger data
@@ -388,7 +388,7 @@ impl TriggerEvaluator {
             return Ok(None);
         }
 
-        // TODO: Handle 'for' duration constraint
+        // TODO(plan:T-04): Handle 'for' duration constraint
 
         // Build trigger data
         let mut data = TriggerData::new("numeric_state")
@@ -534,7 +534,7 @@ impl TriggerEvaluator {
             return Ok(None);
         }
 
-        // TODO: Handle 'for' duration constraint
+        // TODO(plan:T-04): Handle 'for' duration constraint
         // Template must remain true for the duration
 
         let mut data = TriggerData::new("template");

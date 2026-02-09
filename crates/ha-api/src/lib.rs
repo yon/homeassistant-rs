@@ -6,6 +6,7 @@
 
 pub mod auth;
 pub mod config_flow;
+pub mod error;
 pub mod frontend;
 pub mod manifest;
 pub mod persistent_notification;
@@ -148,6 +149,7 @@ pub struct StateResponse {
     pub context: ContextResponse,
 }
 
+/// Context associated with a state change (id, parent, user)
 #[derive(Serialize)]
 pub struct ContextResponse {
     pub id: String,
@@ -170,6 +172,7 @@ pub struct ServiceResponse {
     pub services: HashMap<String, ServiceDescription>,
 }
 
+/// Metadata for a single service (name, description, fields, target)
 #[derive(Serialize)]
 pub struct ServiceDescription {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -566,6 +569,7 @@ async fn get_events(State(state): State<AppState>) -> axum::response::Response {
     Json(events).into_response()
 }
 
+/// An event type with its current listener count
 #[derive(Serialize)]
 pub struct EventTypeResponse {
     pub event: String,
@@ -857,7 +861,7 @@ async fn cancel_config_flow(
     Path(flow_id): Path<String>,
 ) -> impl IntoResponse {
     info!("HTTP DELETE (cancel) config flow: {}", flow_id);
-    // TODO: Actually abort the flow in the manager
+    // TODO(plan:T-02): Actually abort the flow in the manager
     // For now, just return success
     (
         StatusCode::OK,
@@ -873,7 +877,7 @@ async fn save_config_entry_from_flow(
     domain: &str,
     title: &str,
     data: &serde_json::Value,
-) -> Result<(), String> {
+) -> Result<(), ha_config_entries::ConfigEntriesError> {
     use ha_config_entries::ConfigEntry;
 
     let entry = ConfigEntry::new(domain, title).with_data(
@@ -883,10 +887,7 @@ async fn save_config_entry_from_flow(
     );
 
     let config_entries = state.config_entries.write().await;
-    config_entries
-        .add(entry)
-        .await
-        .map_err(|e| format!("Failed to add config entry: {}", e))?;
+    config_entries.add(entry).await?;
 
     info!("Saved config entry for {} ({})", domain, title);
     Ok(())

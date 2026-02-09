@@ -182,20 +182,6 @@ impl PythonRuntime {
     }
 }
 
-/// RAII guard for Python GIL
-#[allow(dead_code)]
-pub struct GilGuard<'py> {
-    py: Python<'py>,
-}
-
-#[allow(dead_code)]
-impl<'py> GilGuard<'py> {
-    /// Get Python interpreter reference
-    pub fn python(&self) -> Python<'py> {
-        self.py
-    }
-}
-
 /// Helper to run code with the GIL held
 pub fn with_gil<F, T>(f: F) -> PyBridgeResult<T>
 where

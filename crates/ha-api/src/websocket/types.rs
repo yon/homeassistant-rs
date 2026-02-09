@@ -100,6 +100,19 @@ pub enum IncomingMessage {
         #[serde(default)]
         event_data: Option<serde_json::Value>,
     },
+    #[serde(rename = "frontend/get_user_data")]
+    FrontendGetUserData {
+        id: u64,
+        #[serde(default)]
+        key: Option<String>,
+    },
+    #[serde(rename = "frontend/set_user_data")]
+    FrontendSetUserData {
+        id: u64,
+        key: String,
+        #[serde(default)]
+        value: Option<serde_json::Value>,
+    },
     #[serde(rename = "frontend/get_icons")]
     FrontendGetIcons {
         id: u64,
@@ -336,6 +349,76 @@ pub enum IncomingMessage {
     },
 }
 
+impl IncomingMessage {
+    /// Extract the message ID, if present.
+    ///
+    /// Returns `None` only for `Auth` (which has no ID).
+    /// All other message types carry an `id` field.
+    pub fn id(&self) -> Option<u64> {
+        match self {
+            Self::Auth { .. } => None,
+            Self::ApplicationCredentialsConfig { id, .. }
+            | Self::ApplicationCredentialsConfigEntry { id, .. }
+            | Self::ApplicationCredentialsCreate { id, .. }
+            | Self::ApplicationCredentialsDelete { id, .. }
+            | Self::ApplicationCredentialsList { id, .. }
+            | Self::AreaRegistryList { id, .. }
+            | Self::AuthCurrentUser { id, .. }
+            | Self::AutomationConfig { id, .. }
+            | Self::BlueprintList { id, .. }
+            | Self::CallService { id, .. }
+            | Self::CategoryRegistryList { id, .. }
+            | Self::ConfigEntriesDelete { id, .. }
+            | Self::ConfigEntriesFlow { id, .. }
+            | Self::ConfigEntriesFlowProgress { id, .. }
+            | Self::ConfigEntriesFlowSubscribe { id, .. }
+            | Self::ConfigEntriesGet { id, .. }
+            | Self::ConfigEntriesSubentriesList { id, .. }
+            | Self::ConfigEntriesSubscribe { id, .. }
+            | Self::DeviceRegistryList { id, .. }
+            | Self::EntityRegistryGet { id, .. }
+            | Self::EntityRegistryList { id, .. }
+            | Self::EntityRegistryListForDisplay { id, .. }
+            | Self::EntityRegistryRemove { id, .. }
+            | Self::EntityRegistryUpdate { id, .. }
+            | Self::EntitySource { id, .. }
+            | Self::FireEvent { id, .. }
+            | Self::FloorRegistryList { id, .. }
+            | Self::FrontendGetIcons { id, .. }
+            | Self::FrontendGetThemes { id, .. }
+            | Self::FrontendGetTranslations { id, .. }
+            | Self::FrontendGetUserData { id, .. }
+            | Self::FrontendSetUserData { id, .. }
+            | Self::FrontendSubscribeSystemData { id, .. }
+            | Self::FrontendSubscribeUserData { id, .. }
+            | Self::GetConfig { id, .. }
+            | Self::GetPanels { id, .. }
+            | Self::GetServices { id, .. }
+            | Self::GetStates { id, .. }
+            | Self::IntegrationDescriptions { id, .. }
+            | Self::LabelRegistryList { id, .. }
+            | Self::LabsSubscribe { id, .. }
+            | Self::LoggerLogInfo { id, .. }
+            | Self::LovelaceConfig { id, .. }
+            | Self::LovelaceResources { id, .. }
+            | Self::ManifestGet { id, .. }
+            | Self::ManifestList { id, .. }
+            | Self::PersistentNotificationSubscribe { id, .. }
+            | Self::Ping { id, .. }
+            | Self::RecorderInfo { id, .. }
+            | Self::RenderTemplate { id, .. }
+            | Self::RepairsListIssues { id, .. }
+            | Self::ScriptConfig { id, .. }
+            | Self::SensorNumericDeviceClasses { id, .. }
+            | Self::SubscribeEntities { id, .. }
+            | Self::SubscribeEvents { id, .. }
+            | Self::SupportedFeatures { id, .. }
+            | Self::SystemLogList { id, .. }
+            | Self::UnsubscribeEvents { id, .. } => Some(*id),
+        }
+    }
+}
+
 // =============================================================================
 // Service Target Types
 // =============================================================================
@@ -384,6 +467,7 @@ pub enum OutgoingMessage {
     Event(EventMessage),
 }
 
+/// Sent to clients when the WebSocket connection requires authentication
 #[derive(Debug, Serialize)]
 pub struct AuthRequiredMessage {
     #[serde(rename = "type")]
@@ -391,6 +475,7 @@ pub struct AuthRequiredMessage {
     pub ha_version: String,
 }
 
+/// Sent to clients when authentication succeeds
 #[derive(Debug, Serialize)]
 pub struct AuthOkMessage {
     #[serde(rename = "type")]
@@ -398,6 +483,7 @@ pub struct AuthOkMessage {
     pub ha_version: String,
 }
 
+/// Sent to clients when authentication fails
 #[derive(Debug, Serialize)]
 pub struct AuthInvalidMessage {
     #[serde(rename = "type")]
@@ -405,6 +491,7 @@ pub struct AuthInvalidMessage {
     pub message: String,
 }
 
+/// Response to a client ping message
 #[derive(Debug, Serialize)]
 pub struct PongMessage {
     pub id: u64,
@@ -412,6 +499,7 @@ pub struct PongMessage {
     pub msg_type: &'static str,
 }
 
+/// Response to a client command, carrying success/failure and optional data
 #[derive(Debug, Serialize)]
 pub struct ResultMessage {
     pub id: u64,
@@ -424,12 +512,14 @@ pub struct ResultMessage {
     pub error: Option<ErrorInfo>,
 }
 
+/// Error details included in a failed result message
 #[derive(Debug, Serialize)]
 pub struct ErrorInfo {
     pub code: String,
     pub message: String,
 }
 
+/// Pushed to clients subscribed to an event type
 #[derive(Debug, Serialize)]
 pub struct EventMessage {
     pub id: u64,

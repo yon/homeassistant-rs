@@ -1,0 +1,41 @@
+[build-system]
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "ha-py-ext"
+# Version matches Python Home Assistant version being tracked
+version = "2026.1.1"
+description = "Home Assistant Python extension - Rust core exposed as Python module"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",
+    "Topic :: Home Automation",
+]
+keywords = ["home-assistant", "rust", "automation", "iot"]
+
+[project.urls]
+Repository = "https://github.com/yon/homeassistant-rs"
+
+[tool.maturin]
+# Cargo.toml is now in the same directory
+manifest-path = "Cargo.toml"
+# Export as ha_core_rs - this is the native module name that Python imports
+module-name = "ha_core_rs"
+strip = true
+# Include the Python shim package in the wheel
+python-source = "python"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["python/tests"]

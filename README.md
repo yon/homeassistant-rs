@@ -64,6 +64,40 @@ PYTHONPATH="$(pwd)/crates/ha-py-bridge/python:$(pwd)/.venv/lib/python3.13/site-p
 
 Open http://localhost:8123
 
+### Testing with a Production Backup
+
+You can run the Rust server against a real Home Assistant backup to verify integration loading and frontend behavior.
+
+1. **Restore a backup** into a local directory (e.g. via HA's backup download):
+   ```bash
+   mkdir -p /tmp/ha-config && cd /tmp/ha-config
+   tar xzf ~/Downloads/your-ha-backup.tar.gz
+   # The backup extracts a data/ subdirectory containing configuration.yaml, .storage/, etc.
+   ```
+
+2. **Create an integration allowlist** to control which Python integrations load:
+   ```bash
+   cat > /tmp/ha-config/data/ha_python_integration_allowlist.yaml <<'EOF'
+   integrations:
+     - sun
+     - uptime
+     # Add your integrations here
+   EOF
+   ```
+
+3. **Run the server** pointing at the `data/` subdirectory (not the parent):
+   ```bash
+   CONFIG_DIR=/tmp/ha-config/data make run-release
+   ```
+   This sets `PYTHONPATH`, `HA_FRONTEND_PATH`, and `HA_COMPONENTS_PATH` automatically via the Makefile. To use a different port:
+   ```bash
+   CONFIG_DIR=/tmp/ha-config/data HA_PORT=8124 make run-release
+   ```
+
+4. Open http://localhost:8123 (or your custom port). The vendored frontend from the `hass_frontend` pip package is served automatically.
+
+**Important**: `HA_CONFIG_DIR` must point to the directory containing `configuration.yaml` and `.storage/`. In a backup, that's the `data/` subdirectory — not the backup root.
+
 ### Environment Variables
 
 | Variable | Purpose | Default |
@@ -71,6 +105,7 @@ Open http://localhost:8123
 | `PYTHONPATH` | Paths for embedded Python interpreter | - |
 | `HA_CONFIG_DIR` | Configuration directory | `./config` |
 | `HA_FRONTEND_PATH` | Path to hass_frontend package | - |
+| `HA_COMPONENTS_PATH` | Path to HA Python components | - |
 | `HA_PORT` | Server port | `8123` |
 
 ## Development

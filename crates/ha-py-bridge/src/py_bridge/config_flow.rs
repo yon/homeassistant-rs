@@ -13,7 +13,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 use ulid::Ulid;
 
-use ha_api::config_flow::{ConfigFlowHandler, FlowResult, FormField};
+use ha_api::config_flow::{ConfigFlowError, ConfigFlowHandler, FlowResult, FormField};
 use ha_api::manifest::get_manifest;
 use ha_api::ApplicationCredentialsStore;
 use ha_event_bus::EventBus;
@@ -23,6 +23,7 @@ use ha_state_store::StateStore;
 
 use super::async_bridge::AsyncBridge;
 use super::hass_wrapper::create_hass_wrapper_for_config_flow;
+use super::py_utils;
 use super::requirements::RequirementsManager;
 
 /// Active flow state
@@ -54,32 +55,32 @@ fn run_flow_step_blocking(
     flow_id: &str,
     handler: &str,
     _hass: &PyObject,
-) -> Result<FlowResult, String> {
+) -> Result<FlowResult, ConfigFlowError> {
     Python::with_gil(|py| {
         let method_name = format!("async_step_{}", step);
         debug!("Calling {} on flow (blocking thread)", method_name);
 
         // Convert user_input to Python dict
         let py_input = match user_input {
-            Some(input) => json_to_pyobject(py, &input),
+            Some(input) => py_utils::json_to_pyobject(py, &input).ok(),
             None => None,
         };
 
         // Get the method
         let flow_bound = flow_instance.bind(py);
-        let method = flow_bound
-            .getattr(method_name.as_str())
-            .map_err(|e| format!("Flow has no method {}: {}", method_name, e))?;
+        let method = flow_bound.getattr(method_name.as_str()).map_err(|e| {
+            ConfigFlowError::Internal(format!("Flow has no method {}: {}", method_name, e))
+        })?;
 
         // Call the method (it's async, so we get a coroutine)
         let coro = if let Some(input) = py_input {
-            method
-                .call1((input,))
-                .map_err(|e| format!("Failed to call {}: {}", method_name, e))?
+            method.call1((input,)).map_err(|e| {
+                ConfigFlowError::Internal(format!("Failed to call {}: {}", method_name, e))
+            })?
         } else {
-            method
-                .call1((py.None(),))
-                .map_err(|e| format!("Failed to call {}: {}", method_name, e))?
+            method.call1((py.None(),)).map_err(|e| {
+                ConfigFlowError::Internal(format!("Failed to call {}: {}", method_name, e))
+            })?
         };
 
         // Create a NEW event loop for this blocking call
@@ -87,21 +88,21 @@ fn run_flow_step_blocking(
         // threads don't have an event loop set up, and we can't use a shared one
         let asyncio = py
             .import_bound("asyncio")
-            .map_err(|e| format!("Failed to import asyncio: {}", e))?;
+            .map_err(|e| ConfigFlowError::Internal(format!("Failed to import asyncio: {}", e)))?;
 
-        let new_loop = asyncio
-            .call_method0("new_event_loop")
-            .map_err(|e| format!("Failed to create event loop: {}", e))?;
+        let new_loop = asyncio.call_method0("new_event_loop").map_err(|e| {
+            ConfigFlowError::Internal(format!("Failed to create event loop: {}", e))
+        })?;
 
         // Set it as the current loop for this thread
         asyncio
             .call_method1("set_event_loop", (&new_loop,))
-            .map_err(|e| format!("Failed to set event loop: {}", e))?;
+            .map_err(|e| ConfigFlowError::Internal(format!("Failed to set event loop: {}", e)))?;
 
         // Run the coroutine to completion
         let result = new_loop
             .call_method1("run_until_complete", (&coro,))
-            .map_err(|e| format!("Failed to run coroutine: {}", e))?;
+            .map_err(|e| ConfigFlowError::Internal(format!("Failed to run coroutine: {}", e)))?;
 
         // Close the loop when done
         let _ = new_loop.call_method0("close");
@@ -117,7 +118,7 @@ fn convert_flow_result_standalone(
     result: &pyo3::Bound<'_, pyo3::PyAny>,
     flow_id: &str,
     handler: &str,
-) -> Result<FlowResult, String> {
+) -> Result<FlowResult, ConfigFlowError> {
     let result_type = result
         .get_item("type")
         .ok()
@@ -203,7 +204,7 @@ fn convert_flow_result_standalone(
                 let mut map = serde_json::Map::new();
                 for (k, v) in dict.iter() {
                     if let Ok(key) = k.extract::<String>() {
-                        let val = pyobject_to_json(py, &v);
+                        let val = py_utils::pyobject_to_json(&v).unwrap_or(serde_json::Value::Null);
                         map.insert(key, val);
                     }
                 }
@@ -339,7 +340,7 @@ impl ConfigFlowManager {
     }
 
     /// Ensure requirements for an integration are installed
-    fn ensure_integration_requirements(&self, handler: &str) -> Result<(), String> {
+    fn ensure_integration_requirements(&self, handler: &str) -> Result<(), ConfigFlowError> {
         if let Some(manifest) = get_manifest(handler) {
             if !manifest.requirements.is_empty() {
                 info!(
@@ -348,14 +349,15 @@ impl ConfigFlowManager {
                     handler
                 );
                 self.requirements
-                    .ensure_requirements(handler, &manifest.requirements)?;
+                    .ensure_requirements(handler, &manifest.requirements)
+                    .map_err(|e| ConfigFlowError::Internal(e.to_string()))?;
             }
         }
         Ok(())
     }
 
     /// Create a hass wrapper for config flows
-    fn create_hass(&self) -> Result<PyObject, String> {
+    fn create_hass(&self) -> Result<PyObject, ConfigFlowError> {
         Python::with_gil(|py| {
             create_hass_wrapper_for_config_flow(
                 py,
@@ -366,7 +368,7 @@ impl ConfigFlowManager {
                 self.config_dir.as_deref(),
                 self.application_credentials.clone(),
             )
-            .map_err(|e| format!("Failed to create hass wrapper: {}", e))
+            .map_err(|e| ConfigFlowError::Internal(format!("Failed to create hass wrapper: {}", e)))
         })
     }
 
@@ -378,7 +380,7 @@ impl ConfigFlowManager {
         flow_id: &str,
         _show_advanced_options: bool,
         hass: &PyObject,
-    ) -> Result<(PyObject, FlowResult), String> {
+    ) -> Result<(PyObject, FlowResult), ConfigFlowError> {
         // Ensure requirements are installed before importing
         // This installs packages like 'accuweather' that the integration needs
         self.ensure_integration_requirements(handler)?;
@@ -387,35 +389,35 @@ impl ConfigFlowManager {
         let module_path = format!("homeassistant.components.{}.config_flow", handler);
         debug!("Importing config flow module: {}", module_path);
 
-        let module = py
-            .import_bound(module_path.as_str())
-            .map_err(|e| format!("Failed to import {}: {}", module_path, e))?;
+        let module = py.import_bound(module_path.as_str()).map_err(|e| {
+            ConfigFlowError::Internal(format!("Failed to import {}: {}", module_path, e))
+        })?;
 
         // Find the ConfigFlow class (it's usually named {Domain}FlowHandler or ConfigFlow)
         // Try common naming patterns
         let flow_class = self.find_flow_class(py, &module, handler)?;
 
         // Instantiate the flow
-        let flow_instance = flow_class
-            .call0()
-            .map_err(|e| format!("Failed to instantiate config flow: {}", e))?;
+        let flow_instance = flow_class.call0().map_err(|e| {
+            ConfigFlowError::Internal(format!("Failed to instantiate config flow: {}", e))
+        })?;
 
         // Set hass attribute on the flow
         flow_instance
             .setattr("hass", hass)
-            .map_err(|e| format!("Failed to set hass on flow: {}", e))?;
+            .map_err(|e| ConfigFlowError::Internal(format!("Failed to set hass on flow: {}", e)))?;
 
         // Set flow_id - HA sets this internally
         flow_instance
             .setattr("flow_id", flow_id)
-            .map_err(|e| format!("Failed to set flow_id: {}", e))?;
+            .map_err(|e| ConfigFlowError::Internal(format!("Failed to set flow_id: {}", e)))?;
 
         // Set context - used by flows for discovery info, etc.
         let context = PyDict::new_bound(py);
         context.set_item("source", "user").unwrap();
         flow_instance
             .setattr("context", context)
-            .map_err(|e| format!("Failed to set context: {}", e))?;
+            .map_err(|e| ConfigFlowError::Internal(format!("Failed to set context: {}", e)))?;
 
         // Call async_step_user(None) to get the initial form
         let result = self.call_flow_step(
@@ -445,7 +447,7 @@ impl ConfigFlowManager {
         py: Python<'py>,
         _module: &pyo3::Bound<'py, pyo3::types::PyModule>,
         handler: &str,
-    ) -> Result<pyo3::Bound<'py, pyo3::PyAny>, String> {
+    ) -> Result<pyo3::Bound<'py, pyo3::PyAny>, ConfigFlowError> {
         debug!("Looking up config flow handler for domain: {}", handler);
 
         // The module import already happened, which triggered __init_subclass__
@@ -453,22 +455,26 @@ impl ConfigFlowManager {
         // Now we just need to look it up from the registry.
         let config_entries = py
             .import_bound("homeassistant.config_entries")
-            .map_err(|e| format!("Failed to import homeassistant.config_entries: {}", e))?;
+            .map_err(|e| {
+                ConfigFlowError::Internal(format!(
+                    "Failed to import homeassistant.config_entries: {}",
+                    e
+                ))
+            })?;
 
-        let handlers = config_entries
-            .getattr("HANDLERS")
-            .map_err(|e| format!("Failed to get HANDLERS registry: {}", e))?;
+        let handlers = config_entries.getattr("HANDLERS").map_err(|e| {
+            ConfigFlowError::Internal(format!("Failed to get HANDLERS registry: {}", e))
+        })?;
 
         // HANDLERS.get(domain) returns the registered class or None
-        let handler_class = handlers
-            .call_method1("get", (handler,))
-            .map_err(|e| format!("Failed to call HANDLERS.get: {}", e))?;
+        let handler_class = handlers.call_method1("get", (handler,)).map_err(|e| {
+            ConfigFlowError::Internal(format!("Failed to call HANDLERS.get: {}", e))
+        })?;
 
         if handler_class.is_none() {
-            return Err(format!(
-                "No config flow handler registered for domain '{}'",
-                handler
-            ));
+            return Err(ConfigFlowError::HandlerNotFound {
+                handler: handler.to_string(),
+            });
         }
 
         info!("Found registered config flow handler for {}", handler);
@@ -488,52 +494,52 @@ impl ConfigFlowManager {
         flow_id: &str,
         handler: &str,
         _hass: &PyObject,
-    ) -> Result<FlowResult, String> {
+    ) -> Result<FlowResult, ConfigFlowError> {
         let method_name = format!("async_step_{}", step);
         debug!("Calling {} on flow", method_name);
 
         // Convert user_input to Python dict
         let py_input = match user_input {
-            Some(input) => json_to_pyobject(py, &input),
+            Some(input) => py_utils::json_to_pyobject(py, &input).ok(),
             None => None,
         };
 
         // Get the method
         let flow_bound = flow_instance.bind(py);
-        let method = flow_bound
-            .getattr(method_name.as_str())
-            .map_err(|e| format!("Flow has no method {}: {}", method_name, e))?;
+        let method = flow_bound.getattr(method_name.as_str()).map_err(|e| {
+            ConfigFlowError::Internal(format!("Flow has no method {}: {}", method_name, e))
+        })?;
 
         // Call the method (it's async, so we get a coroutine)
         let coro = if let Some(input) = py_input {
-            method
-                .call1((input,))
-                .map_err(|e| format!("Failed to call {}: {}", method_name, e))?
+            method.call1((input,)).map_err(|e| {
+                ConfigFlowError::Internal(format!("Failed to call {}: {}", method_name, e))
+            })?
         } else {
-            method
-                .call1((py.None(),))
-                .map_err(|e| format!("Failed to call {}: {}", method_name, e))?
+            method.call1((py.None(),)).map_err(|e| {
+                ConfigFlowError::Internal(format!("Failed to call {}: {}", method_name, e))
+            })?
         };
 
         // Create a NEW event loop for this call
         // This avoids "event loop already running" errors
         let asyncio = py
             .import_bound("asyncio")
-            .map_err(|e| format!("Failed to import asyncio: {}", e))?;
+            .map_err(|e| ConfigFlowError::Internal(format!("Failed to import asyncio: {}", e)))?;
 
-        let new_loop = asyncio
-            .call_method0("new_event_loop")
-            .map_err(|e| format!("Failed to create event loop: {}", e))?;
+        let new_loop = asyncio.call_method0("new_event_loop").map_err(|e| {
+            ConfigFlowError::Internal(format!("Failed to create event loop: {}", e))
+        })?;
 
         // Set it as the current loop for this thread
         asyncio
             .call_method1("set_event_loop", (&new_loop,))
-            .map_err(|e| format!("Failed to set event loop: {}", e))?;
+            .map_err(|e| ConfigFlowError::Internal(format!("Failed to set event loop: {}", e)))?;
 
         // Run the coroutine to completion
         let result = new_loop
             .call_method1("run_until_complete", (&coro,))
-            .map_err(|e| format!("Failed to run coroutine: {}", e))?;
+            .map_err(|e| ConfigFlowError::Internal(format!("Failed to run coroutine: {}", e)))?;
 
         // Close the loop when done
         let _ = new_loop.call_method0("close");
@@ -549,7 +555,7 @@ impl ConfigFlowManager {
         result: &pyo3::Bound<'_, pyo3::PyAny>,
         flow_id: &str,
         handler: &str,
-    ) -> Result<FlowResult, String> {
+    ) -> Result<FlowResult, ConfigFlowError> {
         // Result is a FlowResult TypedDict with type, step_id, data_schema, errors, etc.
         let result_type = result
             .get_item("type")
@@ -641,7 +647,8 @@ impl ConfigFlowManager {
                     let mut map = serde_json::Map::new();
                     for (k, v) in dict.iter() {
                         if let Ok(key) = k.extract::<String>() {
-                            let val = pyobject_to_json(py, &v);
+                            let val =
+                                py_utils::pyobject_to_json(&v).unwrap_or(serde_json::Value::Null);
                             map.insert(key, val);
                         }
                     }
@@ -751,7 +758,7 @@ impl ConfigFlowHandler for ConfigFlowManager {
         &self,
         handler: &str,
         show_advanced_options: bool,
-    ) -> Result<FlowResult, String> {
+    ) -> Result<FlowResult, ConfigFlowError> {
         let flow_id = Ulid::new().to_string().to_lowercase();
         info!(
             "Starting config flow for {} with flow_id {}",
@@ -785,12 +792,14 @@ impl ConfigFlowHandler for ConfigFlowManager {
         &self,
         flow_id: &str,
         user_input: Option<serde_json::Value>,
-    ) -> Result<FlowResult, String> {
+    ) -> Result<FlowResult, ConfigFlowError> {
         let (handler, flow_instance, current_step) = {
             let flows = self.flows.read().await;
             let flow = flows
                 .get(flow_id)
-                .ok_or_else(|| format!("Flow {} not found", flow_id))?;
+                .ok_or_else(|| ConfigFlowError::FlowNotFound {
+                    flow_id: flow_id.to_string(),
+                })?;
             (
                 flow.handler.clone(),
                 Python::with_gil(|py| flow.flow_instance.clone_ref(py)),
@@ -822,7 +831,7 @@ impl ConfigFlowHandler for ConfigFlowManager {
             )
         })
         .await
-        .map_err(|e| format!("Task panicked: {}", e))??;
+        .map_err(|e| ConfigFlowError::Internal(format!("Task panicked: {}", e)))??;
 
         // Update flow state or clean up if done
         if result.result_type == "create_entry" || result.result_type == "abort" {
@@ -858,49 +867,4 @@ impl ConfigFlowHandler for ConfigFlowManager {
             })
             .collect()
     }
-}
-
-/// Convert JSON value to Python object
-fn json_to_pyobject(py: Python<'_>, value: &serde_json::Value) -> Option<PyObject> {
-    match value {
-        serde_json::Value::Null => Some(py.None()),
-        serde_json::Value::Bool(b) => Some(b.into_py(py)),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Some(i.into_py(py))
-            } else if let Some(f) = n.as_f64() {
-                Some(f.into_py(py))
-            } else {
-                None
-            }
-        }
-        serde_json::Value::String(s) => Some(s.into_py(py)),
-        serde_json::Value::Array(arr) => {
-            let list = pyo3::types::PyList::empty_bound(py);
-            for item in arr {
-                if let Some(py_item) = json_to_pyobject(py, item) {
-                    list.append(py_item).ok()?;
-                }
-            }
-            Some(list.into())
-        }
-        serde_json::Value::Object(obj) => {
-            let dict = PyDict::new_bound(py);
-            for (k, v) in obj {
-                if let Some(py_val) = json_to_pyobject(py, v) {
-                    dict.set_item(k, py_val).ok()?;
-                }
-            }
-            Some(dict.into())
-        }
-    }
-}
-
-// Use shared pyobject_to_json from py_utils module (handles UNDEFINED filtering)
-use super::py_utils::pyobject_to_json as py_utils_to_json;
-
-/// Convert Python object to JSON value
-fn pyobject_to_json(_py: Python<'_>, obj: &pyo3::Bound<'_, pyo3::PyAny>) -> serde_json::Value {
-    // Delegate to the shared implementation that handles UNDEFINED
-    py_utils_to_json(obj).unwrap_or(serde_json::Value::Null)
 }

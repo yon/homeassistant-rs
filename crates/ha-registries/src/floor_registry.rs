@@ -9,6 +9,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
+use crate::error::{RegistryError, RegistryResult};
 use crate::storage::{Storable, Storage, StorageFile, StorageResult};
 
 /// Storage key for floor registry
@@ -223,13 +224,13 @@ impl FloorRegistry {
         name: &str,
         level: Option<i32>,
         now: Option<DateTime<Utc>>,
-    ) -> Result<Arc<FloorEntry>, String> {
+    ) -> RegistryResult<Arc<FloorEntry>> {
         let normalized = normalize_name(name);
         if self.by_name.contains_key(&normalized) {
-            return Err(format!(
-                "The name {} ({}) is already in use",
-                name, normalized
-            ));
+            return Err(RegistryError::DuplicateName {
+                name: name.to_owned(),
+                normalized,
+            });
         }
 
         let id = self.generate_id(name);
@@ -270,7 +271,7 @@ impl FloorRegistry {
         floor_id: &str,
         f: F,
         now: Option<DateTime<Utc>>,
-    ) -> Result<Arc<FloorEntry>, String>
+    ) -> RegistryResult<Arc<FloorEntry>>
     where
         F: FnOnce(&mut FloorEntry),
     {
@@ -298,10 +299,10 @@ impl FloorRegistry {
                 if self.by_name.contains_key(&new_normalized) {
                     // Name conflict - re-index the old entry and return error
                     self.index_entry(arc_entry);
-                    return Err(format!(
-                        "The name {} ({}) is already in use",
-                        entry.name, new_normalized
-                    ));
+                    return Err(RegistryError::DuplicateName {
+                        name: entry.name.clone(),
+                        normalized: new_normalized,
+                    });
                 }
             }
 
@@ -320,7 +321,10 @@ impl FloorRegistry {
 
             Ok(new_arc)
         } else {
-            Err(format!("Floor not found: {}", floor_id))
+            Err(RegistryError::NotFound {
+                kind: "Floor",
+                id: floor_id.to_owned(),
+            })
         }
     }
 
@@ -364,5 +368,222 @@ impl FloorRegistry {
     }
 }
 
-// Unit tests removed - covered by HA native tests via `make ha-compat-test`
-// See tests/ha_compat/ for comprehensive FloorRegistry testing through Python bindings
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::RegistryError;
+    use crate::storage::Storage;
+
+    fn test_registry() -> FloorRegistry {
+        let storage = Arc::new(Storage::new("/tmp/ha-test-floor"));
+        FloorRegistry::new(storage)
+    }
+
+    #[test]
+    fn create_floor_returns_entry() {
+        let registry = test_registry();
+        let result = registry.create("Ground Floor", Some(0), None);
+        assert!(result.is_ok(), "create should succeed: {:?}", result.err());
+        let entry = result.unwrap();
+        assert_eq!(entry.name, "Ground Floor");
+        assert_eq!(entry.level, Some(0));
+    }
+
+    #[test]
+    fn create_duplicate_name_returns_duplicate_error() {
+        let registry = test_registry();
+        registry.create("Basement", None, None).unwrap();
+        let err = registry.create("Basement", None, None).unwrap_err();
+        assert!(
+            matches!(err, RegistryError::DuplicateName { ref name, .. } if name == "Basement"),
+            "Expected DuplicateName(Basement), got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn update_nonexistent_floor_returns_not_found() {
+        let registry = test_registry();
+        let err = registry.update("nonexistent", |_| {}, None).unwrap_err();
+        assert!(
+            matches!(err, RegistryError::NotFound { kind: "Floor", ref id } if id == "nonexistent"),
+            "Expected NotFound(Floor, nonexistent), got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn update_with_conflicting_name_returns_duplicate_error() {
+        let registry = test_registry();
+        registry.create("First Floor", Some(1), None).unwrap();
+        registry.create("Second Floor", Some(2), None).unwrap();
+        let err = registry
+            .update(
+                "second_floor",
+                |entry| entry.name = "First Floor".to_string(),
+                None,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, RegistryError::DuplicateName { ref name, .. } if name == "First Floor"),
+            "Expected DuplicateName(First Floor), got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn get_returns_floor_by_id() {
+        let registry = test_registry();
+        let created = registry.create("Attic", Some(3), None).unwrap();
+        let fetched = registry.get(&created.id).expect("should find floor");
+        assert_eq!(fetched.name, "Attic");
+        assert_eq!(fetched.level, Some(3));
+    }
+
+    #[test]
+    fn get_nonexistent_returns_none() {
+        let registry = test_registry();
+        assert!(registry.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn get_by_name_is_case_insensitive() {
+        let registry = test_registry();
+        registry.create("Ground Floor", Some(0), None).unwrap();
+        let found = registry
+            .get_by_name("ground floor")
+            .expect("should find by name");
+        assert_eq!(found.name, "Ground Floor");
+    }
+
+    #[test]
+    fn get_by_level_returns_floor() {
+        let registry = test_registry();
+        registry.create("Basement", Some(-1), None).unwrap();
+        registry.create("Main", Some(0), None).unwrap();
+
+        let found = registry.get_by_level(-1).expect("should find by level");
+        assert_eq!(found.name, "Basement");
+
+        let found0 = registry.get_by_level(0).expect("should find level 0");
+        assert_eq!(found0.name, "Main");
+
+        assert!(registry.get_by_level(99).is_none());
+    }
+
+    #[test]
+    fn update_changes_fields_and_modified_at() {
+        let registry = test_registry();
+        let created = registry.create("Mezzanine", Some(1), None).unwrap();
+        let original_modified = created.modified_at;
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let updated = registry
+            .update(&created.id, |entry| entry.level = Some(2), None)
+            .unwrap();
+
+        assert_eq!(updated.level, Some(2));
+        assert!(
+            updated.modified_at > original_modified,
+            "modified_at should advance on change"
+        );
+    }
+
+    #[test]
+    fn update_unchanged_does_not_update_modified_at() {
+        let registry = test_registry();
+        let created = registry.create("Roof", None, None).unwrap();
+        let original_modified = created.modified_at;
+
+        let updated = registry.update(&created.id, |_| {}, None).unwrap();
+        assert_eq!(
+            updated.modified_at, original_modified,
+            "modified_at should not change when nothing changed"
+        );
+    }
+
+    #[test]
+    fn remove_returns_entry_and_decrements_count() {
+        let registry = test_registry();
+        let created = registry.create("Cellar", Some(-2), None).unwrap();
+        assert_eq!(registry.len(), 1);
+
+        let removed = registry.remove(&created.id).expect("should remove");
+        assert_eq!(removed.name, "Cellar");
+        assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn remove_nonexistent_returns_none() {
+        let registry = test_registry();
+        assert!(registry.remove("nonexistent").is_none());
+    }
+
+    #[test]
+    fn len_and_is_empty() {
+        let registry = test_registry();
+        assert!(registry.is_empty());
+        assert_eq!(registry.len(), 0);
+
+        registry.create("Level 1", Some(1), None).unwrap();
+        assert!(!registry.is_empty());
+        assert_eq!(registry.len(), 1);
+    }
+
+    #[test]
+    fn sorted_by_level_returns_ordered() {
+        let registry = test_registry();
+        registry.create("Third", Some(3), None).unwrap();
+        registry.create("First", Some(1), None).unwrap();
+        registry.create("Sub", Some(-1), None).unwrap();
+        registry.create("No Level", None, None).unwrap();
+
+        let sorted = registry.sorted_by_level();
+        assert_eq!(sorted.len(), 4);
+        // None sorts first, then -1, 1, 3
+        assert!(sorted[0].level.is_none());
+        assert_eq!(sorted[1].level, Some(-1));
+        assert_eq!(sorted[2].level, Some(1));
+        assert_eq!(sorted[3].level, Some(3));
+    }
+
+    #[test]
+    fn generate_id_handles_conflicts() {
+        let registry = test_registry();
+        let first = registry.create("Top Floor", Some(10), None).unwrap();
+        assert_eq!(first.id, "top_floor");
+
+        // Force second entry with conflicting slug
+        let entry2 = FloorEntry::new("top_floor_2", "Top Floor 2", None, None);
+        registry.index_entry(Arc::new(entry2));
+
+        let id = registry.generate_id("Top Floor");
+        assert!(
+            id.starts_with("top_floor_"),
+            "should generate suffixed id, got: {}",
+            id
+        );
+    }
+
+    #[test]
+    fn iter_yields_all_entries() {
+        let registry = test_registry();
+        registry.create("A", Some(1), None).unwrap();
+        registry.create("B", Some(2), None).unwrap();
+
+        let all: Vec<_> = registry.iter().collect();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn normalize_name_lowercases_and_removes_spaces() {
+        assert_eq!(normalize_name("Ground Floor"), "groundfloor");
+        assert_eq!(normalize_name("BASEMENT"), "basement");
+    }
+
+    #[test]
+    fn slugify_creates_url_safe_ids() {
+        assert_eq!(slugify("Ground Floor"), "ground_floor");
+        assert_eq!(slugify("Floor #1"), "floor_1");
+    }
+}

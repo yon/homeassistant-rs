@@ -1160,5 +1160,281 @@ fn slugify(name: &str) -> String {
     result.trim_end_matches('_').to_string()
 }
 
-// Unit tests removed - covered by HA native tests via `make ha-compat-test`
-// See tests/ha_compat/ for comprehensive EntityRegistry testing through Python bindings
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::Storage;
+
+    fn test_registry() -> EntityRegistry {
+        let storage = Arc::new(Storage::new("/tmp/ha-test-entity"));
+        EntityRegistry::new(storage)
+    }
+
+    // --- EntityEntry unit tests ---
+
+    #[test]
+    fn entity_entry_domain_and_object_id() {
+        let entry = EntityEntry::new("light.living_room", "hue", Some("abc123".into()));
+        assert_eq!(entry.domain(), "light");
+        assert_eq!(entry.object_id(), "living_room");
+    }
+
+    #[test]
+    fn entity_entry_is_disabled() {
+        let mut entry = EntityEntry::new("switch.fan", "test", None);
+        assert!(!entry.is_disabled());
+        entry.disabled_by = Some(DisabledBy::User);
+        assert!(entry.is_disabled());
+    }
+
+    #[test]
+    fn entity_entry_is_hidden() {
+        let mut entry = EntityEntry::new("sensor.temp", "test", None);
+        assert!(!entry.is_hidden());
+        entry.hidden_by = Some(HiddenBy::User);
+        assert!(entry.is_hidden());
+    }
+
+    #[test]
+    fn enrich_attributes_adds_unit_of_measurement() {
+        let mut entry = EntityEntry::new("sensor.temp", "test", None);
+        entry.unit_of_measurement = Some("°C".to_string());
+
+        let mut attrs = std::collections::HashMap::new();
+        entry.enrich_attributes(&mut attrs);
+        assert_eq!(
+            attrs.get("unit_of_measurement").and_then(|v| v.as_str()),
+            Some("°C")
+        );
+    }
+
+    #[test]
+    fn enrich_attributes_adds_friendly_name() {
+        let mut entry = EntityEntry::new("sensor.temp", "test", None);
+        entry.name = Some("Temperature Sensor".to_string());
+
+        let mut attrs = std::collections::HashMap::new();
+        entry.enrich_attributes(&mut attrs);
+        assert_eq!(
+            attrs.get("friendly_name").and_then(|v| v.as_str()),
+            Some("Temperature Sensor")
+        );
+    }
+
+    #[test]
+    fn enrich_attributes_does_not_overwrite_existing() {
+        let mut entry = EntityEntry::new("sensor.temp", "test", None);
+        entry.unit_of_measurement = Some("°C".to_string());
+
+        let mut attrs = std::collections::HashMap::new();
+        attrs.insert(
+            "unit_of_measurement".to_string(),
+            serde_json::Value::String("°F".to_string()),
+        );
+        entry.enrich_attributes(&mut attrs);
+        assert_eq!(
+            attrs.get("unit_of_measurement").and_then(|v| v.as_str()),
+            Some("°F"),
+            "existing attribute should not be overwritten"
+        );
+    }
+
+    // --- EntityRegistry tests ---
+
+    #[test]
+    fn get_or_create_registers_new_entity() {
+        let reg = test_registry();
+        let entry = reg.get_or_create("hue", "light.living_room", Some("abc123"), None, None);
+        assert_eq!(entry.entity_id, "light.living_room");
+        assert_eq!(entry.platform, "hue");
+        assert_eq!(entry.unique_id.as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn get_or_create_returns_existing_by_unique_id() {
+        let reg = test_registry();
+        let first = reg.get_or_create("hue", "light.living_room", Some("abc123"), None, None);
+        let second = reg.get_or_create("hue", "light.bedroom", Some("abc123"), None, None);
+        assert_eq!(
+            first.entity_id, second.entity_id,
+            "should return same entity by unique_id"
+        );
+    }
+
+    #[test]
+    fn get_returns_registered_entity() {
+        let reg = test_registry();
+        reg.get_or_create("hue", "light.a", Some("uid1"), None, None);
+        assert!(reg.get("light.a").is_some());
+        assert!(reg.get("light.nonexistent").is_none());
+    }
+
+    #[test]
+    fn get_by_platform_unique_id_works() {
+        let reg = test_registry();
+        reg.get_or_create("hue", "light.a", Some("uid1"), None, None);
+        assert!(reg.get_by_platform_unique_id("hue", "uid1").is_some());
+        assert!(reg.get_by_platform_unique_id("hue", "uid2").is_none());
+        assert!(reg.get_by_platform_unique_id("zwave", "uid1").is_none());
+    }
+
+    #[test]
+    fn secondary_indexes_work() {
+        let reg = test_registry();
+        reg.get_or_create(
+            "hue",
+            "light.a",
+            Some("uid1"),
+            Some("config1"),
+            Some("device1"),
+        );
+        reg.get_or_create(
+            "hue",
+            "light.b",
+            Some("uid2"),
+            Some("config1"),
+            Some("device1"),
+        );
+        reg.get_or_create("zwave", "switch.c", Some("uid3"), Some("config2"), None);
+
+        assert_eq!(reg.get_by_device_id("device1").len(), 2);
+        assert_eq!(reg.get_by_config_entry_id("config1").len(), 2);
+        assert_eq!(reg.get_by_config_entry_id("config2").len(), 1);
+        assert_eq!(reg.get_by_platform("hue").len(), 2);
+        assert_eq!(reg.get_by_platform("zwave").len(), 1);
+    }
+
+    #[test]
+    fn update_modifies_entity() {
+        let reg = test_registry();
+        reg.get_or_create("hue", "light.a", Some("uid1"), None, None);
+
+        let updated = reg.update("light.a", |entry| {
+            entry.name = Some("My Light".to_string());
+        });
+        assert!(updated.is_ok());
+        assert_eq!(updated.unwrap().name.as_deref(), Some("My Light"));
+    }
+
+    #[test]
+    fn update_nonexistent_returns_error() {
+        let reg = test_registry();
+        let result = reg.update("light.nonexistent", |_| {});
+        assert!(
+            matches!(result, Err(EntityRegistryError::NotFound(_))),
+            "Expected NotFound, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn remove_soft_deletes_entity() {
+        let reg = test_registry();
+        reg.get_or_create("hue", "light.a", Some("uid1"), None, None);
+        assert_eq!(reg.len(), 1);
+
+        let removed = reg.remove("light.a");
+        assert!(removed.is_some());
+        assert_eq!(reg.len(), 0);
+        assert!(reg.get("light.a").is_none());
+        assert_eq!(reg.deleted_len(), 1);
+    }
+
+    #[test]
+    fn remove_nonexistent_returns_none() {
+        let reg = test_registry();
+        assert!(reg.remove("light.nonexistent").is_none());
+    }
+
+    #[test]
+    fn len_and_is_empty() {
+        let reg = test_registry();
+        assert!(reg.is_empty());
+        assert_eq!(reg.len(), 0);
+
+        reg.get_or_create("hue", "light.a", Some("uid1"), None, None);
+        assert!(!reg.is_empty());
+        assert_eq!(reg.len(), 1);
+    }
+
+    #[test]
+    fn is_registered_checks_existence() {
+        let reg = test_registry();
+        assert!(!reg.is_registered("light.a"));
+        reg.get_or_create("hue", "light.a", Some("uid1"), None, None);
+        assert!(reg.is_registered("light.a"));
+    }
+
+    #[test]
+    fn generate_entity_id_returns_unique() {
+        let reg = test_registry();
+        let id1 = reg.generate_entity_id("light", "living_room", None, None);
+        assert_eq!(id1, "light.living_room");
+
+        reg.get_or_create("hue", "light.living_room", Some("uid1"), None, None);
+        let id2 = reg.generate_entity_id("light", "living_room", None, None);
+        assert_eq!(id2, "light.living_room_2");
+    }
+
+    #[test]
+    fn generate_entity_id_excludes_current() {
+        let reg = test_registry();
+        reg.get_or_create("hue", "light.living_room", Some("uid1"), None, None);
+        let id = reg.generate_entity_id("light", "living_room", Some("light.living_room"), None);
+        assert_eq!(
+            id, "light.living_room",
+            "current entity_id should be considered available"
+        );
+    }
+
+    #[test]
+    fn bulk_remove_removes_multiple() {
+        let reg = test_registry();
+        reg.get_or_create("hue", "light.a", Some("uid1"), None, None);
+        reg.get_or_create("hue", "light.b", Some("uid2"), None, None);
+        reg.get_or_create("hue", "light.c", Some("uid3"), None, None);
+
+        let removed = reg.bulk_remove(&["light.a".to_string(), "light.c".to_string()]);
+        assert_eq!(removed.len(), 2);
+        assert_eq!(reg.len(), 1);
+        assert!(reg.get("light.b").is_some());
+    }
+
+    #[test]
+    fn label_index_works() {
+        let reg = test_registry();
+        let entry = reg.get_or_create("hue", "light.a", Some("uid1"), None, None);
+        let entity_id = entry.entity_id.clone();
+        reg.update(&entity_id, |e| {
+            e.labels.insert("outdoor".to_string());
+        })
+        .unwrap();
+
+        assert_eq!(reg.get_by_label_id("outdoor").len(), 1);
+        assert_eq!(reg.get_by_label_id("indoor").len(), 0);
+    }
+
+    #[test]
+    fn area_index_works() {
+        let reg = test_registry();
+        let entry = reg.get_or_create("hue", "light.a", Some("uid1"), None, None);
+        let entity_id = entry.entity_id.clone();
+        reg.update(&entity_id, |e| {
+            e.area_id = Some("living_room".to_string());
+        })
+        .unwrap();
+
+        assert_eq!(reg.get_by_area_id("living_room").len(), 1);
+        assert_eq!(reg.get_by_area_id("bedroom").len(), 0);
+    }
+
+    // --- slugify tests ---
+
+    #[test]
+    fn slugify_basic() {
+        assert_eq!(slugify("Living Room"), "living_room");
+        assert_eq!(slugify("  Hello World  "), "hello_world");
+        assert_eq!(slugify("CamelCase"), "camelcase");
+        assert_eq!(slugify("special!@#chars"), "special_chars");
+    }
+}

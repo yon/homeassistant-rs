@@ -19,8 +19,36 @@ pub use state::State;
 /// Maximum length for a state value (matches Python HA)
 pub const MAX_STATE_LENGTH: usize = 255;
 
-/// State value used when actual state exceeds MAX_STATE_LENGTH
+/// Standard state values (matches Python HA `homeassistant.const`)
+pub const STATE_ALARM_ARMED_AWAY: &str = "armed_away";
+pub const STATE_ALARM_ARMED_CUSTOM_BYPASS: &str = "armed_custom_bypass";
+pub const STATE_ALARM_ARMED_HOME: &str = "armed_home";
+pub const STATE_ALARM_ARMED_NIGHT: &str = "armed_night";
+pub const STATE_ALARM_ARMED_VACATION: &str = "armed_vacation";
+pub const STATE_ALARM_ARMING: &str = "arming";
+pub const STATE_ALARM_DISARMED: &str = "disarmed";
+pub const STATE_ALARM_DISARMING: &str = "disarming";
+pub const STATE_ALARM_PENDING: &str = "pending";
+pub const STATE_ALARM_TRIGGERED: &str = "triggered";
+pub const STATE_CLOSED: &str = "closed";
+pub const STATE_CLOSING: &str = "closing";
+pub const STATE_HOME: &str = "home";
+pub const STATE_IDLE: &str = "idle";
+pub const STATE_LOCKED: &str = "locked";
+pub const STATE_LOCKING: &str = "locking";
+pub const STATE_NOT_HOME: &str = "not_home";
+pub const STATE_OFF: &str = "off";
+pub const STATE_ON: &str = "on";
+pub const STATE_OPEN: &str = "open";
+pub const STATE_OPENING: &str = "opening";
+pub const STATE_PAUSED: &str = "paused";
+pub const STATE_PLAYING: &str = "playing";
+pub const STATE_STANDBY: &str = "standby";
+pub const STATE_UNAVAILABLE: &str = "unavailable";
+/// Also used as fallback when state string exceeds MAX_STATE_LENGTH
 pub const STATE_UNKNOWN: &str = "unknown";
+pub const STATE_UNLOCKED: &str = "unlocked";
+pub const STATE_UNLOCKING: &str = "unlocking";
 
 /// Standard event types used by Home Assistant
 pub mod events {

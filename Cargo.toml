@@ -9,6 +9,7 @@ members = [
     "crates/ha-core",
     "crates/ha-event-bus",
     "crates/ha-py-bridge",
+    "crates/ha-py-ext",
     "crates/ha-recorder",
     "crates/ha-registries",
     "crates/ha-script",
@@ -95,6 +96,7 @@ ha-config-entries = { path = "crates/ha-config-entries" }
 ha-core = { path = "crates/ha-core" }
 ha-event-bus = { path = "crates/ha-event-bus" }
 ha-py-bridge = { path = "crates/ha-py-bridge" }
+ha-py-ext = { path = "crates/ha-py-ext" }
 ha-recorder = { path = "crates/ha-recorder" }
 ha-registries = { path = "crates/ha-registries" }
 ha-script = { path = "crates/ha-script" }

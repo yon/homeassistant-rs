@@ -308,5 +308,318 @@ impl Default for ServiceRegistry {
 /// Thread-safe wrapper for ServiceRegistry
 pub type SharedServiceRegistry = Arc<ServiceRegistry>;
 
-// Unit tests removed - covered by HA native tests via `make ha-compat-test`
-// See tests/ha_compat/ for comprehensive ServiceRegistry testing through Python bindings
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ha_core::SupportsResponse;
+
+    fn test_registry() -> ServiceRegistry {
+        ServiceRegistry::new()
+    }
+
+    async fn noop_handler(_call: ServiceCall) -> ServiceResult {
+        Ok(None)
+    }
+
+    async fn echo_handler(call: ServiceCall) -> ServiceResult {
+        Ok(Some(call.service_data))
+    }
+
+    #[test]
+    fn register_and_has_service() {
+        let reg = test_registry();
+        assert!(!reg.has_service("light", "turn_on"));
+        reg.register(
+            "light",
+            "turn_on",
+            noop_handler,
+            None,
+            SupportsResponse::None,
+        );
+        assert!(reg.has_service("light", "turn_on"));
+    }
+
+    #[test]
+    fn service_count_tracks_registrations() {
+        let reg = test_registry();
+        assert_eq!(reg.service_count(), 0);
+        reg.register(
+            "light",
+            "turn_on",
+            noop_handler,
+            None,
+            SupportsResponse::None,
+        );
+        assert_eq!(reg.service_count(), 1);
+        reg.register(
+            "light",
+            "turn_off",
+            noop_handler,
+            None,
+            SupportsResponse::None,
+        );
+        assert_eq!(reg.service_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn call_not_found_returns_error() {
+        let reg = test_registry();
+        let result = reg
+            .call(
+                "light",
+                "turn_on",
+                serde_json::Value::Null,
+                Context::default(),
+                false,
+            )
+            .await;
+        assert!(
+            matches!(result, Err(ServiceError::NotFound { ref domain, ref service })
+                if domain == "light" && service == "turn_on"),
+            "Expected NotFound, got: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn call_executes_handler() {
+        let reg = test_registry();
+        reg.register(
+            "test",
+            "echo",
+            echo_handler,
+            None,
+            SupportsResponse::Optional,
+        );
+        let data = serde_json::json!({"key": "value"});
+        let result = reg
+            .call("test", "echo", data.clone(), Context::default(), true)
+            .await;
+        assert_eq!(result.unwrap(), Some(data));
+    }
+
+    #[tokio::test]
+    async fn call_without_return_response_returns_none() {
+        let reg = test_registry();
+        reg.register(
+            "test",
+            "echo",
+            echo_handler,
+            None,
+            SupportsResponse::Optional,
+        );
+        let result = reg
+            .call(
+                "test",
+                "echo",
+                serde_json::json!({"a": 1}),
+                Context::default(),
+                false,
+            )
+            .await;
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn call_response_not_supported_returns_error() {
+        let reg = test_registry();
+        reg.register(
+            "light",
+            "turn_on",
+            noop_handler,
+            None,
+            SupportsResponse::None,
+        );
+        let result = reg
+            .call(
+                "light",
+                "turn_on",
+                serde_json::Value::Null,
+                Context::default(),
+                true,
+            )
+            .await;
+        assert!(
+            matches!(result, Err(ServiceError::ResponseNotSupported)),
+            "Expected ResponseNotSupported, got: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn call_response_required_returns_error() {
+        let reg = test_registry();
+        reg.register("test", "get", noop_handler, None, SupportsResponse::Only);
+        let result = reg
+            .call(
+                "test",
+                "get",
+                serde_json::Value::Null,
+                Context::default(),
+                false,
+            )
+            .await;
+        assert!(
+            matches!(result, Err(ServiceError::ResponseRequired)),
+            "Expected ResponseRequired, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn get_service_returns_description() {
+        let reg = test_registry();
+        reg.register(
+            "light",
+            "turn_on",
+            noop_handler,
+            None,
+            SupportsResponse::None,
+        );
+        let desc = reg.get_service("light", "turn_on").expect("should exist");
+        assert_eq!(desc.domain, "light");
+        assert_eq!(desc.service, "turn_on");
+    }
+
+    #[test]
+    fn domain_services_returns_services_for_domain() {
+        let reg = test_registry();
+        reg.register(
+            "light",
+            "turn_on",
+            noop_handler,
+            None,
+            SupportsResponse::None,
+        );
+        reg.register(
+            "light",
+            "turn_off",
+            noop_handler,
+            None,
+            SupportsResponse::None,
+        );
+        reg.register(
+            "switch",
+            "toggle",
+            noop_handler,
+            None,
+            SupportsResponse::None,
+        );
+
+        let light_services = reg.domain_services("light");
+        assert_eq!(light_services.len(), 2);
+    }
+
+    #[test]
+    fn domains_returns_unique_domains() {
+        let reg = test_registry();
+        reg.register(
+            "light",
+            "turn_on",
+            noop_handler,
+            None,
+            SupportsResponse::None,
+        );
+        reg.register(
+            "light",
+            "turn_off",
+            noop_handler,
+            None,
+            SupportsResponse::None,
+        );
+        reg.register(
+            "switch",
+            "toggle",
+            noop_handler,
+            None,
+            SupportsResponse::None,
+        );
+
+        let domains = reg.domains();
+        assert_eq!(domains.len(), 2);
+        assert!(domains.contains(&"light".to_string()));
+        assert!(domains.contains(&"switch".to_string()));
+    }
+
+    #[test]
+    fn unregister_removes_service() {
+        let reg = test_registry();
+        reg.register(
+            "light",
+            "turn_on",
+            noop_handler,
+            None,
+            SupportsResponse::None,
+        );
+        assert!(reg.has_service("light", "turn_on"));
+        assert!(reg.unregister("light", "turn_on"));
+        assert!(!reg.has_service("light", "turn_on"));
+    }
+
+    #[test]
+    fn unregister_nonexistent_returns_false() {
+        let reg = test_registry();
+        assert!(!reg.unregister("light", "turn_on"));
+    }
+
+    #[test]
+    fn unregister_domain_removes_all_services() {
+        let reg = test_registry();
+        reg.register(
+            "light",
+            "turn_on",
+            noop_handler,
+            None,
+            SupportsResponse::None,
+        );
+        reg.register(
+            "light",
+            "turn_off",
+            noop_handler,
+            None,
+            SupportsResponse::None,
+        );
+        reg.register(
+            "switch",
+            "toggle",
+            noop_handler,
+            None,
+            SupportsResponse::None,
+        );
+
+        let removed = reg.unregister_domain("light");
+        assert_eq!(removed, 2);
+        assert_eq!(reg.service_count(), 1);
+        assert!(reg.has_service("switch", "toggle"));
+    }
+
+    #[test]
+    fn all_services_groups_by_domain() {
+        let reg = test_registry();
+        reg.register(
+            "light",
+            "turn_on",
+            noop_handler,
+            None,
+            SupportsResponse::None,
+        );
+        reg.register(
+            "switch",
+            "toggle",
+            noop_handler,
+            None,
+            SupportsResponse::None,
+        );
+
+        let all = reg.all_services();
+        assert_eq!(all.len(), 2);
+        assert!(all.contains_key("light"));
+        assert!(all.contains_key("switch"));
+    }
+
+    #[test]
+    fn default_creates_empty_registry() {
+        let reg = ServiceRegistry::default();
+        assert_eq!(reg.service_count(), 0);
+    }
+}

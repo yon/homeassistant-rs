@@ -1,0 +1,27 @@
+[package]
+name = "ha-py-ext"
+description = "Home Assistant Python extension - Rust core exposed as Python module via PyO3"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "ha_py_ext"
+# Use only rlib by default. For Python extension (cdylib), use `maturin build`.
+crate-type = ["rlib"]
+
+[dependencies]
+chrono = { workspace = true }
+ha-automation = { workspace = true }
+ha-config-entries = { workspace = true }
+ha-core = { workspace = true }
+ha-event-bus = { workspace = true }
+ha-registries = { workspace = true }
+ha-service-registry = { workspace = true }
+ha-state-store = { workspace = true }
+ha-template = { workspace = true }
+pyo3 = { workspace = true, features = ["extension-module"] }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
