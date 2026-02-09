@@ -13,8 +13,8 @@ def _call_entity_service_sync(entity_id, service, kwargs):
     """
     entity = _entity_registry.get(entity_id)
     if entity is None:
-        _LOGGER.warning(f"Entity not found: {entity_id}")
-        return False
+        # Entity not in Python registry — try direct state store fallback
+        return _call_service_via_state_store(entity_id, service, kwargs)
 
     domain = entity_id.split('.')[0]
 
@@ -147,3 +147,70 @@ def _update_entity_state_sync(entity):
     if hasattr(_hass, 'states') and hasattr(_hass.states, 'set'):
         _hass.states.set(entity_id, state, attributes)
         _LOGGER.info(f"Updated state: {entity_id} = {state}")
+
+
+def _call_service_via_state_store(entity_id, service, kwargs):
+    """Fall back to direct state store manipulation for entities without Python objects.
+
+    Many entities exist only in the Rust state store (loaded from the entity registry
+    on disk) without corresponding Python entity objects. For these, we can still
+    handle basic services by reading/writing state directly.
+    """
+    if _hass is None or not hasattr(_hass, 'states') or not hasattr(_hass.states, 'set'):
+        _LOGGER.warning(f"Cannot call service on {entity_id}: state store not available")
+        return False
+
+    # Check if the entity exists in the state store
+    current = _hass.states.get(entity_id) if hasattr(_hass.states, 'get') else None
+    if current is None:
+        _LOGGER.warning(f"Entity not found in registry or state store: {entity_id}")
+        return False
+
+    current_state = current.get('state', 'unknown') if isinstance(current, dict) else getattr(current, 'state', 'unknown')
+    current_attrs = current.get('attributes', {}) if isinstance(current, dict) else {}
+
+    domain = entity_id.split('.')[0]
+    new_state = None
+
+    if service == 'turn_on':
+        new_state = 'on'
+    elif service == 'turn_off':
+        new_state = 'off'
+    elif service == 'toggle':
+        if domain in ('light', 'switch', 'fan', 'siren', 'humidifier'):
+            new_state = 'off' if current_state == 'on' else 'on'
+        elif domain == 'lock':
+            new_state = 'unlocked' if current_state == 'locked' else 'locked'
+        else:
+            new_state = 'off' if current_state == 'on' else 'on'
+    elif service == 'lock':
+        new_state = 'locked'
+    elif service == 'unlock':
+        new_state = 'unlocked'
+    elif service == 'open':
+        if domain == 'cover':
+            new_state = 'open'
+        elif domain == 'lock':
+            new_state = 'unlocked'
+        elif domain == 'valve':
+            new_state = 'open'
+    elif service == 'close_cover':
+        new_state = 'closed'
+    elif service == 'open_valve':
+        new_state = 'open'
+    elif service == 'close_valve':
+        new_state = 'closed'
+    else:
+        _LOGGER.debug(f"Service {service} not handled via state store fallback for {entity_id}")
+        return False
+
+    if new_state is not None:
+        # Merge brightness into attributes for turn_on
+        attrs = dict(current_attrs)
+        if service == 'turn_on' and 'brightness' in kwargs:
+            attrs['brightness'] = kwargs['brightness']
+        _hass.states.set(entity_id, new_state, attrs)
+        _LOGGER.info(f"Updated state via fallback: {entity_id} = {new_state}")
+        return True
+
+    return False
