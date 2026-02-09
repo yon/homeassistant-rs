@@ -100,6 +100,19 @@ pub enum IncomingMessage {
         #[serde(default)]
         event_data: Option<serde_json::Value>,
     },
+    #[serde(rename = "frontend/get_user_data")]
+    FrontendGetUserData {
+        id: u64,
+        #[serde(default)]
+        key: Option<String>,
+    },
+    #[serde(rename = "frontend/set_user_data")]
+    FrontendSetUserData {
+        id: u64,
+        key: String,
+        #[serde(default)]
+        value: Option<serde_json::Value>,
+    },
     #[serde(rename = "frontend/get_icons")]
     FrontendGetIcons {
         id: u64,
@@ -374,6 +387,8 @@ impl IncomingMessage {
             | Self::FrontendGetIcons { id, .. }
             | Self::FrontendGetThemes { id, .. }
             | Self::FrontendGetTranslations { id, .. }
+            | Self::FrontendGetUserData { id, .. }
+            | Self::FrontendSetUserData { id, .. }
             | Self::FrontendSubscribeSystemData { id, .. }
             | Self::FrontendSubscribeUserData { id, .. }
             | Self::GetConfig { id, .. }

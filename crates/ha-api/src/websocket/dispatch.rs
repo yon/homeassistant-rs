@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::warn;
 
-use crate::error::{WebSocketError, WsResult};
+use crate::error::WsResult;
 
 use super::connection::ActiveConnection;
 use super::handlers;
@@ -23,13 +23,24 @@ pub async fn handle_message(
     let msg: IncomingMessage = match serde_json::from_str(text) {
         Ok(msg) => msg,
         Err(e) => {
-            // Log unhandled message types for debugging
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(text) {
-                if let Some(msg_type) = json.get("type").and_then(|t| t.as_str()) {
-                    warn!("Unhandled WebSocket message type: {}", msg_type);
-                }
-            }
-            return Err(WebSocketError::InvalidMessage(e.to_string()));
+            // Extract id from raw JSON so we can send an error response.
+            // Python HA sends "unknown_command" for unrecognized message types.
+            let id = serde_json::from_str::<serde_json::Value>(text)
+                .ok()
+                .and_then(|json| {
+                    if let Some(msg_type) = json.get("type").and_then(|t| t.as_str()) {
+                        warn!("Unhandled WebSocket message type: {}", msg_type);
+                    }
+                    json.get("id").and_then(|v| v.as_u64())
+                })
+                .unwrap_or(0);
+            return handlers::send_error(
+                id,
+                "unknown_command",
+                format!("Unknown command: {e}"),
+                tx,
+            )
+            .await;
         }
     };
 
@@ -215,6 +226,12 @@ pub async fn handle_message(
         IncomingMessage::FloorRegistryList { id } => {
             handlers::handle_floor_registry_list(conn, id, tx).await
         }
+        IncomingMessage::FrontendGetUserData { id, key } => {
+            handlers::handle_frontend_get_user_data(id, key, tx).await
+        }
+        IncomingMessage::FrontendSetUserData { id, key, value } => {
+            handlers::handle_frontend_set_user_data(id, &key, value, tx).await
+        }
         IncomingMessage::FrontendGetIcons {
             id,
             category,
@@ -308,5 +325,164 @@ pub async fn handle_message(
         IncomingMessage::UnsubscribeEvents { id, subscription } => {
             handlers::handle_unsubscribe_events(conn, id, subscription, tx).await
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use ha_components::system_log::SystemLog;
+    use ha_config::CoreConfig;
+    use ha_config_entries::ConfigEntries;
+    use ha_event_bus::EventBus;
+    use ha_registries::{Registries, Storage};
+    use ha_service_registry::ServiceRegistry;
+    use ha_state_store::StateStore;
+    use tokio::sync::RwLock;
+
+    use crate::websocket::types::ResultMessage;
+    use crate::{auth, new_application_credentials_store, persistent_notification, AppState};
+
+    fn make_test_conn() -> Arc<ActiveConnection> {
+        let event_bus = Arc::new(EventBus::new());
+        let state_machine = Arc::new(StateStore::new(event_bus.clone()));
+        let service_registry = Arc::new(ServiceRegistry::new());
+        let temp_dir = std::env::temp_dir().join("ha-api-dispatch-test");
+        let registries = Arc::new(Registries::new(&temp_dir));
+        let storage = Arc::new(Storage::new(&temp_dir));
+        let config_entries = Arc::new(RwLock::new(ConfigEntries::new(storage)));
+        let notifications = persistent_notification::create_manager();
+        let system_log = Arc::new(SystemLog::with_defaults());
+        let state = AppState {
+            application_credentials: new_application_credentials_store(),
+            auth_state: auth::AuthState::new_onboarded(),
+            components: Arc::new(vec![]),
+            components_path: None,
+            config: Arc::new(CoreConfig::default()),
+            config_entries,
+            config_flow_handler: None,
+            event_bus,
+            events_cache: None,
+            frontend_config: None,
+            notifications,
+            registries,
+            service_registry,
+            services_cache: None,
+            state_machine,
+            system_log,
+        };
+        Arc::new(ActiveConnection::new(state, None))
+    }
+
+    /// Extract ResultMessage from OutgoingMessage, panicking if it's a different variant.
+    fn expect_result(msg: OutgoingMessage) -> ResultMessage {
+        if let OutgoingMessage::Result(rm) = msg {
+            rm
+        } else {
+            panic!("Expected Result message, got {:?}", msg)
+        }
+    }
+
+    #[tokio::test]
+    async fn unknown_message_type_returns_error_response() {
+        let conn = make_test_conn();
+        let (tx, mut rx) = mpsc::channel(16);
+
+        let text = r#"{"id": 99, "type": "totally/unknown"}"#;
+        let result = handle_message(&conn, text, &tx).await;
+        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+
+        let rm = expect_result(rx.try_recv().expect("Should have received a response"));
+        assert_eq!(rm.id, 99);
+        assert!(!rm.success);
+        assert_eq!(
+            rm.error.expect("Should have error info").code,
+            "unknown_command"
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_message_preserves_id() {
+        let conn = make_test_conn();
+        let (tx, mut rx) = mpsc::channel(16);
+
+        let text = r#"{"id": 42, "type": "nonexistent/command"}"#;
+        let result = handle_message(&conn, text, &tx).await;
+        assert!(result.is_ok());
+
+        let rm = expect_result(rx.try_recv().expect("Should have received a response"));
+        assert_eq!(rm.id, 42, "Response ID should match request ID");
+    }
+
+    #[tokio::test]
+    async fn frontend_get_user_data_returns_result() {
+        let conn = make_test_conn();
+        let (tx, mut rx) = mpsc::channel(16);
+
+        let text = r#"{"id": 10, "type": "frontend/get_user_data"}"#;
+        let result = handle_message(&conn, text, &tx).await;
+        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+
+        let rm = expect_result(rx.try_recv().expect("Should have received a response"));
+        assert_eq!(rm.id, 10);
+        assert!(rm.success, "Should be a success response");
+        let value = rm.result.expect("Should have result data");
+        assert!(
+            value.get("value").is_some(),
+            "Result should contain 'value' key, got: {value}"
+        );
+    }
+
+    #[tokio::test]
+    async fn frontend_get_user_data_with_key_returns_null_value() {
+        let conn = make_test_conn();
+        let (tx, mut rx) = mpsc::channel(16);
+
+        let text = r#"{"id": 11, "type": "frontend/get_user_data", "key": "sidebar"}"#;
+        let result = handle_message(&conn, text, &tx).await;
+        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+
+        let rm = expect_result(rx.try_recv().expect("Should have received a response"));
+        assert_eq!(rm.id, 11);
+        assert!(rm.success);
+        let value = rm.result.expect("Should have result data");
+        assert_eq!(
+            value.get("value"),
+            Some(&serde_json::Value::Null),
+            "Should return null for unknown key"
+        );
+    }
+
+    #[tokio::test]
+    async fn frontend_set_user_data_returns_success() {
+        let conn = make_test_conn();
+        let (tx, mut rx) = mpsc::channel(16);
+
+        let text = r#"{"id": 12, "type": "frontend/set_user_data", "key": "sidebar", "value": {"order": ["config"]}}"#;
+        let result = handle_message(&conn, text, &tx).await;
+        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+
+        let rm = expect_result(rx.try_recv().expect("Should have received a response"));
+        assert_eq!(rm.id, 12);
+        assert!(rm.success, "Should be a success response");
+    }
+
+    #[tokio::test]
+    async fn malformed_json_returns_error_response() {
+        let conn = make_test_conn();
+        let (tx, mut rx) = mpsc::channel(16);
+
+        let text = "not json at all";
+        let result = handle_message(&conn, text, &tx).await;
+        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+
+        let rm = expect_result(rx.try_recv().expect("Should have received a response"));
+        assert_eq!(rm.id, 0, "Malformed JSON should use id 0");
+        assert!(!rm.success);
+        assert_eq!(
+            rm.error.expect("Should have error info").code,
+            "unknown_command"
+        );
     }
 }

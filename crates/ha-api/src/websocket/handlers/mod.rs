@@ -76,6 +76,7 @@ pub use entity_registry::{
 };
 pub use frontend::{
     handle_frontend_get_icons, handle_frontend_get_themes, handle_frontend_get_translations,
+    handle_frontend_get_user_data, handle_frontend_set_user_data,
     handle_frontend_subscribe_system_data, handle_frontend_subscribe_user_data, handle_get_panels,
     handle_lovelace_config, handle_lovelace_resources,
 };

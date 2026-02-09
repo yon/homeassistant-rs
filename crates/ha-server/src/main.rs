@@ -671,6 +671,7 @@ fn load_components(config_dir: &std::path::Path) -> Vec<String> {
     vec![
         "api".to_string(),
         "automation".to_string(),
+        "config".to_string(),
         "homeassistant".to_string(),
         "input_boolean".to_string(),
         "input_number".to_string(),

@@ -12,6 +12,27 @@ use crate::translations;
 use crate::websocket::connection::ActiveConnection;
 use crate::websocket::types::{EventMessage, OutgoingMessage};
 
+/// Handle frontend/get_user_data command (one-shot read)
+pub async fn handle_frontend_get_user_data(
+    id: u64,
+    _key: Option<String>,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> WsResult<()> {
+    // Stub: no persistence yet, return null for all keys
+    send_result(id, serde_json::json!({"value": null}), tx).await
+}
+
+/// Handle frontend/set_user_data command (one-shot write)
+pub async fn handle_frontend_set_user_data(
+    id: u64,
+    _key: &str,
+    _value: Option<serde_json::Value>,
+    tx: &mpsc::Sender<OutgoingMessage>,
+) -> WsResult<()> {
+    // Stub: accept the write but don't persist
+    send_result(id, serde_json::Value::Null, tx).await
+}
+
 /// Handle frontend/get_themes command
 pub async fn handle_frontend_get_themes(
     _conn: &Arc<ActiveConnection>,
@@ -161,39 +182,56 @@ pub async fn handle_get_panels(
     id: u64,
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> WsResult<()> {
-    // Return default panels structure
+    // Return default panels structure.
+    // The `title` field is a translation key used by the frontend as
+    // `localize("panel.<title>")`. Panels with null title are hidden
+    // from the sidebar (except the default panel).
     let panels = serde_json::json!({
         "lovelace": {
             "component_name": "lovelace",
             "icon": "mdi:view-dashboard",
-            "title": null,
+            "title": "states",
+            "default_visible": true,
             "config": {"mode": "storage"},
             "url_path": "lovelace",
             "require_admin": false,
             "config_panel_domain": null,
         },
-        "developer-tools": {
-            "component_name": "developer_tools",
-            "icon": "mdi:hammer",
-            "title": null,
-            "config": null,
-            "url_path": "developer-tools",
-            "require_admin": true,
-            "config_panel_domain": null,
-        },
         "config": {
             "component_name": "config",
             "icon": "mdi:cog",
-            "title": null,
+            "title": "config",
+            "default_visible": true,
             "config": null,
             "url_path": "config",
             "require_admin": true,
             "config_panel_domain": null,
         },
+        "developer-tools": {
+            "component_name": "developer-tools",
+            "icon": "mdi:hammer",
+            "title": "developer_tools",
+            "default_visible": true,
+            "config": null,
+            "url_path": "developer-tools",
+            "require_admin": true,
+            "config_panel_domain": null,
+        },
+        "energy": {
+            "component_name": "energy",
+            "icon": "mdi:lightning-bolt",
+            "title": "energy",
+            "default_visible": true,
+            "config": null,
+            "url_path": "energy",
+            "require_admin": false,
+            "config_panel_domain": null,
+        },
         "history": {
             "component_name": "history",
             "icon": "mdi:chart-box",
-            "title": null,
+            "title": "history",
+            "default_visible": true,
             "config": null,
             "url_path": "history",
             "require_admin": false,
@@ -202,7 +240,8 @@ pub async fn handle_get_panels(
         "logbook": {
             "component_name": "logbook",
             "icon": "mdi:format-list-bulleted-type",
-            "title": null,
+            "title": "logbook",
+            "default_visible": true,
             "config": null,
             "url_path": "logbook",
             "require_admin": false,
@@ -211,25 +250,18 @@ pub async fn handle_get_panels(
         "map": {
             "component_name": "map",
             "icon": "mdi:tooltip-account",
-            "title": null,
+            "title": "map",
+            "default_visible": true,
             "config": null,
             "url_path": "map",
             "require_admin": false,
             "config_panel_domain": null,
         },
-        "energy": {
-            "component_name": "energy",
-            "icon": "mdi:lightning-bolt",
-            "title": null,
-            "config": null,
-            "url_path": "energy",
-            "require_admin": false,
-            "config_panel_domain": null,
-        },
         "media-browser": {
-            "component_name": "media_browser",
+            "component_name": "media-browser",
             "icon": "mdi:play-box-multiple",
-            "title": null,
+            "title": "media_browser",
+            "default_visible": true,
             "config": null,
             "url_path": "media-browser",
             "require_admin": false,
@@ -238,7 +270,8 @@ pub async fn handle_get_panels(
         "todo": {
             "component_name": "todo",
             "icon": "mdi:clipboard-list",
-            "title": null,
+            "title": "todo",
+            "default_visible": true,
             "config": null,
             "url_path": "todo",
             "require_admin": false,
