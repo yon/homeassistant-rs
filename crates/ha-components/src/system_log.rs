@@ -643,4 +643,77 @@ mod tests {
         log.clear();
         assert!(log.is_empty());
     }
+
+    #[test]
+    fn test_log_level_from_tracing() {
+        assert_eq!(LogLevel::from_tracing_level(Level::DEBUG), LogLevel::Debug);
+        assert_eq!(LogLevel::from_tracing_level(Level::INFO), LogLevel::Info);
+        assert_eq!(LogLevel::from_tracing_level(Level::WARN), LogLevel::Warning);
+        assert_eq!(LogLevel::from_tracing_level(Level::ERROR), LogLevel::Error);
+        assert_eq!(LogLevel::from_tracing_level(Level::TRACE), LogLevel::Debug);
+    }
+
+    #[test]
+    fn test_log_entry_to_dict_format() {
+        let entry = LogEntry::new(
+            "test.logger".to_string(),
+            LogLevel::Warning,
+            "A warning".to_string(),
+            "src/main.rs".to_string(),
+            99,
+            Some("traceback here".to_string()),
+            None,
+        );
+
+        let dict = entry.to_dict();
+        assert_eq!(dict["name"], "test.logger");
+        assert_eq!(dict["level"], "WARNING");
+        assert_eq!(dict["exception"], "traceback here");
+        assert_eq!(dict["count"], 1);
+        let source = dict["source"].as_array().unwrap();
+        assert_eq!(source[0], "src/main.rs");
+        assert_eq!(source[1], 99);
+    }
+
+    #[test]
+    fn test_dedup_store_clear() {
+        let mut store = DedupStore::new(10);
+        store.add_entry(LogEntry::new(
+            "logger".to_string(),
+            LogLevel::Error,
+            "msg".to_string(),
+            "f.rs".to_string(),
+            1,
+            None,
+            None,
+        ));
+        assert_eq!(store.len(), 1);
+        store.clear();
+        assert!(store.is_empty());
+        assert_eq!(store.to_list().len(), 0);
+    }
+
+    #[test]
+    fn test_system_log_fire_event_config() {
+        let log_default = SystemLog::with_defaults();
+        assert!(!log_default.fire_event());
+
+        let log_with_events = SystemLog::new(SystemLogConfig {
+            max_entries: 10,
+            fire_event: true,
+        });
+        assert!(log_with_events.fire_event());
+    }
+
+    #[test]
+    fn test_system_log_list_returns_most_recent_first() {
+        let log = SystemLog::with_defaults();
+        log.log("a", LogLevel::Error, "first", Some("a.rs"), Some(1));
+        log.log("b", LogLevel::Error, "second", Some("b.rs"), Some(2));
+
+        let list = log.list();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0]["name"], "b");
+        assert_eq!(list[1]["name"], "a");
+    }
 }

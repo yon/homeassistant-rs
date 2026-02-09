@@ -498,4 +498,136 @@ mod tests {
         assert_eq!(config.step, 1.0);
         assert_eq!(config.initial, Some(120.0));
     }
+
+    #[test]
+    fn test_load_input_booleans() {
+        let event_bus = Arc::new(ha_event_bus::EventBus::new());
+        let states = StateStore::new(event_bus);
+        let mut config = HashMap::new();
+        config.insert(
+            "debug_mode".to_string(),
+            Some(InputBooleanConfig {
+                name: Some("Debug Mode".to_string()),
+                icon: Some("mdi:bug".to_string()),
+                initial: Some(true),
+            }),
+        );
+        config.insert("simple".to_string(), None);
+
+        let count = load_input_booleans(&config, &states);
+        assert_eq!(count, 2);
+        let debug_state = states.get("input_boolean.debug_mode").unwrap();
+        assert_eq!(debug_state.state, "on");
+        assert_eq!(
+            debug_state.attributes.get("friendly_name").unwrap(),
+            "Debug Mode"
+        );
+        let simple_state = states.get("input_boolean.simple").unwrap();
+        assert_eq!(simple_state.state, "off");
+    }
+
+    #[test]
+    fn test_load_input_numbers() {
+        let event_bus = Arc::new(ha_event_bus::EventBus::new());
+        let states = StateStore::new(event_bus);
+        let mut config = HashMap::new();
+        config.insert(
+            "temperature".to_string(),
+            InputNumberConfig {
+                name: Some("Temp".to_string()),
+                icon: None,
+                min: 50.0,
+                max: 100.0,
+                step: 0.5,
+                initial: Some(72.0),
+                unit_of_measurement: Some("°F".to_string()),
+                mode: "slider".to_string(),
+            },
+        );
+
+        let count = load_input_numbers(&config, &states);
+        assert_eq!(count, 1);
+        let state = states.get("input_number.temperature").unwrap();
+        assert_eq!(state.state, "72");
+        assert_eq!(state.attributes.get("unit_of_measurement").unwrap(), "°F");
+    }
+
+    #[test]
+    fn test_load_input_numbers_rejects_invalid_range() {
+        let event_bus = Arc::new(ha_event_bus::EventBus::new());
+        let states = StateStore::new(event_bus);
+        let mut config = HashMap::new();
+        config.insert(
+            "bad".to_string(),
+            InputNumberConfig {
+                name: None,
+                icon: None,
+                min: 100.0,
+                max: 50.0, // min > max
+                step: 1.0,
+                initial: None,
+                unit_of_measurement: None,
+                mode: "slider".to_string(),
+            },
+        );
+
+        let count = load_input_numbers(&config, &states);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_load_input_numbers_clamps_initial() {
+        let event_bus = Arc::new(ha_event_bus::EventBus::new());
+        let states = StateStore::new(event_bus);
+        let mut config = HashMap::new();
+        config.insert(
+            "clamped".to_string(),
+            InputNumberConfig {
+                name: None,
+                icon: None,
+                min: 10.0,
+                max: 20.0,
+                step: 1.0,
+                initial: Some(999.0), // way above max
+                unit_of_measurement: None,
+                mode: "slider".to_string(),
+            },
+        );
+
+        let count = load_input_numbers(&config, &states);
+        assert_eq!(count, 1);
+        let state = states.get("input_number.clamped").unwrap();
+        assert_eq!(state.state, "20");
+    }
+
+    #[test]
+    fn test_get_target_entities_single_string() {
+        let call = ServiceCall {
+            domain: "input_boolean".to_string(),
+            service: "turn_on".to_string(),
+            service_data: json!({"entity_id": "input_boolean.test1"}),
+            context: Context::new(),
+        };
+        let entities = get_target_entities(&call, "input_boolean");
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0].to_string(), "input_boolean.test1");
+    }
+
+    #[test]
+    fn test_get_target_entities_array() {
+        let call = ServiceCall {
+            domain: "input_boolean".to_string(),
+            service: "turn_on".to_string(),
+            service_data: json!({
+                "entity_id": ["input_boolean.a", "input_boolean.b", "input_number.c"]
+            }),
+            context: Context::new(),
+        };
+        let entities = get_target_entities(&call, "input_boolean");
+        assert_eq!(
+            entities.len(),
+            2,
+            "should filter to input_boolean domain only"
+        );
+    }
 }

@@ -174,7 +174,15 @@ def check_test_coverage(qs):
         "ha-service-registry", # service, helper_service
         "ha-state-store",      # state, statemachine, helper_state
         "ha-template",         # template
+        "ha-test-comparison",  # HA compat test infrastructure itself
     }
+
+    # Crates tested by Python test suite (make test-python) rather than cargo test
+    python_test_covered = {
+        "ha-py-ext",           # 110+ Python tests via maturin + pytest
+    }
+
+    externally_tested = ha_compat_covered | python_test_covered
 
     crate_stats = []
 
@@ -210,7 +218,7 @@ def check_test_coverage(qs):
         if pub_fn_count == 0:
             continue  # Skip stubs
 
-        has_ha_compat = crate_name in ha_compat_covered
+        has_ha_compat = crate_name in externally_tested
         ratio = test_count / pub_fn_count
 
         # Assign tier and penalty
