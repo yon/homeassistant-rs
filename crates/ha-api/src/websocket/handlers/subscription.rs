@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use chrono::DateTime;
 use tokio::sync::{broadcast, mpsc};
 use tracing::debug;
 
@@ -9,6 +10,23 @@ use super::send_result;
 use crate::error::{WebSocketError, WsResult};
 use crate::websocket::connection::ActiveConnection;
 use crate::websocket::types::{EventMessage, OutgoingMessage};
+
+/// Convert an ISO 8601 timestamp string to a float Unix timestamp.
+///
+/// The `subscribe_entities` compressed format requires `lc`/`lu` as float seconds,
+/// but state_changed events store them as ISO strings.
+fn iso_to_float_timestamp(value: Option<&serde_json::Value>) -> serde_json::Value {
+    value
+        .and_then(|v| v.as_str())
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| {
+            serde_json::Value::Number(
+                serde_json::Number::from_f64(dt.timestamp_millis() as f64 / 1000.0)
+                    .unwrap_or_else(|| serde_json::Number::from(0)),
+            )
+        })
+        .unwrap_or(serde_json::Value::Null)
+}
 
 /// Handle subscribe_events command
 pub async fn handle_subscribe_events(
@@ -220,6 +238,9 @@ pub async fn handle_subscribe_entities(
                                         entry.enrich_json_attributes(&mut attrs);
                                     }
 
+                                    let lc = iso_to_float_timestamp(new_state.get("last_changed"));
+                                    let lu = iso_to_float_timestamp(new_state.get("last_updated"));
+
                                     let mut changes = serde_json::Map::new();
                                     changes.insert(
                                         entity_id.to_string(),
@@ -228,8 +249,8 @@ pub async fn handle_subscribe_entities(
                                                 "s": new_state.get("state"),
                                                 "a": attrs,
                                                 "c": new_state.get("context").and_then(|c| c.get("id")),
-                                                "lc": new_state.get("last_changed"),
-                                                "lu": new_state.get("last_updated"),
+                                                "lc": lc,
+                                                "lu": lu,
                                             }
                                         }),
                                     );
@@ -261,4 +282,48 @@ pub async fn handle_subscribe_entities(
 
     // Send success response
     send_result(id, serde_json::Value::Null, tx).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn iso_to_float_timestamp_converts_rfc3339() {
+        let val = serde_json::json!("2026-02-10T16:42:20.893423Z");
+        let result = iso_to_float_timestamp(Some(&val));
+        let ts = result.as_f64().expect("should be a float");
+        // 2026-02-10T16:42:20Z is roughly 1770760940
+        assert!(
+            ts > 1_770_000_000.0,
+            "timestamp should be in 2026 range: {ts}"
+        );
+        assert!(
+            ts < 1_780_000_000.0,
+            "timestamp should be in 2026 range: {ts}"
+        );
+        // Verify sub-second precision is preserved
+        let frac = ts - ts.floor();
+        assert!(frac > 0.89, "fractional seconds should be ~0.893: {frac}");
+    }
+
+    #[test]
+    fn iso_to_float_timestamp_returns_null_for_none() {
+        let result = iso_to_float_timestamp(None);
+        assert!(result.is_null());
+    }
+
+    #[test]
+    fn iso_to_float_timestamp_returns_null_for_non_string() {
+        let val = serde_json::json!(12345);
+        let result = iso_to_float_timestamp(Some(&val));
+        assert!(result.is_null());
+    }
+
+    #[test]
+    fn iso_to_float_timestamp_returns_null_for_invalid_date() {
+        let val = serde_json::json!("not-a-date");
+        let result = iso_to_float_timestamp(Some(&val));
+        assert!(result.is_null());
+    }
 }
