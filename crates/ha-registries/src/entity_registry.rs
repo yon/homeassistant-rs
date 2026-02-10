@@ -287,16 +287,23 @@ impl EntityEntry {
             }
         }
 
-        // Add state_class from capabilities if not present
-        if !attrs.contains_key("state_class") {
-            if let Some(ref caps) = self.capabilities {
-                if let Some(sc) = caps.get("state_class").and_then(|v| v.as_str()) {
-                    attrs.insert(
-                        "state_class".to_string(),
-                        serde_json::Value::String(sc.to_string()),
-                    );
+        // Add all capability keys (supported_color_modes, state_class, etc.)
+        if let Some(ref caps) = self.capabilities {
+            if let Some(obj) = caps.as_object() {
+                for (key, value) in obj {
+                    if !attrs.contains_key(key) {
+                        attrs.insert(key.clone(), value.clone());
+                    }
                 }
             }
+        }
+
+        // Add supported_features if not present and non-zero
+        if !attrs.contains_key("supported_features") && self.supported_features > 0 {
+            attrs.insert(
+                "supported_features".to_string(),
+                serde_json::json!(self.supported_features),
+            );
         }
     }
 
@@ -345,16 +352,23 @@ impl EntityEntry {
             }
         }
 
-        // Add state_class from capabilities if not present
-        if !attrs.contains_key("state_class") {
-            if let Some(ref caps) = self.capabilities {
-                if let Some(sc) = caps.get("state_class").and_then(|v| v.as_str()) {
-                    attrs.insert(
-                        "state_class".to_string(),
-                        serde_json::Value::String(sc.to_string()),
-                    );
+        // Add all capability keys (supported_color_modes, state_class, etc.)
+        if let Some(ref caps) = self.capabilities {
+            if let Some(obj) = caps.as_object() {
+                for (key, value) in obj {
+                    if !attrs.contains_key(key) {
+                        attrs.insert(key.clone(), value.clone());
+                    }
                 }
             }
+        }
+
+        // Add supported_features if not present and non-zero
+        if !attrs.contains_key("supported_features") && self.supported_features > 0 {
+            attrs.insert(
+                "supported_features".to_string(),
+                serde_json::json!(self.supported_features),
+            );
         }
     }
 }
@@ -1236,6 +1250,100 @@ mod tests {
             attrs.get("unit_of_measurement").and_then(|v| v.as_str()),
             Some("°F"),
             "existing attribute should not be overwritten"
+        );
+    }
+
+    #[test]
+    fn enrich_attributes_adds_supported_features() {
+        let mut entry = EntityEntry::new("light.living_room", "hue", None);
+        entry.supported_features = 41; // brightness + color + effect
+
+        let mut attrs = std::collections::HashMap::new();
+        entry.enrich_attributes(&mut attrs);
+        assert_eq!(
+            attrs.get("supported_features").and_then(|v| v.as_u64()),
+            Some(41),
+            "supported_features should be added from entity registry"
+        );
+    }
+
+    #[test]
+    fn enrich_attributes_skips_zero_supported_features() {
+        let entry = EntityEntry::new("sensor.temp", "test", None);
+        // supported_features defaults to 0
+
+        let mut attrs = std::collections::HashMap::new();
+        entry.enrich_attributes(&mut attrs);
+        assert!(
+            !attrs.contains_key("supported_features"),
+            "supported_features should not be added when 0"
+        );
+    }
+
+    #[test]
+    fn enrich_attributes_adds_capabilities_to_attrs() {
+        let mut entry = EntityEntry::new("light.dimmer", "lutron", None);
+        entry.capabilities = Some(serde_json::json!({
+            "supported_color_modes": ["brightness"]
+        }));
+
+        let mut attrs = std::collections::HashMap::new();
+        entry.enrich_attributes(&mut attrs);
+        assert_eq!(
+            attrs.get("supported_color_modes"),
+            Some(&serde_json::json!(["brightness"])),
+            "supported_color_modes from capabilities should be in attributes"
+        );
+    }
+
+    #[test]
+    fn enrich_attributes_capabilities_does_not_overwrite_existing() {
+        let mut entry = EntityEntry::new("light.dimmer", "lutron", None);
+        entry.capabilities = Some(serde_json::json!({
+            "supported_color_modes": ["brightness"]
+        }));
+
+        let mut attrs = std::collections::HashMap::new();
+        attrs.insert(
+            "supported_color_modes".to_string(),
+            serde_json::json!(["hs", "color_temp"]),
+        );
+        entry.enrich_attributes(&mut attrs);
+        assert_eq!(
+            attrs.get("supported_color_modes"),
+            Some(&serde_json::json!(["hs", "color_temp"])),
+            "existing capability attributes should not be overwritten"
+        );
+    }
+
+    #[test]
+    fn enrich_json_attributes_adds_capabilities() {
+        let mut entry = EntityEntry::new("light.dimmer", "lutron", None);
+        entry.capabilities = Some(serde_json::json!({
+            "supported_color_modes": ["brightness"]
+        }));
+
+        let mut attrs = serde_json::Map::new();
+        entry.enrich_json_attributes(&mut attrs);
+        assert_eq!(
+            attrs.get("supported_color_modes"),
+            Some(&serde_json::json!(["brightness"])),
+            "supported_color_modes from capabilities should be in JSON attributes"
+        );
+    }
+
+    #[test]
+    fn enrich_attributes_does_not_overwrite_supported_features() {
+        let mut entry = EntityEntry::new("light.test", "hue", None);
+        entry.supported_features = 41;
+
+        let mut attrs = std::collections::HashMap::new();
+        attrs.insert("supported_features".to_string(), serde_json::json!(99));
+        entry.enrich_attributes(&mut attrs);
+        assert_eq!(
+            attrs.get("supported_features").and_then(|v| v.as_u64()),
+            Some(99),
+            "existing supported_features should not be overwritten"
         );
     }
 

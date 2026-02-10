@@ -93,10 +93,15 @@ impl HomeAssistant {
         let config_entries = Arc::new(RwLock::new(ConfigEntries::new(storage)));
 
         // Initialize Python bridge if feature is enabled
-        // Use HA_PYTHON_PATH env var to point to a pip-installed Home Assistant
+        // Derive HA core path from HA_COMPONENTS_PATH (parent of homeassistant/components)
+        // or fall back to HA_PYTHON_PATH for pip-installed HA
         #[cfg(feature = "python")]
         let python_bridge = match {
-            let ha_python_path = std::env::var("HA_PYTHON_PATH").map(PathBuf::from).ok();
+            let ha_python_path = std::env::var("HA_COMPONENTS_PATH")
+                .map(PathBuf::from)
+                .ok()
+                .and_then(|p| p.parent()?.parent().map(|p| p.to_path_buf()))
+                .or_else(|| std::env::var("HA_PYTHON_PATH").map(PathBuf::from).ok());
             PyBridge::new(
                 ha_python_path.as_deref(),
                 registries.clone(),
@@ -931,6 +936,39 @@ async fn setup_config_entries(hass: &HomeAssistant) {
     }
 }
 
+/// Initialize entity states from the entity registry.
+///
+/// For entities that exist in the registry but have no state in the state machine
+/// (e.g., from integrations that failed to set up), create an "unavailable" state
+/// with enriched attributes. This allows the frontend to display entity controls
+/// even when the integration is offline.
+fn initialize_entity_states_from_registry(hass: &HomeAssistant) {
+    let mut count = 0;
+    for entry in hass.registries.entities.iter() {
+        let entity_id: EntityId = match entry.entity_id.parse() {
+            Ok(id) => id,
+            Err(_) => {
+                debug!("Skipping invalid entity_id: {}", entry.entity_id);
+                continue;
+            }
+        };
+        // Skip if state already exists (set by Python integration or demo entities)
+        if hass.states.get(&entry.entity_id).is_some() {
+            continue;
+        }
+        // Create "unavailable" state with enriched attributes from registry
+        let mut attrs = HashMap::new();
+        entry.enrich_attributes(&mut attrs);
+        hass.states
+            .set(entity_id, "unavailable", attrs, Context::default());
+        count += 1;
+    }
+    info!(
+        "Initialized {} entity states from registry as unavailable",
+        count
+    );
+}
+
 /// Register entity domain services for Python entities
 ///
 /// After Python integrations load entities, we need to register services like
@@ -1277,6 +1315,9 @@ async fn main() -> Result<()> {
     // Setup config entries and Python entity services
     setup_config_entries(&hass).await;
     register_python_entity_services(&hass.services);
+
+    // Initialize states for registry entities that have no state yet
+    initialize_entity_states_from_registry(&hass);
     info!("Home Assistant initialized");
 
     // Build API state and start server
