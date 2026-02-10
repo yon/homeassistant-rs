@@ -32,8 +32,7 @@ use tracing_subscriber::FmtSubscriber;
 
 #[cfg(feature = "python")]
 use ha_py_bridge::py_bridge::{
-    call_python_entity_service, get_python_entities, load_allowlist_from_config, ConfigFlowManager,
-    PyBridge,
+    call_python_entity_service, load_allowlist_from_config, ConfigFlowManager, PyBridge,
 };
 
 /// The central Home Assistant instance
@@ -938,6 +937,32 @@ async fn setup_config_entries(hass: &HomeAssistant) {
 
 /// Initialize entity states from the entity registry.
 ///
+/// Collect unique controllable domains from the Rust entity registry.
+///
+/// Iterates over all entities in the registry, extracts domain names,
+/// and filters out read-only domains (sensor, binary_sensor, etc.).
+/// Used by register_python_entity_services (python feature) and tests.
+#[cfg(any(feature = "python", test))]
+fn collect_service_domains_from_registry(
+    registries: &Registries,
+) -> std::collections::HashSet<String> {
+    use ha_core::domains;
+
+    registries
+        .entities
+        .iter()
+        .into_iter()
+        .filter_map(|entry| {
+            let domain = entry.entity_id.split('.').next().map(String::from)?;
+            if domains::is_readonly_domain(&domain) {
+                None
+            } else {
+                Some(domain)
+            }
+        })
+        .collect()
+}
+
 /// For entities that exist in the registry but have no state in the state machine
 /// (e.g., from integrations that failed to set up), create an "unavailable" state
 /// with enriched attributes. This allows the frontend to display entity controls
@@ -969,30 +994,22 @@ fn initialize_entity_states_from_registry(hass: &HomeAssistant) {
     );
 }
 
-/// Register entity domain services for Python entities
+/// Register entity domain services based on Rust entity registry
 ///
-/// After Python integrations load entities, we need to register services like
+/// After loading entities from disk, we register services like
 /// `light.turn_on`, `light.turn_off` etc. in the Rust ServiceRegistry so that
-/// service calls route to the Python entity methods.
+/// service calls route to the Python entity methods or state store fallback.
 #[cfg(feature = "python")]
-fn register_python_entity_services(services: &ServiceRegistry) {
+fn register_python_entity_services(services: &ServiceRegistry, registries: &Registries) {
     use ha_core::domains;
-    use std::collections::HashSet;
 
-    // Get all Python entities and extract unique domains
-    let domains: HashSet<String> = match get_python_entities() {
-        Ok(entities) => entities
-            .iter()
-            .filter_map(|entity_id| entity_id.split('.').next().map(String::from))
-            .collect(),
-        Err(e) => {
-            warn!("Failed to get Python entities: {}", e);
-            return;
-        }
-    };
+    // Get domains from RUST entity registry (loaded from disk), NOT Python's _entity_registry.
+    // Python's _entity_registry is often empty because integrations fail to connect to devices.
+    // The Rust entity registry is always populated from core.entity_registry storage.
+    let domains = collect_service_domains_from_registry(registries);
 
     if domains.is_empty() {
-        debug!("No Python entities found, skipping domain service registration");
+        debug!("No controllable entities found, skipping domain service registration");
         return;
     }
 
@@ -1114,7 +1131,7 @@ fn register_python_entity_services(services: &ServiceRegistry) {
 }
 
 #[cfg(not(feature = "python"))]
-fn register_python_entity_services(_services: &ServiceRegistry) {
+fn register_python_entity_services(_services: &ServiceRegistry, _registries: &Registries) {
     // No-op when Python is not enabled
 }
 
@@ -1314,7 +1331,7 @@ async fn main() -> Result<()> {
 
     // Setup config entries and Python entity services
     setup_config_entries(&hass).await;
-    register_python_entity_services(&hass.services);
+    register_python_entity_services(&hass.services, &hass.registries);
 
     // Initialize states for registry entities that have no state yet
     initialize_entity_states_from_registry(&hass);
@@ -1969,5 +1986,142 @@ input_boolean:
         let result: HashMap<String, Option<ha_components::InputBooleanConfig>> =
             collect_yaml_section(&yaml, "input_boolean");
         assert!(result.is_empty());
+    }
+
+    // ---- Tests for collect_service_domains_from_registry ----
+
+    #[test]
+    fn test_collect_service_domains_includes_controllable() {
+        let temp_dir = TempDir::new().unwrap();
+        let registries = Registries::new(temp_dir.path());
+
+        registries
+            .entities
+            .get_or_create("test_platform", "light.living_room", None, None, None);
+        registries
+            .entities
+            .get_or_create("test_platform", "switch.garage", None, None, None);
+
+        let domains = collect_service_domains_from_registry(&registries);
+
+        assert!(
+            domains.contains("light"),
+            "Expected domains to contain 'light', got: {:?}",
+            domains
+        );
+        assert!(
+            domains.contains("switch"),
+            "Expected domains to contain 'switch', got: {:?}",
+            domains
+        );
+    }
+
+    #[test]
+    fn test_collect_service_domains_skips_readonly() {
+        let temp_dir = TempDir::new().unwrap();
+        let registries = Registries::new(temp_dir.path());
+
+        registries
+            .entities
+            .get_or_create("test_platform", "sensor.temperature", None, None, None);
+        registries.entities.get_or_create(
+            "test_platform",
+            "binary_sensor.motion",
+            None,
+            None,
+            None,
+        );
+
+        let domains = collect_service_domains_from_registry(&registries);
+
+        assert!(
+            domains.is_empty(),
+            "Expected empty domains for read-only entities, got: {:?}",
+            domains
+        );
+    }
+
+    #[test]
+    fn test_collect_service_domains_empty_registry() {
+        let temp_dir = TempDir::new().unwrap();
+        let registries = Registries::new(temp_dir.path());
+
+        let domains = collect_service_domains_from_registry(&registries);
+
+        assert!(
+            domains.is_empty(),
+            "Expected empty domains for empty registry, got: {:?}",
+            domains
+        );
+    }
+
+    #[test]
+    fn test_collect_service_domains_mixed() {
+        let temp_dir = TempDir::new().unwrap();
+        let registries = Registries::new(temp_dir.path());
+
+        registries
+            .entities
+            .get_or_create("test_platform", "light.kitchen", None, None, None);
+        registries
+            .entities
+            .get_or_create("test_platform", "sensor.humidity", None, None, None);
+        registries
+            .entities
+            .get_or_create("test_platform", "lock.front_door", None, None, None);
+
+        let domains = collect_service_domains_from_registry(&registries);
+
+        assert!(
+            domains.contains("light"),
+            "Expected domains to contain 'light', got: {:?}",
+            domains
+        );
+        assert!(
+            domains.contains("lock"),
+            "Expected domains to contain 'lock', got: {:?}",
+            domains
+        );
+        assert!(
+            !domains.contains("sensor"),
+            "Expected domains to NOT contain read-only 'sensor', got: {:?}",
+            domains
+        );
+    }
+
+    #[test]
+    fn test_collect_service_domains_deduplicates() {
+        let temp_dir = TempDir::new().unwrap();
+        let registries = Registries::new(temp_dir.path());
+
+        registries.entities.get_or_create(
+            "test_platform",
+            "light.living_room",
+            Some("unique_1"),
+            None,
+            None,
+        );
+        registries.entities.get_or_create(
+            "test_platform",
+            "light.bedroom",
+            Some("unique_2"),
+            None,
+            None,
+        );
+
+        let domains = collect_service_domains_from_registry(&registries);
+
+        assert_eq!(
+            domains.len(),
+            1,
+            "Expected exactly 1 unique domain, got {} domains: {:?}",
+            domains.len(),
+            domains
+        );
+        assert!(
+            domains.contains("light"),
+            "Expected domains to contain 'light', got: {:?}",
+            domains
+        );
     }
 }
