@@ -33,7 +33,10 @@ pub fn call_python_entity_service(
     Python::with_gil(|py| {
         let globals = match CONFIG_ENTRIES_GLOBALS.get() {
             Some(g) => g.bind(py),
-            None => return Ok(false), // Not initialized yet
+            None => {
+                tracing::debug!("CONFIG_ENTRIES_GLOBALS not initialized — using Rust fallback");
+                return Ok(false);
+            }
         };
 
         // Convert service_data to Python dict
