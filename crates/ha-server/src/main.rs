@@ -1065,12 +1065,14 @@ fn handle_entity_service_rust(
 ///
 /// After loading entities from disk, we register services like
 /// `light.turn_on`, `light.turn_off` etc. in the Rust ServiceRegistry so that
-/// service calls route to the Python entity methods or state store fallback.
+/// service calls route to the Python entity methods (for device control) and
+/// always update the Rust state store (for UI).
 #[cfg(feature = "python")]
 fn register_python_entity_services(
     services: &ServiceRegistry,
     registries: &Registries,
     states: Arc<StateStore>,
+    async_bridge: Option<Arc<ha_py_bridge::py_bridge::AsyncBridge>>,
 ) {
     use ha_core::domains;
 
@@ -1106,6 +1108,7 @@ fn register_python_entity_services(
                 continue;
             }
 
+            let async_bridge_clone = async_bridge.clone();
             let domain_clone = domain.clone();
             let service_clone = service_name.to_string();
             let states_clone = states.clone();
@@ -1116,7 +1119,7 @@ fn register_python_entity_services(
                     service: service_name.to_string(),
                     name: None,
                     description: Some(format!(
-                        "Call {} on {} entities (Python)",
+                        "Call {} on {} entities",
                         service_name, domain
                     )),
                     schema: None,
@@ -1128,6 +1131,7 @@ fn register_python_entity_services(
                     supports_response: SupportsResponse::None,
                 },
                 move |call: ServiceCall| {
+                    let async_bridge = async_bridge_clone.clone();
                     let domain = domain_clone.clone();
                     let service = service_clone.clone();
                     let states = states_clone.clone();
@@ -1160,7 +1164,36 @@ fn register_python_entity_services(
                                 continue;
                             }
 
-                            // Handle entity service via Rust state store
+                            // Try Python async path first for physical device control
+                            if let Some(ref bridge) = async_bridge {
+                                match ha_py_bridge::py_bridge::call_python_entity_service_async(
+                                    bridge,
+                                    entity_id,
+                                    &service,
+                                    call.service_data.clone(),
+                                ) {
+                                    Ok(true) => {
+                                        info!(
+                                            "Service {}.{} dispatched to Python on {}",
+                                            domain, service, entity_id
+                                        );
+                                    }
+                                    Ok(false) => {
+                                        debug!(
+                                            "Python entity not found for {}, using Rust state store",
+                                            entity_id
+                                        );
+                                    }
+                                    Err(e) => {
+                                        debug!(
+                                            "Python async call failed for {}: {}, using Rust state store",
+                                            entity_id, e
+                                        );
+                                    }
+                                }
+                            }
+
+                            // Always update Rust state store for immediate UI feedback
                             if let Some(handled) = handle_entity_service_rust(
                                 &states,
                                 entity_id,
@@ -1170,7 +1203,7 @@ fn register_python_entity_services(
                             ) {
                                 if handled {
                                     info!(
-                                        "Service {}.{} handled by Rust on {}",
+                                        "Service {}.{} state updated on {}",
                                         domain, service, entity_id
                                     );
                                 } else {
@@ -1202,6 +1235,7 @@ fn register_python_entity_services(
     _services: &ServiceRegistry,
     _registries: &Registries,
     _states: Arc<StateStore>,
+    _async_bridge: Option<()>,
 ) {
     // No-op when Python is not enabled
 }
@@ -1402,7 +1436,16 @@ async fn main() -> Result<()> {
 
     // Setup config entries and Python entity services
     setup_config_entries(&hass).await;
-    register_python_entity_services(&hass.services, &hass.registries, hass.states.clone());
+    #[cfg(feature = "python")]
+    let async_bridge = hass.python_bridge.as_ref().map(|b| b.async_bridge.clone());
+    #[cfg(not(feature = "python"))]
+    let async_bridge = None;
+    register_python_entity_services(
+        &hass.services,
+        &hass.registries,
+        hass.states.clone(),
+        async_bridge,
+    );
 
     // Initialize states for registry entities that have no state yet
     initialize_entity_states_from_registry(&hass);

@@ -51,7 +51,8 @@ pub use config_entry::{config_entry_to_python, create_config_entry_instance};
 pub use config_flow::ConfigFlowManager;
 pub use errors::{PyBridgeError, PyBridgeResult};
 pub use hass_wrapper::{
-    call_python_entity_service, create_hass_wrapper, get_python_devices, get_python_entities,
+    call_python_entity_service, call_python_entity_service_async, create_hass_wrapper,
+    get_python_devices, get_python_entities,
 };
 pub use integration::{ComponentRegistry, IntegrationLoader, IntegrationManifest};
 pub use requirements::RequirementsManager;

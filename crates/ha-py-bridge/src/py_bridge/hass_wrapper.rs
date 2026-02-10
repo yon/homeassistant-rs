@@ -12,6 +12,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::sync::{Arc, OnceLock};
 
+use super::async_bridge::AsyncBridge;
 use super::errors::PyBridgeResult;
 use super::py_utils::{json_to_pyobject, pyobject_to_json};
 use super::pyclass_wrappers::{
@@ -58,6 +59,86 @@ pub fn call_python_entity_service(
         let result = call_fn.call1((entity_id, service, &kwargs))?;
 
         Ok(result.extract::<bool>().unwrap_or(false))
+    })
+}
+
+/// Call a service on a Python entity using the async bridge
+///
+/// This calls the entity's actual async method (e.g., `async_turn_on`) through
+/// the Python event loop, allowing the integration to communicate with physical
+/// devices. Uses `run_coroutine_threadsafe` when the background loop is running.
+/// Returns `Ok(true)` if the call succeeded, `Ok(false)` if the entity
+/// wasn't found or had no such method.
+pub fn call_python_entity_service_async(
+    async_bridge: &AsyncBridge,
+    entity_id: &str,
+    service: &str,
+    service_data: serde_json::Value,
+) -> PyBridgeResult<bool> {
+    Python::with_gil(|py| {
+        let globals = match CONFIG_ENTRIES_GLOBALS.get() {
+            Some(g) => g.bind(py),
+            None => {
+                tracing::debug!(
+                    "CONFIG_ENTRIES_GLOBALS not initialized — cannot call async service"
+                );
+                return Ok(false);
+            }
+        };
+
+        // Get the async _call_entity_service function
+        let call_fn = match globals.get_item("_call_entity_service")? {
+            Some(f) => f,
+            None => {
+                tracing::warn!("_call_entity_service not found in Python globals");
+                return Ok(false);
+            }
+        };
+
+        // Convert service_data to keyword arguments
+        let kwargs = PyDict::new_bound(py);
+        if let serde_json::Value::Object(map) = service_data {
+            for (k, v) in map {
+                // Skip entity_id — it's a positional arg, not a kwarg
+                if k == "entity_id" {
+                    continue;
+                }
+                let py_val = json_to_pyobject(py, &v)?;
+                kwargs.set_item(k, py_val)?;
+            }
+        }
+
+        // Call the async function to get a coroutine
+        let coro = call_fn.call((entity_id, service), Some(&kwargs))?;
+
+        // Use run_coroutine_threadsafe since the background loop is running
+        let event_loop = async_bridge.get_event_loop(py).ok_or_else(|| {
+            super::errors::PyBridgeError::AsyncBridge("No event loop available".to_string())
+        })?;
+
+        let asyncio = py.import_bound("asyncio")?;
+        let future = asyncio
+            .call_method1("run_coroutine_threadsafe", (coro, event_loop.bind(py)))?
+            .unbind();
+
+        // Release GIL while waiting so the background event loop thread can make progress,
+        // then re-acquire GIL to get the result
+        let result = py.allow_threads(|| {
+            // Small sleep to let the event loop thread pick up the coroutine
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            Python::with_gil(|py| {
+                let bound_future = future.bind(py);
+                match bound_future.call_method1("result", (30.0,)) {
+                    Ok(val) => val.extract::<bool>().unwrap_or(false),
+                    Err(e) => {
+                        tracing::warn!("Python async entity service call error: {:?}", e);
+                        false
+                    }
+                }
+            })
+        });
+
+        Ok(result)
     })
 }
 
