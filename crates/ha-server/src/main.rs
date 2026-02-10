@@ -31,9 +31,7 @@ use tracing::{debug, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 #[cfg(feature = "python")]
-use ha_py_bridge::py_bridge::{
-    call_python_entity_service, load_allowlist_from_config, ConfigFlowManager, PyBridge,
-};
+use ha_py_bridge::py_bridge::{load_allowlist_from_config, ConfigFlowManager, PyBridge};
 
 /// The central Home Assistant instance
 pub struct HomeAssistant {
@@ -1004,6 +1002,7 @@ fn handle_entity_service_rust(
     entity_id: &str,
     service: &str,
     service_data: &serde_json::Value,
+    context: Context,
 ) -> Option<bool> {
     let current = states.get(entity_id)?;
     let domain = entity_id.split('.').next().unwrap_or("");
@@ -1058,7 +1057,7 @@ fn handle_entity_service_rust(
         Err(_) => return Some(false),
     };
 
-    states.set(eid, new_state, attrs, Context::new());
+    states.set(eid, new_state, attrs, context);
     Some(true)
 }
 
@@ -1161,58 +1160,30 @@ fn register_python_entity_services(
                                 continue;
                             }
 
-                            // Build service data without entity_id
-                            let mut service_data = call.service_data.clone();
-                            if let Some(obj) = service_data.as_object_mut() {
-                                obj.remove("entity_id");
-                            }
-
-                            // Try Python first (handles entities with live Python objects)
-                            let python_handled =
-                                match call_python_entity_service(entity_id, &service, service_data)
-                                {
-                                    Ok(true) => {
-                                        info!(
-                                            "Service {}.{} handled by Python on {}",
-                                            domain, service, entity_id
-                                        );
-                                        true
-                                    }
-                                    Ok(false) => false,
-                                    Err(e) => {
-                                        warn!(
-                                            "Python error calling {}.{} on {}: {}",
-                                            domain, service, entity_id, e
-                                        );
-                                        false
-                                    }
-                                };
-
-                            // Rust fallback: directly toggle state in the state store
-                            if !python_handled {
-                                if let Some(handled) = handle_entity_service_rust(
-                                    &states,
-                                    entity_id,
-                                    &service,
-                                    &call.service_data,
-                                ) {
-                                    if handled {
-                                        info!(
-                                            "Service {}.{} handled by Rust fallback on {}",
-                                            domain, service, entity_id
-                                        );
-                                    } else {
-                                        warn!(
-                                            "Service {}.{} not supported on {}",
-                                            domain, service, entity_id
-                                        );
-                                    }
+                            // Handle entity service via Rust state store
+                            if let Some(handled) = handle_entity_service_rust(
+                                &states,
+                                entity_id,
+                                &service,
+                                &call.service_data,
+                                call.context.clone(),
+                            ) {
+                                if handled {
+                                    info!(
+                                        "Service {}.{} handled by Rust on {}",
+                                        domain, service, entity_id
+                                    );
                                 } else {
                                     warn!(
-                                        "Entity {} not found in state store for {}.{}",
-                                        entity_id, domain, service
+                                        "Service {}.{} not supported on {}",
+                                        domain, service, entity_id
                                     );
                                 }
+                            } else {
+                                warn!(
+                                    "Entity {} not found in state store for {}.{}",
+                                    entity_id, domain, service
+                                );
                             }
                         }
 
@@ -2244,7 +2215,8 @@ input_boolean:
     #[test]
     fn test_handle_entity_service_rust_toggle_light_on_to_off() {
         let store = create_state_store_with_entity("light.test", "on", HashMap::new());
-        let result = handle_entity_service_rust(&store, "light.test", "toggle", &json!({}));
+        let result =
+            handle_entity_service_rust(&store, "light.test", "toggle", &json!({}), Context::new());
         assert_eq!(result, Some(true));
         assert_eq!(store.get("light.test").unwrap().state, "off");
     }
@@ -2252,7 +2224,8 @@ input_boolean:
     #[test]
     fn test_handle_entity_service_rust_toggle_light_off_to_on() {
         let store = create_state_store_with_entity("light.test", "off", HashMap::new());
-        let result = handle_entity_service_rust(&store, "light.test", "toggle", &json!({}));
+        let result =
+            handle_entity_service_rust(&store, "light.test", "toggle", &json!({}), Context::new());
         assert_eq!(result, Some(true));
         assert_eq!(store.get("light.test").unwrap().state, "on");
     }
@@ -2260,7 +2233,8 @@ input_boolean:
     #[test]
     fn test_handle_entity_service_rust_turn_on() {
         let store = create_state_store_with_entity("light.test", "off", HashMap::new());
-        let result = handle_entity_service_rust(&store, "light.test", "turn_on", &json!({}));
+        let result =
+            handle_entity_service_rust(&store, "light.test", "turn_on", &json!({}), Context::new());
         assert_eq!(result, Some(true));
         assert_eq!(store.get("light.test").unwrap().state, "on");
     }
@@ -2268,7 +2242,13 @@ input_boolean:
     #[test]
     fn test_handle_entity_service_rust_turn_off() {
         let store = create_state_store_with_entity("light.test", "on", HashMap::new());
-        let result = handle_entity_service_rust(&store, "light.test", "turn_off", &json!({}));
+        let result = handle_entity_service_rust(
+            &store,
+            "light.test",
+            "turn_off",
+            &json!({}),
+            Context::new(),
+        );
         assert_eq!(result, Some(true));
         assert_eq!(store.get("light.test").unwrap().state, "off");
     }
@@ -2283,6 +2263,7 @@ input_boolean:
             "light.test",
             "turn_on",
             &json!({"brightness": 128}),
+            Context::new(),
         );
         assert_eq!(result, Some(true));
         let state = store.get("light.test").unwrap();
@@ -2293,7 +2274,13 @@ input_boolean:
     #[test]
     fn test_handle_entity_service_rust_toggle_lock() {
         let store = create_state_store_with_entity("lock.front_door", "locked", HashMap::new());
-        let result = handle_entity_service_rust(&store, "lock.front_door", "toggle", &json!({}));
+        let result = handle_entity_service_rust(
+            &store,
+            "lock.front_door",
+            "toggle",
+            &json!({}),
+            Context::new(),
+        );
         assert_eq!(result, Some(true));
         assert_eq!(store.get("lock.front_door").unwrap().state, "unlocked");
     }
@@ -2302,14 +2289,26 @@ input_boolean:
     fn test_handle_entity_service_rust_entity_not_found() {
         let bus = Arc::new(EventBus::new());
         let store = Arc::new(StateStore::new(bus));
-        let result = handle_entity_service_rust(&store, "light.nonexistent", "toggle", &json!({}));
+        let result = handle_entity_service_rust(
+            &store,
+            "light.nonexistent",
+            "toggle",
+            &json!({}),
+            Context::new(),
+        );
         assert_eq!(result, None);
     }
 
     #[test]
     fn test_handle_entity_service_rust_unsupported_service() {
         let store = create_state_store_with_entity("light.test", "on", HashMap::new());
-        let result = handle_entity_service_rust(&store, "light.test", "set_color_temp", &json!({}));
+        let result = handle_entity_service_rust(
+            &store,
+            "light.test",
+            "set_color_temp",
+            &json!({}),
+            Context::new(),
+        );
         assert_eq!(result, Some(false));
     }
 
@@ -2319,7 +2318,13 @@ input_boolean:
         attrs.insert("friendly_name".to_string(), json!("My Light"));
         attrs.insert("brightness".to_string(), json!(200));
         let store = create_state_store_with_entity("light.test", "on", attrs);
-        let result = handle_entity_service_rust(&store, "light.test", "turn_off", &json!({}));
+        let result = handle_entity_service_rust(
+            &store,
+            "light.test",
+            "turn_off",
+            &json!({}),
+            Context::new(),
+        );
         assert_eq!(result, Some(true));
         let state = store.get("light.test").unwrap();
         assert_eq!(state.state, "off");
@@ -2332,8 +2337,30 @@ input_boolean:
     #[test]
     fn test_handle_entity_service_rust_toggle_cover() {
         let store = create_state_store_with_entity("cover.garage", "open", HashMap::new());
-        let result = handle_entity_service_rust(&store, "cover.garage", "toggle", &json!({}));
+        let result = handle_entity_service_rust(
+            &store,
+            "cover.garage",
+            "toggle",
+            &json!({}),
+            Context::new(),
+        );
         assert_eq!(result, Some(true));
         assert_eq!(store.get("cover.garage").unwrap().state, "closed");
+    }
+
+    #[test]
+    fn test_handle_entity_service_rust_propagates_context() {
+        let store = create_state_store_with_entity("light.test", "off", HashMap::new());
+        let ctx = Context::new();
+        let ctx_id = ctx.id.to_string();
+        let result = handle_entity_service_rust(&store, "light.test", "turn_on", &json!({}), ctx);
+        assert_eq!(result, Some(true));
+        let state = store.get("light.test").unwrap();
+        assert_eq!(state.state, "on");
+        assert_eq!(
+            state.context.id.to_string(),
+            ctx_id,
+            "State should have the same context as the service call"
+        );
     }
 }
