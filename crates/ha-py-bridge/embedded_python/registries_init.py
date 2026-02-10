@@ -206,4 +206,30 @@ def _init_registries(hass, config_dir):
     except Exception as e:
         _LOGGER.warning(f"Could not initialize intent timer manager: {e}")
 
+    # --- SSDP Scanner Stub ---
+    # Integrations like samsungtv and dlna_dmr call ssdp.async_register_callback
+    # and ssdp.async_get_discovery_info_by_st which access hass.data["ssdp"]["scanner"].
+    # Provide a stub scanner that returns empty results.
+    try:
+        class _StubScanner:
+            """Stub SSDP scanner that returns empty discovery results."""
+
+            async def async_get_discovery_info_by_st(self, st):
+                return []
+
+            async def async_get_discovery_info_by_udn(self, udn):
+                return []
+
+            async def async_get_discovery_info_by_udn_st(self, udn, st):
+                return None
+
+            async def async_register_callback(self, job, match_dict=None):
+                return lambda: None
+
+        if "ssdp" not in hass.data:
+            hass.data["ssdp"] = {"scanner": _StubScanner()}
+            _LOGGER.debug("Initialized SSDP scanner stub in hass.data")
+    except Exception as e:
+        _LOGGER.warning(f"Could not initialize SSDP scanner stub: {e}")
+
     return success
