@@ -30,7 +30,7 @@ fn config_entry_state_to_string(state: &ha_config_entries::ConfigEntryState) -> 
 fn config_entry_to_json(entry: &ha_config_entries::ConfigEntry) -> serde_json::Value {
     serde_json::json!({
         "created_at": entry.created_at.timestamp(),
-        "disabled_by": entry.disabled_by.as_ref().map(|d| format!("{:?}", d).to_lowercase()),
+        "disabled_by": entry.disabled_by.as_ref().and_then(|d| serde_json::to_value(d).ok()),
         "domain": entry.domain,
         "entry_id": entry.entry_id,
         "error_reason_translation_key": entry.error_reason_translation_key,
@@ -40,7 +40,7 @@ fn config_entry_to_json(entry: &ha_config_entries::ConfigEntry) -> serde_json::V
         "pref_disable_new_entities": entry.pref_disable_new_entities,
         "pref_disable_polling": entry.pref_disable_polling,
         "reason": entry.reason,
-        "source": format!("{:?}", entry.source).to_lowercase(),
+        "source": serde_json::to_value(&entry.source).unwrap_or(serde_json::Value::String("user".to_string())),
         "state": config_entry_state_to_string(&entry.state),
         "supported_subentry_types": {},
         "supports_options": false,
@@ -131,7 +131,7 @@ pub async fn handle_config_entries_subscribe(
                 if let Some(ref filter) = type_filter {
                     let integration_type = crate::manifest::get_manifest(&entry.domain)
                         .and_then(|m| m.integration_type.as_deref())
-                        .unwrap_or("device");
+                        .unwrap_or("hub");
                     filter.iter().any(|f| f == integration_type)
                 } else {
                     true
@@ -409,4 +409,97 @@ pub async fn handle_config_entries_subentries_list(
     // Most integrations don't have subentries, return empty array
     // Per HA format: [{"subentry_id": "...", "subentry_type": "...", "title": "...", "unique_id": "..."}]
     send_result(id, serde_json::json!([]), tx).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ha_config_entries::{ConfigEntry, ConfigEntryDisabledBy, ConfigEntrySource};
+
+    /// Helper to create a ConfigEntry with a specific source for testing.
+    fn make_entry_with_source(source: ConfigEntrySource) -> ConfigEntry {
+        ConfigEntry::new("test_domain", "Test Entry").with_source(source)
+    }
+
+    /// Bug: format!("{:?}", IntegrationDiscovery).to_lowercase() produces "integrationdiscovery"
+    /// but HA Python serializes it as "integration_discovery" (snake_case).
+    /// The serde rename_all = "snake_case" on ConfigEntrySource would produce the correct value
+    /// if we used serde instead of Debug formatting.
+    #[test]
+    fn test_config_entry_source_integration_discovery_serializes_snake_case() {
+        let entry = make_entry_with_source(ConfigEntrySource::IntegrationDiscovery);
+        let json = config_entry_to_json(&entry);
+
+        let source = json.get("source").expect("source field should exist");
+        assert_eq!(
+            source.as_str().unwrap(),
+            "integration_discovery",
+            "IntegrationDiscovery source should serialize as 'integration_discovery' (snake_case), \
+             not 'integrationdiscovery' (Debug lowercased)"
+        );
+    }
+
+    /// Verify User source serializes correctly. This is a safety net -- it happens to
+    /// pass even with the Debug-based approach because "User" lowercased is "user"
+    /// which matches snake_case. But it documents the expected contract.
+    #[test]
+    fn test_config_entry_source_user_serializes_snake_case() {
+        let entry = make_entry_with_source(ConfigEntrySource::User);
+        let json = config_entry_to_json(&entry);
+
+        let source = json.get("source").expect("source field should exist");
+        assert_eq!(
+            source.as_str().unwrap(),
+            "user",
+            "User source should serialize as 'user'"
+        );
+    }
+
+    /// Verify Hassio source serializes correctly. Single-word variants work with
+    /// Debug lowercasing, so this serves as a regression guard.
+    #[test]
+    fn test_config_entry_source_hassio_serializes_snake_case() {
+        let entry = make_entry_with_source(ConfigEntrySource::Hassio);
+        let json = config_entry_to_json(&entry);
+
+        let source = json.get("source").expect("source field should exist");
+        assert_eq!(
+            source.as_str().unwrap(),
+            "hassio",
+            "Hassio source should serialize as 'hassio'"
+        );
+    }
+
+    /// Bug: disabled_by uses format!("{:?}", d).to_lowercase() which works for "User"
+    /// (producing "user") but is the wrong approach. This test verifies the field value
+    /// and also tests the None case. If new variants are added to ConfigEntryDisabledBy
+    /// with multi-word names, the Debug approach would break. Using serde serialization
+    /// is the correct approach to match HA Python.
+    #[test]
+    fn test_config_entry_disabled_by_serializes_correctly() {
+        // Test with disabled_by = Some(User)
+        let mut entry = ConfigEntry::new("test_domain", "Test Entry");
+        entry.disabled_by = Some(ConfigEntryDisabledBy::User);
+        let json = config_entry_to_json(&entry);
+
+        let disabled_by = json
+            .get("disabled_by")
+            .expect("disabled_by field should exist");
+        assert_eq!(
+            disabled_by.as_str().unwrap(),
+            "user",
+            "ConfigEntryDisabledBy::User should serialize as 'user'"
+        );
+
+        // Test with disabled_by = None
+        let entry_none = ConfigEntry::new("test_domain", "Test Entry");
+        let json_none = config_entry_to_json(&entry_none);
+        let disabled_by_none = json_none
+            .get("disabled_by")
+            .expect("disabled_by field should exist");
+        assert!(
+            disabled_by_none.is_null(),
+            "disabled_by should be null when None"
+        );
+    }
 }
