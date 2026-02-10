@@ -55,6 +55,9 @@ pub struct HassWrapper {
     async_create_task: PyObject,
     /// timeout context manager factory
     timeout: PyObject,
+    /// HTTP component (writable — HA's http component replaces this during setup)
+    #[pyo3(get, set)]
+    http: PyObject,
 }
 
 impl HassWrapper {
@@ -189,19 +192,23 @@ def init_network(hass_data):
         // Create auth manager
         let auth = Py::new(py, AuthWrapper::new(py)?)?;
 
+        // Create HTTP component stub (no-op methods for register_view, etc.)
+        let http = create_http_stub(py)?;
+
         Ok(Self {
             instance_id: HASS_INSTANCE_COUNTER.fetch_add(1, Ordering::SeqCst),
-            bus,
-            states,
-            services,
-            config,
             auth,
-            data,
+            bus,
+            config,
             config_entries,
+            data,
             helpers,
+            http,
             loop_,
             loop_thread_id,
             async_create_task,
+            services,
+            states,
             timeout,
         })
     }
@@ -598,4 +605,38 @@ def create_task(coro, name=None, eager_start=False):
                 .map(|t| t.unbind())
         }
     }
+}
+
+/// Create an HTTP component stub with no-op methods
+///
+/// Provides `register_view`, `register_redirect`, and `register_static_path`
+/// so integrations that call `hass.http.register_view(...)` don't crash.
+fn create_http_stub(py: Python<'_>) -> PyResult<PyObject> {
+    let types = py.import_bound("types")?;
+    let http = types.call_method0("SimpleNamespace")?;
+
+    let code = r#"
+def register_view(view):
+    pass
+
+def register_redirect(url, redirect_url):
+    pass
+
+def register_static_path(url_path, path, cache_headers=True):
+    pass
+"#;
+    let globals = PyDict::new_bound(py);
+    py.run_bound(code, Some(&globals), None)?;
+
+    http.setattr(
+        "register_redirect",
+        globals.get_item("register_redirect")?.unwrap(),
+    )?;
+    http.setattr(
+        "register_static_path",
+        globals.get_item("register_static_path")?.unwrap(),
+    )?;
+    http.setattr("register_view", globals.get_item("register_view")?.unwrap())?;
+
+    Ok(http.unbind())
 }

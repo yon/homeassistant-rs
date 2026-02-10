@@ -37,6 +37,9 @@ pub struct ConfigWrapper {
     pub skip_pip: bool,
     #[pyo3(get)]
     pub skip_pip_packages: Vec<String>,
+    /// API config set by the http component during setup
+    #[pyo3(get, set)]
+    pub api: Option<PyObject>,
     components: Py<PySet>,
     units: Py<UnitSystemWrapper>,
 }
@@ -63,6 +66,7 @@ impl ConfigWrapper {
             currency: "EUR".to_string(),
             skip_pip: true, // Skip pip installs since we assume deps are pre-installed
             skip_pip_packages: Vec::new(),
+            api: None,
             components: PySet::empty_bound(py)?.unbind(),
             units,
         })
@@ -131,6 +135,28 @@ mod tests {
             let custom_dir = std::path::Path::new("/tmp/ha-config/data");
             let config = ConfigWrapper::new(py, Some(custom_dir)).unwrap();
             assert_eq!(config.config_dir, "/tmp/ha-config/data");
+        });
+    }
+
+    #[test]
+    fn test_config_api_defaults_to_none() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let config = ConfigWrapper::new(py, None).unwrap();
+            assert!(config.api.is_none());
+        });
+    }
+
+    #[test]
+    fn test_config_api_is_writable() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let mut config = ConfigWrapper::new(py, None).unwrap();
+            let obj = py.None().into();
+            config.api = Some(obj);
+            assert!(config.api.is_some());
         });
     }
 
