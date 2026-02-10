@@ -180,24 +180,18 @@ test-integration: build $(VENV_STAMP) ## Run WebSocket API integration tests (st
 	$(VENV_BIN)/pytest tests/integration/ -v
 
 .PHONY: test-python
-test-python: install-dev ## Run all Python tests (shim + PyO3 extension)
+test-python: install-dev ## Run all Python tests (shim + PyO3 extension + bridge)
+	$(VENV_BIN)/pytest crates/ha-py-bridge/tests/python/ -v
 	$(VENV_BIN)/pytest crates/ha-py-ext/python/tests/ -v
 
 .PHONY: test-rust
 test-rust: $(VENV_STAMP) ## Run all Rust tests
 	$(RUN_ENV) cargo test --workspace --exclude ha-py-bridge --exclude ha-py-ext
 	$(RUN_ENV) cargo test -p ha-automation --test compat_test
+	$(RUN_ENV) cargo test -p ha-py-bridge --features py_bridge --lib -- --test-threads=1
 	$(RUN_ENV) cargo test -p ha-script --test compat_test
 
 ##@ Utilities
-
-.PHONY: audit
-audit: ## Run security audit (requires cargo-audit)
-	cargo audit
-
-.PHONY: deps
-deps: ## Check for outdated dependencies (requires cargo-outdated)
-	cargo outdated --workspace
 
 .PHONY: score
 score: ## Run score (0-100) against quality gates
