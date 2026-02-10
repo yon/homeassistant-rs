@@ -143,6 +143,10 @@ pub struct ConfigEntry {
     #[serde(skip, default)]
     pub error_reason_translation_key: Option<String>,
 
+    /// Translation placeholders for the error reason (for i18n)
+    #[serde(skip, default)]
+    pub error_reason_translation_placeholders: Option<HashMap<String, serde_json::Value>>,
+
     /// Per-entry setup/unload lock (not persisted)
     /// Wrapped in Arc so ConfigEntry can still be Clone
     #[serde(skip)]
@@ -206,6 +210,7 @@ impl ConfigEntry {
             state: ConfigEntryState::NotLoaded,
             reason: None,
             error_reason_translation_key: None,
+            error_reason_translation_placeholders: None,
             setup_lock: Arc::new(Mutex::new(())),
             tries: 0,
             pref_disable_new_entities: false,

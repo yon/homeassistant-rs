@@ -469,6 +469,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn config_entries_subscribe_filters_by_type() {
+        let conn = make_test_conn();
+        let (tx, mut rx) = mpsc::channel(16);
+
+        // Add a config entry with domain "demo" (integration_type defaults to "device")
+        {
+            let entries = conn.state.config_entries.write().await;
+            let mut entry = ha_config_entries::ConfigEntry::new("demo", "Demo Integration");
+            entry.entry_id = "test_entry_1".to_string();
+            entry.state = ha_config_entries::ConfigEntryState::Loaded;
+            entries.add(entry).await.unwrap();
+        }
+
+        // Subscribe with helper filter — should return 0 entries (demo is "device", not "helper")
+        let text = r#"{"id": 20, "type": "config_entries/subscribe", "type_filter": ["helper"]}"#;
+        let result = handle_message(&conn, text, &tx).await;
+        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+
+        // First message: result with null
+        let rm = expect_result(rx.recv().await.expect("Should have received result"));
+        assert_eq!(rm.id, 20);
+        assert!(rm.success);
+
+        // Second message: event with filtered entries
+        let event_msg = rx.recv().await.expect("Should have received event");
+        if let OutgoingMessage::Event(event) = event_msg {
+            let entries = event.event.as_array().expect("Event should be an array");
+            assert!(
+                entries.is_empty(),
+                "Helper filter should return 0 entries for device integration, got {}",
+                entries.len()
+            );
+        } else {
+            panic!("Expected Event message, got {:?}", event_msg);
+        }
+    }
+
+    #[tokio::test]
     async fn malformed_json_returns_error_response() {
         let conn = make_test_conn();
         let (tx, mut rx) = mpsc::channel(16);

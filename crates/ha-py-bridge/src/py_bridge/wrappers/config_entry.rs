@@ -152,6 +152,15 @@ impl ConfigEntryWrapper {
         self.discovery_keys.clone_ref(py)
     }
 
+    /// Whether the config entry is disabled, and by what (readonly)
+    ///
+    /// Returns None if not disabled, or a ConfigEntryDisabler value.
+    /// Most entries are not disabled.
+    #[getter]
+    fn disabled_by(&self) -> Option<String> {
+        None // Not disabled by default
+    }
+
     /// Whether polling is disabled by user preference (readonly)
     /// Used by update_coordinator.py to skip polling if user disabled it
     #[getter]
@@ -163,6 +172,19 @@ impl ConfigEntryWrapper {
     #[getter]
     fn pref_disable_new_entities(&self) -> bool {
         false // Default to enabling new entities
+    }
+
+    /// Subentries for this config entry (readonly)
+    ///
+    /// Returns an empty MappingProxyType since we don't support subentries yet.
+    /// Integrations like openai_conversation check entry.subentries during setup.
+    #[getter]
+    fn subentries<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+        let types = py.import_bound("types")?;
+        let mapping_proxy = types.getattr("MappingProxyType")?;
+        let empty_dict = PyDict::new_bound(py);
+        let proxy = mapping_proxy.call1((&empty_dict,))?;
+        Ok(proxy.unbind())
     }
 
     /// Runtime data (read/write)
@@ -323,5 +345,77 @@ impl ConfigEntryWrapper {
         // For now, we just create the task without lifecycle tracking
 
         Ok(task)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_wrapper(py: Python<'_>) -> ConfigEntryWrapper {
+        let data = PyDict::new_bound(py);
+        let options = PyDict::new_bound(py);
+        let discovery_keys = PyDict::new_bound(py);
+        ConfigEntryWrapper::new(
+            py,
+            "test-entry-id".to_string(),
+            "test_domain".to_string(),
+            "Test Title".to_string(),
+            1,
+            1,
+            "user".to_string(),
+            Some("unique-123".to_string()),
+            "loaded".to_string(),
+            &data,
+            &options,
+            &discovery_keys,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_disabled_by_returns_none() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            let wrapper = create_test_wrapper(py);
+            assert!(
+                wrapper.disabled_by().is_none(),
+                "disabled_by should return None for non-disabled entries"
+            );
+        });
+    }
+
+    #[test]
+    fn test_subentries_returns_empty_mapping() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            let wrapper = create_test_wrapper(py);
+            let subentries = wrapper.subentries(py).unwrap();
+
+            // Verify it's a MappingProxyType with len 0
+            let len: usize = subentries
+                .call_method0(py, "__len__")
+                .unwrap()
+                .extract(py)
+                .unwrap();
+            assert_eq!(len, 0, "subentries should be an empty mapping");
+        });
+    }
+
+    #[test]
+    fn test_core_getters() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            let wrapper = create_test_wrapper(py);
+            assert_eq!(wrapper.entry_id(), "test-entry-id");
+            assert_eq!(wrapper.domain(), "test_domain");
+            assert_eq!(wrapper.title(), "Test Title");
+            assert_eq!(wrapper.version(), 1);
+            assert_eq!(wrapper.minor_version(), 1);
+            assert_eq!(wrapper.source(), "user");
+            assert_eq!(wrapper.unique_id(), Some("unique-123"));
+            assert!(!wrapper.pref_disable_polling());
+            assert!(!wrapper.pref_disable_new_entities());
+        });
     }
 }

@@ -285,6 +285,13 @@ impl PyBridge {
             entry_for_setup.state = ha_config_entries::ConfigEntryState::SetupInProgress;
             let py_entry = config_entry_to_python(py, &entry_for_setup)?;
 
+            // Store entry in Python config_entries wrapper so async_get_entry() can find it.
+            // device_registry.async_get_or_create() calls hass.config_entries.async_get_entry()
+            // and fails if the entry isn't stored.
+            if let Ok(store_fn) = config_entries.getattr("store_config_entry") {
+                store_fn.call1((&py_entry,))?;
+            }
+
             // Call setup_entry via the integration loader
             // States are now set directly via #[pyclass] StatesWrapper,
             // so no sync step is needed.

@@ -54,6 +54,9 @@ _device_registry = {}
 # Track which domains have registered services
 _registered_service_domains = set()
 
+# Global config entry registry: entry_id -> config entry object
+_config_entries = {}
+
 def set_hass(hass):
     """Store the hass reference for platform setup."""
     global _hass
@@ -1014,10 +1017,7 @@ async def async_forward_entry_unload(entry, platform):
     return await async_unload_platforms(entry, [platform])
 
 def async_entries(domain=None, include_ignore=True, include_disabled=True):
-    """Return config entries for a domain.
-
-    This is a stub that returns an empty list since we don't track config entries here.
-    Integrations that check for existing entries will think there are none.
+    """Return config entries, optionally filtered by domain.
 
     Args:
         domain: Optional domain to filter by.
@@ -1025,10 +1025,12 @@ def async_entries(domain=None, include_ignore=True, include_disabled=True):
         include_disabled: Include disabled entries (default True).
 
     Returns:
-        Empty list - integrations will proceed as if no entries exist.
+        List of stored config entries matching the filter.
     """
-    # For now, return empty list - integrations will proceed as if no entries exist
-    return []
+    entries = list(_config_entries.values())
+    if domain is not None:
+        entries = [e for e in entries if getattr(e, 'domain', None) == domain]
+    return entries
 
 def async_update_entry(entry, *, data=None, options=None, title=None,
                         unique_id=None, minor_version=None, version=None,
@@ -1053,18 +1055,30 @@ def async_update_entry(entry, *, data=None, options=None, title=None,
             pass
     return True
 
+def store_config_entry(entry):
+    """Store a config entry for later lookup by async_get_entry.
+
+    Called from Rust before async_setup_entry so that device_registry
+    and other HA helpers can find the entry by ID.
+    """
+    entry_id = getattr(entry, 'entry_id', None)
+    if entry_id:
+        _config_entries[entry_id] = entry
+        _LOGGER.debug(f"Stored config entry {entry_id} (domain={getattr(entry, 'domain', '?')})")
+
 def async_get_entry(entry_id):
     """Get a config entry by ID.
 
-    Stub that returns None since we don't track entries in the wrapper.
+    Returns the stored config entry or None if not found.
     """
-    _LOGGER.debug(f"async_get_entry({entry_id}) -> None")
-    return None
+    entry = _config_entries.get(entry_id)
+    if entry is None:
+        _LOGGER.debug(f"async_get_entry({entry_id}) -> None (not found)")
+    return entry
 
 def async_entry_for_domain_unique_id(domain, unique_id):
     """Get entry by domain and unique_id.
 
-    This is a stub that returns None since we don't track config entries here.
     Used by config flows to check if an entry already exists.
 
     Args:
@@ -1072,7 +1086,10 @@ def async_entry_for_domain_unique_id(domain, unique_id):
         unique_id: The unique ID to look up.
 
     Returns:
-        None - indicates no existing entry found.
+        The matching config entry or None if not found.
     """
-    _LOGGER.debug(f"async_entry_for_domain_unique_id({domain}, {unique_id}) -> None")
+    for entry in _config_entries.values():
+        if (getattr(entry, 'domain', None) == domain
+                and getattr(entry, 'unique_id', None) == unique_id):
+            return entry
     return None

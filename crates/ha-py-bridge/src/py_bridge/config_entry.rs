@@ -174,40 +174,27 @@ mod tests {
             let result = config_entry_to_python(py, &entry);
             assert!(result.is_ok());
 
+            // config_entry_to_python returns a ConfigEntryWrapper pyclass
             let py_obj = result.unwrap();
-            let dict = py_obj.bind(py);
-            let dict = dict.downcast::<PyDict>().unwrap();
+            let obj = py_obj.bind(py);
 
             assert_eq!(
-                dict.get_item("entry_id")
-                    .unwrap()
+                obj.getattr("entry_id")
                     .unwrap()
                     .extract::<String>()
                     .unwrap(),
                 entry.entry_id
             );
             assert_eq!(
-                dict.get_item("domain")
-                    .unwrap()
-                    .unwrap()
-                    .extract::<String>()
-                    .unwrap(),
+                obj.getattr("domain").unwrap().extract::<String>().unwrap(),
                 "test_domain"
             );
             assert_eq!(
-                dict.get_item("title")
-                    .unwrap()
-                    .unwrap()
-                    .extract::<String>()
-                    .unwrap(),
+                obj.getattr("title").unwrap().extract::<String>().unwrap(),
                 "Test Title"
             );
             assert_eq!(
-                dict.get_item("source")
-                    .unwrap()
-                    .unwrap()
-                    .extract::<String>()
-                    .unwrap(),
+                obj.getattr("source").unwrap().extract::<String>().unwrap(),
                 "user"
             );
         });

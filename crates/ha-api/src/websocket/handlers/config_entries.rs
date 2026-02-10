@@ -29,21 +29,25 @@ fn config_entry_state_to_string(state: &ha_config_entries::ConfigEntryState) -> 
 /// Convert a ConfigEntry to JSON format expected by frontend
 fn config_entry_to_json(entry: &ha_config_entries::ConfigEntry) -> serde_json::Value {
     serde_json::json!({
-        "entry_id": entry.entry_id,
+        "created_at": entry.created_at.timestamp(),
+        "disabled_by": entry.disabled_by.as_ref().map(|d| format!("{:?}", d).to_lowercase()),
         "domain": entry.domain,
-        "title": entry.title,
-        "source": format!("{:?}", entry.source).to_lowercase(),
-        "state": config_entry_state_to_string(&entry.state),
-        "supports_options": false,
-        "supports_remove_device": false,
-        "supports_unload": true,
-        "supports_reconfigure": false,
+        "entry_id": entry.entry_id,
+        "error_reason_translation_key": entry.error_reason_translation_key,
+        "error_reason_translation_placeholders": entry.error_reason_translation_placeholders,
+        "modified_at": entry.modified_at.timestamp(),
+        "num_subentries": entry.subentries.len(),
         "pref_disable_new_entities": entry.pref_disable_new_entities,
         "pref_disable_polling": entry.pref_disable_polling,
-        "disabled_by": entry.disabled_by.as_ref().map(|d| format!("{:?}", d).to_lowercase()),
         "reason": entry.reason,
-        // Required by frontend - empty object for integrations without subentries
+        "source": format!("{:?}", entry.source).to_lowercase(),
+        "state": config_entry_state_to_string(&entry.state),
         "supported_subentry_types": {},
+        "supports_options": false,
+        "supports_reconfigure": false,
+        "supports_remove_device": false,
+        "supports_unload": true,
+        "title": entry.title,
     })
 }
 
@@ -66,20 +70,25 @@ pub async fn handle_config_entries_get(
             } else {
                 // Return a stub entry if not found to prevent frontend errors
                 serde_json::json!({
-                    "entry_id": entry_id,
+                    "created_at": 0.0,
+                    "disabled_by": null,
                     "domain": "unknown",
-                    "title": "Unknown",
-                    "source": "user",
-                    "state": "not_loaded",
-                    "supports_options": false,
-                    "supports_remove_device": false,
-                    "supports_unload": true,
-                    "supports_reconfigure": false,
+                    "entry_id": entry_id,
+                    "error_reason_translation_key": null,
+                    "error_reason_translation_placeholders": null,
+                    "modified_at": 0.0,
+                    "num_subentries": 0,
                     "pref_disable_new_entities": false,
                     "pref_disable_polling": false,
-                    "disabled_by": null,
                     "reason": null,
+                    "source": "user",
+                    "state": "not_loaded",
                     "supported_subentry_types": {},
+                    "supports_options": false,
+                    "supports_reconfigure": false,
+                    "supports_remove_device": false,
+                    "supports_unload": true,
+                    "title": "Unknown",
                 })
             }
         } else if let Some(domain) = domain {
@@ -110,33 +119,31 @@ pub async fn handle_config_entries_subscribe(
     type_filter: Option<Vec<String>>,
     tx: &mpsc::Sender<OutgoingMessage>,
 ) -> WsResult<()> {
-    // Filter entries by integration type if type_filter is provided
-    // For now, we only have device integrations (like "demo"), not helpers
-    // If type_filter is ["helper"], return empty since we have no helpers
-    let is_helper_only_filter = type_filter
-        .as_ref()
-        .map(|f| f.len() == 1 && f[0] == "helper")
-        .unwrap_or(false);
-
     // Extract data from lock, then release before awaiting channel sends
     let entries: Vec<serde_json::Value> = {
         let config_entries = conn.state.config_entries.read().await;
 
         // Format entries as {"type": null, "entry": {...}} per native HA
-        if is_helper_only_filter {
-            // No helper integrations currently
-            vec![]
-        } else {
-            config_entries
-                .iter()
-                .map(|entry| {
-                    serde_json::json!({
-                        "type": serde_json::Value::Null,
-                        "entry": config_entry_to_json(&entry)
-                    })
+        // Filter by integration_type from manifest if type_filter is provided
+        config_entries
+            .iter()
+            .filter(|entry| {
+                if let Some(ref filter) = type_filter {
+                    let integration_type = crate::manifest::get_manifest(&entry.domain)
+                        .and_then(|m| m.integration_type.as_deref())
+                        .unwrap_or("device");
+                    filter.iter().any(|f| f == integration_type)
+                } else {
+                    true
+                }
+            })
+            .map(|entry| {
+                serde_json::json!({
+                    "type": serde_json::Value::Null,
+                    "entry": config_entry_to_json(&entry)
                 })
-                .collect()
-        }
+            })
+            .collect()
     }; // Lock released here
 
     // Native HA sends result FIRST, then event
