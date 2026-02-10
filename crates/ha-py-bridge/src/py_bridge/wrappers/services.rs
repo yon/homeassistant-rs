@@ -237,6 +237,22 @@ impl ServicesWrapper {
         self.services.has_service(domain, service)
     }
 
+    /// Return whether a service supports response data
+    ///
+    /// Returns a string matching HA's SupportsResponse StrEnum values.
+    /// Since SupportsResponse extends StrEnum, string comparison works:
+    /// `"none" == SupportsResponse.NONE` is True.
+    fn supports_response(&self, domain: &str, service: &str) -> String {
+        match self.services.get_service(domain, service) {
+            Some(desc) => match desc.supports_response {
+                SupportsResponse::None => "none".to_string(),
+                SupportsResponse::Only => "only".to_string(),
+                SupportsResponse::Optional => "optional".to_string(),
+            },
+            None => "none".to_string(),
+        }
+    }
+
     /// Get all services for a domain
     fn services(&self, py: Python<'_>, domain: &str) -> PyResult<PyObject> {
         let services = self.services.domain_services(domain);
@@ -271,5 +287,88 @@ impl ServicesWrapper {
         let future = asyncio.call_method0("Future")?;
         future.call_method1("set_result", (result,))?;
         Ok(future)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_registry() -> Arc<ServiceRegistry> {
+        Arc::new(ServiceRegistry::new())
+    }
+
+    #[test]
+    fn supports_response_returns_none_for_unknown_service() {
+        let wrapper = ServicesWrapper::new(make_registry());
+        assert_eq!(wrapper.supports_response("nonexistent", "service"), "none");
+    }
+
+    #[test]
+    fn supports_response_returns_none_for_default_service() {
+        let reg = make_registry();
+        reg.register(
+            "light",
+            "turn_on",
+            |_call| Box::pin(async { Ok(None) }),
+            None,
+            SupportsResponse::None,
+        );
+        let wrapper = ServicesWrapper::new(reg);
+        assert_eq!(wrapper.supports_response("light", "turn_on"), "none");
+    }
+
+    #[test]
+    fn supports_response_returns_optional_when_registered() {
+        let reg = make_registry();
+        let desc = ServiceDescription {
+            domain: "test".to_string(),
+            service: "get_data".to_string(),
+            name: None,
+            description: None,
+            schema: None,
+            supports_response: SupportsResponse::Optional,
+            target: None,
+        };
+        reg.register_with_description(desc, |_call| Box::pin(async { Ok(None) }));
+        let wrapper = ServicesWrapper::new(reg);
+        assert_eq!(wrapper.supports_response("test", "get_data"), "optional");
+    }
+
+    #[test]
+    fn supports_response_returns_only_when_registered() {
+        let reg = make_registry();
+        let desc = ServiceDescription {
+            domain: "test".to_string(),
+            service: "read_only".to_string(),
+            name: None,
+            description: None,
+            schema: None,
+            supports_response: SupportsResponse::Only,
+            target: None,
+        };
+        reg.register_with_description(desc, |_call| Box::pin(async { Ok(None) }));
+        let wrapper = ServicesWrapper::new(reg);
+        assert_eq!(wrapper.supports_response("test", "read_only"), "only");
+    }
+
+    #[test]
+    fn has_service_returns_false_for_unknown() {
+        let wrapper = ServicesWrapper::new(make_registry());
+        assert!(!wrapper.has_service("nonexistent", "service"));
+    }
+
+    #[test]
+    fn has_service_returns_true_for_registered() {
+        let reg = make_registry();
+        reg.register(
+            "light",
+            "turn_on",
+            |_call| Box::pin(async { Ok(None) }),
+            None,
+            SupportsResponse::None,
+        );
+        let wrapper = ServicesWrapper::new(reg);
+        assert!(wrapper.has_service("light", "turn_on"));
     }
 }
