@@ -336,8 +336,20 @@ impl IntegrationLoader {
                 return Ok(false);
             }
 
-            // Call async_setup_entry(hass, entry)
-            let coro = module.call_method1("async_setup_entry", (hass, entry))?;
+            // Call async_setup_entry(hass, entry) wrapped with traceback logging
+            let wrapper_code = r#"
+import traceback as _tb
+async def _wrapped_setup(mod, hass, entry):
+    try:
+        return await mod.async_setup_entry(hass, entry)
+    except Exception:
+        _tb.print_exc()
+        raise
+"#;
+            let globals = PyDict::new_bound(py);
+            py.run_bound(wrapper_code, Some(&globals), None)?;
+            let wrapped_fn = globals.get_item("_wrapped_setup")?.unwrap();
+            let coro = wrapped_fn.call1((module, hass, entry))?;
 
             // Run the coroutine to completion
             let result: bool = async_bridge.run_coroutine(coro.unbind())?;

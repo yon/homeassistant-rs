@@ -42,10 +42,13 @@ pub struct ConfigWrapper {
 }
 
 impl ConfigWrapper {
-    pub fn new(py: Python<'_>) -> PyResult<Self> {
+    pub fn new(py: Python<'_>, config_dir: Option<&std::path::Path>) -> PyResult<Self> {
         let units = Py::new(py, UnitSystemWrapper::metric())?;
+        let config_dir = config_dir
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "/config".to_string());
         Ok(Self {
-            config_dir: "/config".to_string(),
+            config_dir,
             latitude: 32.87336,
             longitude: -117.22743,
             elevation: 0,
@@ -109,13 +112,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_config_wrapper() {
+    fn test_config_wrapper_default_config_dir() {
         pyo3::prepare_freethreaded_python();
 
         Python::with_gil(|py| {
-            let config = ConfigWrapper::new(py).unwrap();
+            let config = ConfigWrapper::new(py, None).unwrap();
+            assert_eq!(config.config_dir, "/config");
             assert_eq!(config.latitude, 32.87336);
             assert_eq!(config.time_zone, "UTC");
+        });
+    }
+
+    #[test]
+    fn test_config_wrapper_custom_config_dir() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let custom_dir = std::path::Path::new("/tmp/ha-config/data");
+            let config = ConfigWrapper::new(py, Some(custom_dir)).unwrap();
+            assert_eq!(config.config_dir, "/tmp/ha-config/data");
+        });
+    }
+
+    #[test]
+    fn test_config_path_uses_config_dir() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let custom_dir = std::path::Path::new("/tmp/ha-config/data");
+            let config = ConfigWrapper::new(py, Some(custom_dir)).unwrap();
+            let args = PyTuple::new_bound(py, &["cert.pem"]);
+            let result = config.path(&args).unwrap();
+            assert_eq!(result, "/tmp/ha-config/data/cert.pem");
         });
     }
 }

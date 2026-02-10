@@ -51,6 +51,24 @@ impl BusWrapper {
         Ok(future)
     }
 
+    /// Fire an event (internal version, skips thread-safety check)
+    ///
+    /// In HA core, async_fire_internal is identical to async_fire but skips
+    /// the thread-safety verification. Since our bridge always runs in the
+    /// correct context, this is just an alias.
+    #[pyo3(signature = (event_type, event_data=None, _origin=None, _context=None, _time_fired=None))]
+    fn async_fire_internal<'py>(
+        &self,
+        py: Python<'py>,
+        event_type: &str,
+        event_data: Option<&Bound<'py, PyDict>>,
+        _origin: Option<&str>,
+        _context: Option<PyObject>,
+        _time_fired: Option<f64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.async_fire(py, event_type, event_data, _origin, _context)
+    }
+
     /// Listen for events (placeholder - returns a dummy unsub function)
     #[pyo3(signature = (event_type, _listener, event_filter=None))]
     fn async_listen<'py>(
@@ -113,6 +131,52 @@ mod tests {
 
             // Should not panic
             let _ = wrapper.async_fire(py, "test_event", Some(&data), None, None);
+        });
+    }
+
+    #[test]
+    fn test_async_fire_internal_delegates_to_async_fire() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            // Set up a minimal asyncio event loop so Future() works
+            let asyncio = py.import_bound("asyncio").unwrap();
+            let loop_ = asyncio.call_method0("new_event_loop").unwrap();
+            asyncio.call_method1("set_event_loop", (&loop_,)).unwrap();
+
+            let bus = Arc::new(EventBus::new());
+            let wrapper = BusWrapper::new(bus);
+
+            let data = PyDict::new_bound(py);
+            data.set_item("key", "value").unwrap();
+
+            // async_fire_internal should work exactly like async_fire
+            let result =
+                wrapper.async_fire_internal(py, "test_internal", Some(&data), None, None, None);
+            assert!(result.is_ok(), "async_fire_internal should succeed");
+        });
+    }
+
+    #[test]
+    fn test_async_fire_internal_accepts_time_fired() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            // Set up a minimal asyncio event loop so Future() works
+            let asyncio = py.import_bound("asyncio").unwrap();
+            let loop_ = asyncio.call_method0("new_event_loop").unwrap();
+            asyncio.call_method1("set_event_loop", (&loop_,)).unwrap();
+
+            let bus = Arc::new(EventBus::new());
+            let wrapper = BusWrapper::new(bus);
+
+            // async_fire_internal accepts an extra time_fired parameter
+            let result =
+                wrapper.async_fire_internal(py, "test_event", None, None, None, Some(1234.5));
+            assert!(
+                result.is_ok(),
+                "async_fire_internal should accept time_fired"
+            );
         });
     }
 }

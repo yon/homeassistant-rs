@@ -46,6 +46,14 @@ impl PythonRuntime {
                 }
             }
 
+            // Add embedded Python shim directory to sys.path
+            // This contains our shim modules (entity_service.py, config_entries_wrapper.py, etc.)
+            let shim_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/embedded_python");
+            if std::path::Path::new(shim_dir).exists() {
+                sys_path.call_method1("insert", (0, shim_dir))?;
+                info!("Added embedded Python shim path: {}", shim_dir);
+            }
+
             // Add Home Assistant path to sys.path if provided
             if let Some(path) = ha_path {
                 sys_path.call_method1("insert", (0, path.to_string_lossy().as_ref()))?;

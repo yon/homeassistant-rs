@@ -206,10 +206,12 @@ fn create_hass_wrapper_internal(
 
     // Config entries wrapper with platform setup methods
     // Also inject registries wrapper into the Python globals for device/entity registration
+    // Clone registries Arc before passing to config_entries_wrapper (which consumes it)
+    let registries_for_init = registries.clone();
     let config_entries_wrapper = create_config_entries_wrapper(py, registries)?;
 
     // Add config attribute with location and components using #[pyclass]
-    let config = Py::new(py, ConfigWrapper::new(py)?)?;
+    let config = Py::new(py, ConfigWrapper::new(py, config_dir)?)?;
 
     // Add loop attribute - use provided event loop or get/create one
     // IMPORTANT: This must be the same loop that AsyncBridge uses, otherwise
@@ -267,7 +269,7 @@ fn create_hass_wrapper_internal(
     // NOTE: Skip for config flows since they don't need registries and the initialization
     // requires an asyncio event loop which isn't available in sync REST handler context
     if init_registries {
-        initialize_ha_registries(py, &hass, config_dir)?;
+        initialize_ha_registries(py, &hass, config_dir, &registries_for_init)?;
     }
 
     // Inject application credentials into hass.data for OAuth config flows
@@ -324,11 +326,16 @@ fn inject_application_credentials(
 /// This creates the entity_registry and device_registry instances that
 /// HA's EntityComponent expects to find. If config_dir is provided,
 /// loads the registries from disk so that existing entity_ids are preserved.
+///
+/// The area registry is initialized from Rust directly (not Python) to
+/// avoid issues with Python shim read-only properties.
 fn initialize_ha_registries(
     py: Python<'_>,
     hass: &Py<HassWrapper>,
     config_dir: Option<&std::path::Path>,
+    registries: &Arc<ha_registries::Registries>,
 ) -> PyResult<()> {
+    // Run Python-based entity/device registry init
     let code = include_str!("../../embedded_python/registries_init.py");
 
     let globals = PyDict::new_bound(py);
@@ -337,6 +344,35 @@ fn initialize_ha_registries(
     let init_fn = globals.get_item("_init_registries")?.unwrap();
     let config_dir_str = config_dir.map(|p| p.to_string_lossy().to_string());
     let _ = init_fn.call1((hass, config_dir_str))?;
+
+    // Initialize area registry from Rust
+    initialize_area_registry(py, hass, registries)?;
+
+    Ok(())
+}
+
+/// Initialize the area registry from Rust and inject into hass.data
+///
+/// Creates a Rust-backed AreaRegistryWrapper and stores it in
+/// `hass.data["area_registry"]` so Python integrations can access it.
+fn initialize_area_registry(
+    py: Python<'_>,
+    hass: &Py<HassWrapper>,
+    registries: &Arc<ha_registries::Registries>,
+) -> PyResult<()> {
+    // Create the Python wrapper backed by the shared Registries Arc
+    let wrapper = Py::new(
+        py,
+        super::wrappers::AreaRegistryWrapper::new(registries.clone()),
+    )?;
+
+    // Store in hass.data["area_registry"]
+    let hass_bound = hass.bind(py);
+    let data = hass_bound.getattr("data")?;
+    data.set_item("area_registry", wrapper)?;
+
+    let count = registries.areas.len();
+    tracing::info!(count, "Initialized area registry from Rust");
 
     Ok(())
 }
@@ -463,6 +499,10 @@ fn create_config_entries_wrapper(
     // Add async_get_entry method for looking up config entries by ID
     let async_get_entry = globals.get_item("async_get_entry")?.unwrap();
     wrapper.setattr("async_get_entry", async_get_entry)?;
+
+    // Add store_config_entry for storing entries before setup
+    let store_config_entry = globals.get_item("store_config_entry")?.unwrap();
+    wrapper.setattr("store_config_entry", store_config_entry)?;
 
     // Add async_entries method for checking existing entries
     let async_entries = globals.get_item("async_entries")?.unwrap();

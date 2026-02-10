@@ -457,6 +457,59 @@ def create_task(coro, name=None, eager_start=False):
         Ok(task)
     }
 
+    /// Create a task from a coroutine (internal version, skips frame check)
+    ///
+    /// In HA core, async_create_task_internal is identical to async_create_task
+    /// but skips the frame helper thread-safety check. Since our bridge always
+    /// runs in the correct context, this is just an alias.
+    #[pyo3(signature = (target, name=None, eager_start=false))]
+    fn async_create_task_internal<'py>(
+        &self,
+        py: Python<'py>,
+        target: PyObject,
+        name: Option<String>,
+        eager_start: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.async_create_task(py, target, name, eager_start)
+    }
+
+    /// Add a job to be executed by the event loop or executor
+    ///
+    /// Dispatches coroutines to async_create_task, and regular callables
+    /// to async_add_executor_job. Matches HA's HomeAssistant.add_job().
+    #[pyo3(signature = (target, *args))]
+    fn add_job<'py>(
+        &self,
+        py: Python<'py>,
+        target: PyObject,
+        args: &Bound<'py, PyTuple>,
+    ) -> PyResult<PyObject> {
+        let asyncio = py.import_bound("asyncio")?;
+
+        // Check if target is a coroutine or coroutinefunction
+        let is_coro = asyncio
+            .call_method1("iscoroutine", (target.bind(py),))?
+            .is_truthy()?;
+        let is_coro_fn = asyncio
+            .call_method1("iscoroutinefunction", (target.bind(py),))?
+            .is_truthy()?;
+
+        if is_coro {
+            // Target is already a coroutine, create a task for it
+            let task = self.async_create_task(py, target, None, true)?;
+            Ok(task.unbind())
+        } else if is_coro_fn {
+            // Target is a coroutine function, call it first then create task
+            let coro = target.call_bound(py, args, None)?;
+            let task = self.async_create_task(py, coro, None, true)?;
+            Ok(task.unbind())
+        } else {
+            // Regular callable, run in executor
+            let coro = self.async_add_executor_job(py, target, args)?;
+            Ok(coro.unbind())
+        }
+    }
+
     /// Create a background task tied to the HomeAssistant lifecycle
     ///
     /// Background tasks:

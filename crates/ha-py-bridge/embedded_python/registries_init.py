@@ -12,11 +12,27 @@ _LOGGER = logging.getLogger(__name__)
 def _init_registries(hass, config_dir):
     """Initialize HA Python registries, loading from disk if available.
 
-    This sets up the entity_registry and device_registry so that
-    EntityComponent and other HA code can use them. If config_dir is
+    This sets up the entity_registry, device_registry, and area_registry so
+    that EntityComponent and other HA code can use them. If config_dir is
     provided, loads saved registry data so entity_ids are preserved.
     """
-    # First, set up the loader's data structures (required for async_get_integration to work)
+    # Set up base helper modules (must happen before any integration code runs)
+    # These match homeassistant/bootstrap.py::async_load_base_functionality()
+    try:
+        from homeassistant.helpers import frame
+        frame.async_setup(hass)
+        _LOGGER.debug("Frame helper initialized")
+    except Exception as e:
+        _LOGGER.warning(f"Could not set up frame helper: {e}")
+
+    try:
+        from homeassistant.helpers import entity as entity_helper
+        entity_helper.async_setup(hass)
+        _LOGGER.debug("Entity helper initialized")
+    except Exception as e:
+        _LOGGER.warning(f"Could not set up entity helper: {e}")
+
+    # Set up the loader's data structures (required for async_get_integration to work)
     try:
         from homeassistant import loader
         if loader.DATA_COMPONENTS not in hass.data:
@@ -31,18 +47,16 @@ def _init_registries(hass, config_dir):
     except Exception as e:
         _LOGGER.warning(f"Could not set up loader data structures: {e}")
 
+    success = True
+
+    # --- Entity Registry ---
     try:
         from homeassistant.helpers import entity_registry as er
-        from homeassistant.helpers import device_registry as dr
 
-        # Get or create entity registry
         entity_reg = er.EntityRegistry(hass)
-
-        # Initialize the entities container
         entity_reg.entities = er.EntityRegistryItems()
         entity_reg.deleted_entities = {}
 
-        # Try to load entity registry from disk
         if config_dir:
             entity_registry_path = os.path.join(config_dir, '.storage', 'core.entity_registry')
             if os.path.exists(entity_registry_path):
@@ -55,7 +69,6 @@ def _init_registries(hass, config_dir):
 
                     for entry_data in entities_data:
                         try:
-                            # Create RegistryEntry from saved data
                             entry = er.RegistryEntry(
                                 entity_id=entry_data.get('entity_id'),
                                 unique_id=entry_data.get('unique_id'),
@@ -96,18 +109,20 @@ def _init_registries(hass, config_dir):
 
         entity_reg._entities_data = entity_reg.entities.data
 
-        # Store in hass.data with the expected key
         hass.data[er.DATA_REGISTRY] = entity_reg
         _LOGGER.debug("Initialized entity registry in hass.data")
+    except Exception as e:
+        _LOGGER.warning(f"Could not initialize entity registry: {e}")
+        success = False
 
-        # Get or create device registry
+    # --- Device Registry ---
+    try:
+        from homeassistant.helpers import device_registry as dr
+
         device_reg = dr.DeviceRegistry(hass)
-
-        # Initialize the devices container
         device_reg.devices = dr.ActiveDeviceRegistryItems()
-        device_reg.deleted_devices = {}
+        device_reg.deleted_devices = dr.DeviceRegistryItems()
 
-        # Try to load device registry from disk
         if config_dir:
             device_registry_path = os.path.join(config_dir, '.storage', 'core.device_registry')
             if os.path.exists(device_registry_path):
@@ -120,7 +135,6 @@ def _init_registries(hass, config_dir):
 
                     for dev_data in devices_data:
                         try:
-                            # Parse identifiers and connections
                             identifiers = set()
                             for id_tuple in dev_data.get('identifiers', []):
                                 if isinstance(id_tuple, (list, tuple)) and len(id_tuple) >= 2:
@@ -131,9 +145,21 @@ def _init_registries(hass, config_dir):
                                 if isinstance(conn, (list, tuple)) and len(conn) >= 2:
                                     connections.add((str(conn[0]), str(conn[1])))
 
+                            raw_subentries = dev_data.get('config_entries_subentries')
+                            config_entries_set = set(dev_data.get('config_entries', []))
+                            if raw_subentries and isinstance(raw_subentries, dict):
+                                config_entries_subentries = {
+                                    ce_id: set(subs) for ce_id, subs in raw_subentries.items()
+                                }
+                            else:
+                                config_entries_subentries = {
+                                    ce_id: {None} for ce_id in config_entries_set
+                                }
+
                             entry = dr.DeviceEntry(
                                 area_id=dev_data.get('area_id'),
-                                config_entries=set(dev_data.get('config_entries', [])),
+                                config_entries=config_entries_set,
+                                config_entries_subentries=config_entries_subentries,
                                 connections=connections,
                                 disabled_by=dr.DeviceEntryDisabler(dev_data['disabled_by']) if dev_data.get('disabled_by') else None,
                                 hw_version=dev_data.get('hw_version'),
@@ -159,13 +185,25 @@ def _init_registries(hass, config_dir):
 
         device_reg._device_data = device_reg.devices.data
 
-        # Store in hass.data with the expected key
         hass.data[dr.DATA_REGISTRY] = device_reg
         _LOGGER.debug("Initialized device registry in hass.data")
-
-        return True
     except Exception as e:
-        _LOGGER.warning(f"Could not initialize HA registries: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+        _LOGGER.warning(f"Could not initialize device registry: {e}")
+        success = False
+
+    # Area registry is initialized from Rust (see hass_wrapper.rs)
+
+    # --- Intent Timer Manager ---
+    # Many integrations (e.g., ecobee, esphome) register intent timer handlers
+    # which require hass.data["intent.timer"] to be a TimerManager instance.
+    try:
+        from homeassistant.components.intent.const import TIMER_DATA
+        from homeassistant.components.intent.timers import TimerManager
+
+        if TIMER_DATA not in hass.data:
+            hass.data[TIMER_DATA] = TimerManager(hass)
+            _LOGGER.debug("Initialized intent timer manager in hass.data")
+    except Exception as e:
+        _LOGGER.warning(f"Could not initialize intent timer manager: {e}")
+
+    return success

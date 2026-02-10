@@ -3,6 +3,7 @@
 //! These `#[pyclass]` structs replace Python SimpleNamespace wrappers,
 //! allowing Python integrations to call directly into Rust code.
 
+mod area_registry;
 mod auth;
 mod bus;
 mod config;
@@ -14,6 +15,7 @@ mod states;
 mod unit_system;
 pub mod util;
 
+pub use area_registry::AreaRegistryWrapper;
 pub use auth::AuthWrapper;
 pub use bus::BusWrapper;
 pub use config::ConfigWrapper;
